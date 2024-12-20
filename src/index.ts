@@ -179,7 +179,7 @@ export default {
       };
 
       if (
-        env.EXTERNAL_DB_TYPE === "postgres" ||
+        env.EXTERNAL_DB_TYPE === "postgresql" ||
         env.EXTERNAL_DB_TYPE === "mysql"
       ) {
         dataSource.external = {

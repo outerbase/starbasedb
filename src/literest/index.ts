@@ -33,7 +33,7 @@ export class LiteREST {
     let query = `PRAGMA table_info(${tableName});`;
 
     if (this.dataSource.source === "external") {
-      if (this.dataSource.external?.dialect === "postgres") {
+      if (this.dataSource.external?.dialect === "postgresql") {
         query = `
                     SELECT kcu.column_name AS name 
                     FROM information_schema.table_constraints tc 

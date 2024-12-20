@@ -396,7 +396,7 @@ export async function executeSDKQuery(opts: {
 
   let connection: SqlConnection;
 
-  if (external.dialect === "postgres") {
+  if (external.dialect === "postgresql") {
     const { database } = await createSDKPostgresConnection(external);
     connection = database;
   } else if (external.dialect === "mysql") {

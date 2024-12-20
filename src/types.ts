@@ -13,7 +13,7 @@ export type RemoteSource = {
 };
 
 export type PostgresSource = {
-  dialect: "postgres";
+  dialect: "postgresql";
 } & RemoteSource;
 
 export type MySQLSource = {
