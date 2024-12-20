@@ -164,12 +164,12 @@ export class LiteREST {
   private async executeOperation(
     queries: { sql: string; params: any[] }[]
   ): Promise<{ result?: any; error?: string | undefined; status: number }> {
-    const results: any[] = (await executeTransaction(
-      queries,
-      false,
-      this.dataSource,
-      this.config
-    )) as any[];
+    const results: any[] = (await executeTransaction({
+        queries,
+        isRaw: false,
+        dataSource: this.dataSource,
+        config: this.config
+    })) as any[];
     return {
       result: results?.length > 0 ? results[0] : undefined,
       status: 200,
