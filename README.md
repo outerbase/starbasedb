@@ -179,46 +179,52 @@ curl --location --request POST 'https://starbasedb.YOUR-ID-HERE.workers.dev/quer
 Below is an example HTML script function showing how you can connect via Web Sockets.
 
 ```javascript
-let socket;
+let socket
 
 function connectWebSocket() {
-    logMessage("Connecting to WebSocket...");
-    
-    socket = new WebSocket('wss://starbasedb.YOUR-ID-HERE.workers.dev/socket?token=ABC123');
+    logMessage('Connecting to WebSocket...')
 
-    socket.onopen = function() {
-        logMessage("WebSocket connection opened.");
-    };
+    socket = new WebSocket(
+        'wss://starbasedb.YOUR-ID-HERE.workers.dev/socket?token=ABC123'
+    )
 
-    socket.onmessage = function(event) {
-        logMessage("Received: " + event.data);
-    };
+    socket.onopen = function () {
+        logMessage('WebSocket connection opened.')
+    }
 
-    socket.onclose = function(event) {
-        logMessage(`WebSocket closed with code: ${event.code}, reason: ${event.reason}`);
-    };
+    socket.onmessage = function (event) {
+        logMessage('Received: ' + event.data)
+    }
 
-    socket.onerror = function(error) {
-        logMessage("WebSocket error: " + error.message);
-    };
-}
+    socket.onclose = function (event) {
+        logMessage(
+            `WebSocket closed with code: ${event.code}, reason: ${event.reason}`
+        )
+    }
 
-function sendMessage() {
-    const message = document.getElementById('messageInput').value;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-        logMessage("Sending: " + message);
-
-        socket.send(JSON.stringify({
-            sql: message,
-            params: [],
-            action: 'query'
-        }));
-    } else {
-        logMessage("WebSocket is not open.");
+    socket.onerror = function (error) {
+        logMessage('WebSocket error: ' + error.message)
     }
 }
 
-window.onload = connectWebSocket;
+function sendMessage() {
+    const message = document.getElementById('messageInput').value
+    if (socket && socket.readyState === WebSocket.OPEN) {
+        logMessage('Sending: ' + message)
+
+        socket.send(
+            JSON.stringify({
+                sql: message,
+                params: [],
+                action: 'query',
+            })
+        )
+    } else {
+        logMessage('WebSocket is not open.')
+    }
+}
+
+window.onload = connectWebSocket
 ```
 
 <h3>SQL Dump</h3>
@@ -258,7 +264,6 @@ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/import/dump' \
 --form 'sqlFile=@"./Desktop/sqldump.sql"'
 </code>
 </pre>
-
 
 <br />
 <h2>Contributing</h2>
