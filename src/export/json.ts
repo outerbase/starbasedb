@@ -1,13 +1,15 @@
 import { getTableData, createExportResponse } from './index';
 import { createResponse } from '../utils';
 import { DataSource } from '../types';
+import { StarbaseDBConfiguration } from '../handler';
 
 export async function exportTableToJsonRoute(
     tableName: string,
-    dataSource: DataSource
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource);
+        const data = await getTableData(tableName, dataSource, config);
 
         if (data === null) {
             return createResponse(undefined, `Table '${tableName}' does not exist.`, 404);

@@ -1,13 +1,15 @@
 import { executeOperation } from '.';
+import { StarbaseDBConfiguration } from '../handler';
 import { DataSource } from '../types';
 import { createResponse } from '../utils';
 
 export async function dumpDatabaseRoute(
-    dataSource: DataSource
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
         // Get all table names
-        const tablesResult = await executeOperation([{ sql: "SELECT name FROM sqlite_master WHERE type='table';" }], dataSource)
+        const tablesResult = await executeOperation([{ sql: "SELECT name FROM sqlite_master WHERE type='table';" }], dataSource, config)
         
         const tables = tablesResult.map((row: any) => row.name);
         let dumpContent = "SQLite format 3\0";  // SQLite file header
@@ -15,7 +17,7 @@ export async function dumpDatabaseRoute(
         // Iterate through all tables
         for (const table of tables) {
             // Get table schema
-            const schemaResult = await executeOperation([{ sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';` }], dataSource)
+            const schemaResult = await executeOperation([{ sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';` }], dataSource, config)
 
             if (schemaResult.length) {
                 const schema = schemaResult[0].sql;
@@ -23,7 +25,7 @@ export async function dumpDatabaseRoute(
             }
 
             // Get table data
-            const dataResult = await executeOperation([{ sql: `SELECT * FROM ${table};` }], dataSource)
+            const dataResult = await executeOperation([{ sql: `SELECT * FROM ${table};` }], dataSource, config)
 
             for (const row of dataResult) {
                 const values = Object.values(row).map(value => 

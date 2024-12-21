@@ -1,25 +1,32 @@
 import { DataSource } from "../types";
 import { executeTransaction } from "../operation";
+import { StarbaseDBConfiguration } from "../handler";
 
-export async function executeOperation(queries: { sql: string, params?: any[] }[], dataSource: DataSource): Promise<any> {
-    const results: any[] = (await executeTransaction(queries, false, dataSource)) as any[];
+export async function executeOperation(queries: { sql: string, params?: any[] }[], dataSource: DataSource, config: StarbaseDBConfiguration): Promise<any> {
+    const results: any[] = (await executeTransaction({
+        queries,
+        isRaw: false,
+        dataSource,
+        config
+    })) as any[];
     return results?.length > 0 ? results[0] : undefined;
 }
 
 export async function getTableData(
     tableName: string,
-    dataSource: DataSource
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
 ): Promise<any[] | null> {
     try {
         // Verify if the table exists
-        const tableExistsResult = await executeOperation([{ sql: `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`, params: [tableName] }], dataSource)
+        const tableExistsResult = await executeOperation([{ sql: `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`, params: [tableName] }], dataSource, config)
 
         if (tableExistsResult.length === 0) {
             return null;
         }
 
         // Get table data
-        const dataResult = await executeOperation([{ sql: `SELECT * FROM ${tableName};` }], dataSource)
+        const dataResult = await executeOperation([{ sql: `SELECT * FROM ${tableName};` }], dataSource, config)
         return dataResult;
     } catch (error: any) {
         console.error('Table Data Fetch Error:', error);

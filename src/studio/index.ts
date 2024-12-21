@@ -1,10 +1,10 @@
 interface HandleStudioRequestOption {
     username: string,
     password: string,
-    apiToken: string;
+    apiKey: string;
 }
 
-function createStudioHTML(apiToken: string): string {
+function createStudioHTML(apiKey: string): string {
     return `<!doctype>
 <html>
 <head>
@@ -38,7 +38,7 @@ function createStudioHTML(apiToken: string): string {
             method: "post",
             headers: {
                 "Content-Type": "application/json",
-                "Authorization": "Bearer ${apiToken}"
+                "Authorization": "Bearer ${apiKey}"
             },
             body: JSON.stringify(requestBody)
         }).then(r => {
@@ -115,7 +115,7 @@ function createStudioHTML(apiToken: string): string {
 </html>`
 }
 
-export default async function handleStudioRequest(request: Request, options: HandleStudioRequestOption): Promise<Response> {
+export async function handleStudioRequest(request: Request, options: HandleStudioRequestOption): Promise<Response> {
     // Check for basic authorization
     const auth = request.headers.get('Authorization');
 
@@ -143,7 +143,7 @@ export default async function handleStudioRequest(request: Request, options: Han
     }
 
     // Proceed with the request
-    return new Response(createStudioHTML(options.apiToken), {
+    return new Response(createStudioHTML(options.apiKey), {
         headers: { 'Content-Type': 'text/html' }
     });
 }
