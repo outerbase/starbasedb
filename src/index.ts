@@ -3,6 +3,7 @@ import { StarbaseDB, StarbaseDBConfiguration } from "./handler";
 import { DataSource, RegionLocationHint } from "./types";
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { handleStudioRequest } from "./studio";
+import { corsPreflight } from "./cors";
 
 export { StarbaseDBDurableObject } from "./do";
 
@@ -43,7 +44,6 @@ export interface Env {
   EXTERNAL_DB_CLOUDFLARE_DATABASE_ID?: string;
 
   AUTH_ALGORITHM?: string;
-  AUTH_JWT_SECRET?: string;
   AUTH_JWKS_ENDPOINT?: string;
 
   // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
@@ -65,6 +65,15 @@ export default {
 
       let role: StarbaseDBConfiguration["role"] = "client";
       let context = {};
+
+      // Authorize the request with CORS rules before proceeding.
+      if (request.method === "OPTIONS") {
+        const preflightResponse = corsPreflight();
+
+        if (preflightResponse) {
+          return preflightResponse;
+        }
+      }
 
       // Handle Studio requests before auth checks in the worker.
       // StarbaseDB can handle this for us, but we need to handle it 
@@ -88,7 +97,7 @@ export default {
 
         // If not admin or client auth, check if JWT auth is available
         if (!isAdminAuthorization && !isClientAuthorization) {
-          if (env.AUTH_JWT_SECRET && env.AUTH_JWKS_ENDPOINT) {
+          if (env.AUTH_JWKS_ENDPOINT) {
             const { payload } = await jwtVerify(
               token,
               createRemoteJWKSet(new URL(env.AUTH_JWKS_ENDPOINT)),
