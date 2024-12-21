@@ -6,14 +6,15 @@
     "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "start": "wrangler dev",
-    "cf-typegen": "wrangler types"
+    "cf-typegen": "wrangler types",
+    "prepare": "husky"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241216.0",
     "@types/pg": "^8.11.10",
     "husky": "^9.1.7",
-        "lint-staged": "^15.2.11",
-        "prettier": "3.4.2",
+    "lint-staged": "^15.2.11",
+    "prettier": "3.4.2",
     "typescript": "^5.7.2",
     "wrangler": "^3.96.0"
   },
@@ -28,6 +29,6 @@
     "pg": "^8.13.1"
   },
   "lint-staged": {
-        "*.{ts,js}": "prettier --write --ignore-unknown"
-    }
+    "*.{ts,js}": "prettier --write --ignore-unknown"
+  }
 }
