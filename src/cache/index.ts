@@ -1,5 +1,5 @@
 import { StarbaseDBConfiguration } from "../handler";
-import { DataSource } from "../types";
+import { DataSource, QueryResult } from "../types";
 import sqlparser from "node-sql-parser";
 const parser = new sqlparser.Parser();
 
@@ -62,7 +62,7 @@ export async function beforeQueryCache(opts: {
   const result = await dataSource.rpc.executeQuery({
     sql: fetchCacheStatement,
     params: [sql],
-  });
+  }) as any[];
 
   if (result?.length) {
     const { timestamp, ttl, results } = result[0] as QueryResult;
@@ -115,7 +115,7 @@ export async function afterQueryCache(opts: {
     const exists = await dataSource.rpc.executeQuery({
       sql: "SELECT 1 FROM tmp_cache WHERE query = ? LIMIT 1",
       params: [sql],
-    });
+    }) as QueryResult[];
 
     const query = exists?.length
       ? {

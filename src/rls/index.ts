@@ -1,5 +1,5 @@
 import { StarbaseDBConfiguration } from "../handler";
-import { DataSource } from "../types";
+import { DataSource, QueryResult } from "../types";
 
 const parser = new (require("node-sql-parser").Parser)();
 
@@ -53,7 +53,7 @@ async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
       'SELECT "actions", "schema", "table", "column", "value", "value_type", "operator" FROM tmp_rls_policies';
     const result = await dataSource.rpc.executeQuery({
       sql: statement,
-    });
+    }) as QueryResult[];
 
     if (!result || result.length === 0) {
       // Discussion point to be had here. For safety precautions I am ejecting

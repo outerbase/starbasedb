@@ -57,23 +57,6 @@ export type DataSource = {
   cacheTTL?: number;
 };
 
-// export interface InternalConnection {
-//   durableObject: DatabaseStub;
-// }
-
-// export type DatabaseStub = DurableObjectStub & {
-//   fetch: (init?: RequestInit | Request) => Promise<Response>;
-//   executeQuery(
-//     sql: string,
-//     params: any[] | undefined,
-//     isRaw: boolean
-//   ): QueryResponse;
-//   executeTransaction(
-//     queries: { sql: string; params?: any[] }[],
-//     isRaw: boolean
-//   ): any[];
-// };
-
 export enum RegionLocationHint {
   AUTO = "auto",
   WNAM = "wnam", // Western North America

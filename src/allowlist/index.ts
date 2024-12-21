@@ -1,5 +1,5 @@
 import { StarbaseDBConfiguration } from "../handler";
-import { DataSource } from "../types";
+import { DataSource, QueryResult } from "../types";
 
 const parser = new (require("node-sql-parser").Parser)();
 
@@ -17,7 +17,7 @@ function normalizeSQL(sql: string) {
 async function loadAllowlist(dataSource: DataSource): Promise<string[]> {
   try {
     const statement = "SELECT sql_statement FROM tmp_allowlist_queries";
-    const result = await dataSource.rpc.executeQuery({ sql: statement });
+    const result = await dataSource.rpc.executeQuery({ sql: statement }) as QueryResult[]
     return result.map((row) => String(row.sql_statement));
   } catch (error) {
     console.error("Error loading allowlist:", error);
