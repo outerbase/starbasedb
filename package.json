@@ -11,6 +11,9 @@
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20241216.0",
     "@types/pg": "^8.11.10",
+    "husky": "^9.1.7",
+        "lint-staged": "^15.2.11",
+        "prettier": "3.4.2",
     "typescript": "^5.7.2",
     "wrangler": "^3.96.0"
   },
@@ -23,5 +26,8 @@
     "mysql2": "^3.11.4",
     "node-sql-parser": "^4.18.0",
     "pg": "^8.13.1"
-  }
+  },
+  "lint-staged": {
+        "*.{ts,js}": "prettier --write --ignore-unknown"
+    }
 }
