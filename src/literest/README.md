@@ -1,8 +1,11 @@
 # GET
+
 Fetch data from the database.
 
 ## Equals
+
 Get any entry that matches the column named `name` inside the `users` table where name = `Alice`.
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?name=Alice' \
 --header 'Authorization: Bearer ABC123' \
@@ -11,7 +14,9 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## Not Equals
+
 Get any result that does NOT equal the provided value.
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?name.ne=Alice' \
 --header 'Authorization: Bearer ABC123' \
@@ -20,7 +25,9 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## LIKE
+
 The URL has `%25` appended to it which represents the `%` character. We need the `%` character to represent in SQL any number of characters can appear here to be considered "LIKE".
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?name.like=Al%25' \
 --header 'Authorization: Bearer ABC123' \
@@ -29,7 +36,9 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## IN
+
 Get all results that match the names in the IN criteria, which the example below includes `Alice` and `Bob`.
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?name.in=Alice,Bob' \
 --header 'Authorization: Bearer ABC123' \
@@ -38,6 +47,7 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## Greater Than
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?user_id.gt=0' \
 --header 'Authorization: Bearer ABC123' \
@@ -46,6 +56,7 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## Greater Than or Equal
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?user_id.gte=1' \
 --header 'Authorization: Bearer ABC123' \
@@ -54,6 +65,7 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## Less Than
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?user_id.lt=3' \
 --header 'Authorization: Bearer ABC123' \
@@ -62,6 +74,7 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## Less Than or Equal
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?user_id.lte=3' \
 --header 'Authorization: Bearer ABC123' \
@@ -70,6 +83,7 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## SORT BY & ORDER
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?sort_by=user_id&order=DESC' \
 --header 'Authorization: Bearer ABC123' \
@@ -78,6 +92,7 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## LIMIT & OFFSET
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?limit=2&offset=1' \
 --header 'Authorization: Bearer ABC123' \
@@ -86,6 +101,7 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 ## A bit of everything
+
 ```
 curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users?name.in=Alice%2CBob&user_id.gte=0&email.like=%25example.com&sort_by=user_id&order=DESC&limit=10&offset=0' \
 --header 'Authorization: Bearer ABC123' \
@@ -94,6 +110,7 @@ curl --location --request GET 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 # POST
+
 ```
 curl --location 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users' \
 --header 'Authorization: Bearer ABC123' \
@@ -106,13 +123,16 @@ curl --location 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users' \
 ```
 
 # DELETE
+
 ```
 curl --location --request DELETE 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users/4' \
 --header 'Authorization: Bearer ABC123'
 ```
 
 # PUT
+
 A PUT command is to do a FULL replacement of the entry in the table. For partial updates see PATCH
+
 ```
 curl --location --request PUT 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users/4' \
 --header 'Authorization: Bearer ABC123' \
@@ -125,7 +145,9 @@ curl --location --request PUT 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/
 ```
 
 # PATCH
+
 A PATCH command is to do a PARTIAL replacement of the entry in the table. For full updates see PUT
+
 ```
 curl --location --request PATCH 'https://starbasedb.{YOUR-IDENTIFIER}.workers.dev/rest/users/4' \
 --header 'Authorization: Bearer ABC123' \

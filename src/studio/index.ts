@@ -1,7 +1,7 @@
 interface HandleStudioRequestOption {
-    username: string,
-    password: string,
-    apiKey: string;
+    username: string
+    password: string
+    apiKey: string
 }
 
 function createStudioHTML(apiKey: string): string {
@@ -115,35 +115,38 @@ function createStudioHTML(apiKey: string): string {
 </html>`
 }
 
-export async function handleStudioRequest(request: Request, options: HandleStudioRequestOption): Promise<Response> {
+export async function handleStudioRequest(
+    request: Request,
+    options: HandleStudioRequestOption
+): Promise<Response> {
     // Check for basic authorization
-    const auth = request.headers.get('Authorization');
+    const auth = request.headers.get('Authorization')
 
     if (!auth || !auth.startsWith('Basic ')) {
         return new Response('Unauthorized', {
             status: 401,
             headers: {
                 'WWW-Authenticate': 'Basic realm="Access to the studio"',
-            }
-        });
+            },
+        })
     }
 
     // base64 auth
-    const base64Auth = auth.split('Basic ')[1];
-    const decodedAuth = atob(base64Auth);
-    const [username, password] = decodedAuth.split(':');
+    const base64Auth = auth.split('Basic ')[1]
+    const decodedAuth = atob(base64Auth)
+    const [username, password] = decodedAuth.split(':')
 
     if (username !== options.username || password !== options.password) {
-        return new Response('Unauthorized', { 
+        return new Response('Unauthorized', {
             status: 401,
             headers: {
                 'WWW-Authenticate': 'Basic realm="Access to the studio"',
-            }
-        });
+            },
+        })
     }
 
     // Proceed with the request
     return new Response(createStudioHTML(options.apiKey), {
-        headers: { 'Content-Type': 'text/html' }
-    });
+        headers: { 'Content-Type': 'text/html' },
+    })
 }
