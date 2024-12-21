@@ -1,34 +1,36 @@
 {
-  "name": "durable-object-starter",
-  "version": "0.0.0",
-  "private": true,
-  "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "cf-typegen": "wrangler types",
-    "prepare": "husky"
-  },
-  "devDependencies": {
-    "@cloudflare/workers-types": "^4.20241216.0",
-    "@types/pg": "^8.11.10",
-    "husky": "^9.1.7",
-    "lint-staged": "^15.2.11",
-    "prettier": "3.4.2",
-    "typescript": "^5.7.2",
-    "wrangler": "^3.96.0"
-  },
-  "dependencies": {
-    "@libsql/client": "^0.14.0",
-    "@outerbase/sdk": "2.0.0-rc.3",
-    "hono": "^4.6.14",
-    "jose": "^5.9.6",
-    "mongodb": "^6.11.0",
-    "mysql2": "^3.11.4",
-    "node-sql-parser": "^4.18.0",
-    "pg": "^8.13.1"
-  },
-  "lint-staged": {
-    "*.{ts,js}": "prettier --write --ignore-unknown"
-  }
+    "name": "durable-object-starter",
+    "version": "0.0.0",
+    "private": true,
+    "scripts": {
+        "deploy": "wrangler deploy",
+        "dev": "wrangler dev",
+        "start": "wrangler dev",
+        "cf-typegen": "wrangler types",
+        "prepare": "husky"
+    },
+    "devDependencies": {
+        "@cloudflare/workers-types": "^4.20241216.0",
+        "@types/pg": "^8.11.10",
+        "husky": "^9.1.7",
+        "lint-staged": "^15.2.11",
+        "prettier": "3.4.2",
+        "typescript": "^5.7.2",
+        "wrangler": "^3.96.0"
+    },
+    "dependencies": {
+        "@libsql/client": "^0.14.0",
+        "@outerbase/sdk": "2.0.0-rc.3",
+        "hono": "^4.6.14",
+        "jose": "^5.9.6",
+        "mongodb": "^6.11.0",
+        "mysql2": "^3.11.4",
+        "node-sql-parser": "^4.18.0",
+        "pg": "^8.13.1"
+    },
+    "lint-staged": {
+        "*.{js,jsx,ts,tsx,json,css,md}": [
+            "prettier --write"
+        ]
+    }
 }
