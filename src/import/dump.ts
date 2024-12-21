@@ -1,6 +1,7 @@
 import { createResponse } from '../utils';
 import { DataSource } from '../types';
 import { executeOperation } from '../export';
+import { StarbaseDBConfiguration } from '../handler';
 
 function parseSqlStatements(sqlContent: string): string[] {
     const lines = sqlContent.split('\n');
@@ -31,7 +32,8 @@ function parseSqlStatements(sqlContent: string): string[] {
 
 export async function importDumpRoute(
     request: Request,
-    dataSource: DataSource
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
 ): Promise<Response> {
     if (request.method !== 'POST') {
         return createResponse(undefined, 'Method not allowed', 405);
@@ -66,7 +68,7 @@ export async function importDumpRoute(
         const results = [];
         for (const statement of sqlStatements) {
             try {
-                const result = await executeOperation([{ sql: statement }], dataSource)
+                const result = await executeOperation([{ sql: statement }], dataSource, config)
                 results.push({ statement, success: true, result });
             } catch (error: any) {
                 console.error(`Error executing statement: ${statement}`, error);

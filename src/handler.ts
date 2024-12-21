@@ -155,7 +155,7 @@ export class StarbaseDB {
 
     if (this.getFeature("export")) {
       app.get("/export/dump", this.isInternalSource, async () => {
-        return dumpDatabaseRoute(this.dataSource);
+        return dumpDatabaseRoute(this.dataSource, this.config);
       });
 
       app.get(
@@ -164,7 +164,7 @@ export class StarbaseDB {
         this.hasTableName,
         async (c) => {
           const tableName = c.req.valid("param").tableName;
-          return exportTableToJsonRoute(tableName, this.dataSource);
+          return exportTableToJsonRoute(tableName, this.dataSource, this.config);
         }
       );
 
@@ -174,14 +174,14 @@ export class StarbaseDB {
         this.hasTableName,
         async (c) => {
           const tableName = c.req.valid("param").tableName;
-          return exportTableToCsvRoute(tableName, this.dataSource);
+          return exportTableToCsvRoute(tableName, this.dataSource, this.config);
         }
       );
     }
 
     if (this.getFeature("import")) {
       app.post("/import/dump", this.isInternalSource, async (c) => {
-        return importDumpRoute(c.req.raw, this.dataSource);
+        return importDumpRoute(c.req.raw, this.dataSource, this.config);
       });
 
       app.post(
@@ -190,7 +190,7 @@ export class StarbaseDB {
         this.hasTableName,
         async (c) => {
           const tableName = c.req.valid("param").tableName;
-          return importTableFromJsonRoute(tableName, request, this.dataSource);
+          return importTableFromJsonRoute(tableName, request, this.dataSource, this.config);
         }
       );
 
@@ -200,7 +200,7 @@ export class StarbaseDB {
         this.hasTableName,
         async (c) => {
           const tableName = c.req.valid("param").tableName;
-          return importTableFromCsvRoute(tableName, request, this.dataSource);
+          return importTableFromCsvRoute(tableName, request, this.dataSource, this.config);
         }
       );
     }

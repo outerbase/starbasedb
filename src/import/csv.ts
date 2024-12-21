@@ -1,6 +1,7 @@
 import { createResponse } from '../utils';
 import { DataSource } from '../types';
 import { executeOperation } from '../export';
+import { StarbaseDBConfiguration } from '../handler';
 
 interface ColumnMapping {
     [key: string]: string;
@@ -14,7 +15,8 @@ interface CsvData {
 export async function importTableFromCsvRoute(
     tableName: string,
     request: Request,
-    dataSource: DataSource
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
         if (!request.body) {
@@ -67,7 +69,7 @@ export async function importTableFromCsvRoute(
             const statement = `INSERT INTO ${tableName} (${columns.join(', ')}) VALUES (${placeholders})`;
 
             try {
-                await executeOperation([{ sql: statement, params: values }], dataSource)
+                await executeOperation([{ sql: statement, params: values }], dataSource, config)
                 successCount++;
             } catch (error: any) {
                 failedStatements.push({
