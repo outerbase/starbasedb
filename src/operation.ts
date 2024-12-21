@@ -6,7 +6,6 @@ import { createClient as createTursoConnection } from "@libsql/client/web";
 // Import how we interact with the databases through the Outerbase SDK
 import {
   CloudflareD1Connection,
-  // MongoDBConnection,
   MySQLConnection,
   PostgreSQLConnection,
   StarbaseConnection,
@@ -20,7 +19,6 @@ import {
   TursoDBSource,
 } from "./types";
 import { StarbaseDBConfiguration } from "./handler";
-// import { MongoClient } from "mongodb";
 import { afterQueryCache, beforeQueryCache } from "./cache";
 import { isQueryAllowed } from "./allowlist";
 import { applyRLS } from "./rls";
@@ -320,21 +318,6 @@ async function createSDKMySQLConnection(
     defaultSchema: source.defaultSchema || "public",
   };
 }
-
-// TODO: Disabled Mongo connection for now since it doesn't support RLS / Allow List
-// async function createSDKMongoConnection(
-//   config: StarbaseDBConfiguration
-// ): Promise<ConnectionDetails> {
-//   const client = new MongoDBConnection(
-//     new MongoClient(config.externalDbMongodbUri as string),
-//     config.externalDbName as string
-//   );
-
-//   return {
-//     database: client,
-//     defaultSchema: config.externalDbName || "",
-//   };
-// }
 
 async function createSDKTursoConnection(
   source: TursoDBSource

@@ -1,5 +1,4 @@
 import { StarbaseDBDurableObject } from "./do";
-import { QueryResponse } from "./operation";
 
 export type QueryResult = Record<string, SqlStorageValue>;
 
@@ -45,7 +44,6 @@ export type TursoDBSource = {
 export type ExternalDatabaseSource =
   | PostgresSource
   | MySQLSource
-  // | MongoSource
   | CloudflareD1Source
   | StarbaseDBSource
   | TursoDBSource;
