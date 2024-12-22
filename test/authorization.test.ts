@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-describe('Cloudflare Worker', () => {
+describe('Authorization', () => {
     const baseUrl = 'http://127.0.0.1:8787'
 
     it('should return 200 for valid admin Authorization header', async () => {
@@ -39,7 +39,7 @@ describe('Cloudflare Worker', () => {
         expect(data).toEqual({ result: [{ '1 + 1': 2 }] })
     })
 
-    it('should return 401 for invalid Authorization header', async () => {
+    it('should return 400 for invalid Authorization header', async () => {
         const response = await fetch(`${baseUrl}/query`, {
             method: 'POST',
             headers: {
