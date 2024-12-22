@@ -6,7 +6,7 @@ interface Env {
     REGION: 'auto'
     STUDIO_USER: 'admin'
     STUDIO_PASS: '123456'
-    ENABLE_ALLOWLIST: 0
+    ENABLE_ALLOWLIST: 1
     ENABLE_RLS: 0
     EXTERNAL_DB_TYPE: 'postgresql'
     AUTH_ALGORITHM: 'RS256'

@@ -43,7 +43,7 @@ STUDIO_USER = "admin"
 STUDIO_PASS = "123456"
 
 # Toggle to enable default features 
-ENABLE_ALLOWLIST = 0
+ENABLE_ALLOWLIST = 1
 ENABLE_RLS = 0
 
 # External database source details
