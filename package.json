@@ -7,6 +7,7 @@
         "dev": "wrangler dev",
         "start": "wrangler dev",
         "cf-typegen": "wrangler types",
+        "delete": "wrangler delete",
         "prepare": "husky"
     },
     "devDependencies": {
