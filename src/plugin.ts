@@ -7,9 +7,7 @@ class UnimplementedError extends Error {
 }
 
 export abstract class StarbasePlugin {
-    constructor(public name: string) {
-        console.log(`Plugin ${name} loaded`)
-    }
+    constructor(public name: string) {}
 
     public async register(app: StarbaseApp): Promise<void> {
         throw new UnimplementedError('register')
