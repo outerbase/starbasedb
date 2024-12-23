@@ -1,6 +1,6 @@
 import type { StarbaseApp } from './handler'
 
-export class UnimplementedError extends Error {
+class UnimplementedError extends Error {
     constructor(public method: string) {
         super(`Method ${method} is not implemented`)
     }
@@ -36,6 +36,10 @@ export class StarbasePluginRegistry {
             await plugin.register(this.app)
             console.log(`Plugin ${plugin.name} registered`)
         } catch (e) {
+            if (e instanceof UnimplementedError) {
+                return
+            }
+
             console.error(`Error registering plugin ${plugin.name}: ${e}`)
             throw e
         }
