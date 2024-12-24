@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Context, Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { validator } from 'hono/validator'
 
@@ -12,9 +12,9 @@ import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
 import { importTableFromJsonRoute } from './import/json'
 import { importTableFromCsvRoute } from './import/csv'
-import { handleStudioRequest } from './studio'
 import { corsPreflight } from './cors'
 import { handleApiRequest } from './api'
+import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
 
 export interface StarbaseDBConfiguration {
     outerbaseApiKey?: string
@@ -22,31 +22,44 @@ export interface StarbaseDBConfiguration {
     features?: {
         allowlist?: boolean
         rls?: boolean
-        studio?: boolean
         rest?: boolean
         websocket?: boolean
         export?: boolean
         import?: boolean
     }
-    studio?: {
-        username: string
-        password: string
-        apiKey: string
+}
+
+type HonoContext = {
+    Variables: {
+        config: StarbaseDBConfiguration
+        dataSource: DataSource
+        operations: {
+            executeQuery: typeof executeQuery
+            executeTransaction: typeof executeTransaction
+        }
     }
 }
+
+const app = new Hono<HonoContext>()
+
+export type StarbaseApp = typeof app
+export type StarbaseContext = Context<HonoContext>
 
 export class StarbaseDB {
     private dataSource: DataSource
     private config: StarbaseDBConfiguration
     private liteREST: LiteREST
+    private plugins: StarbasePlugin[]
 
     constructor(options: {
         dataSource: DataSource
         config: StarbaseDBConfiguration
+        plugins?: StarbasePlugin[]
     }) {
         this.dataSource = options.dataSource
         this.config = options.config
         this.liteREST = new LiteREST(this.dataSource, this.config)
+        this.plugins = options.plugins || []
 
         if (
             this.dataSource.source === 'external' &&
@@ -110,8 +123,16 @@ export class StarbaseDB {
         request: Request,
         ctx: ExecutionContext
     ): Promise<Response> {
-        const app = new Hono()
-        const isUpgrade = request.headers.get('Upgrade') === 'websocket'
+        // Add context to the request
+        app.use('*', async (c, next) => {
+            c.set('config', this.config)
+            c.set('dataSource', this.dataSource)
+            c.set('operations', {
+                executeQuery,
+                executeTransaction,
+            })
+            return next()
+        })
 
         // Non-blocking operation to remove expired cache entries from our DO
         ctx.waitUntil(this.expireCache())
@@ -130,22 +151,15 @@ export class StarbaseDB {
             )
         })
 
+        const registry = new StarbasePluginRegistry({
+            app,
+            plugins: this.plugins,
+        })
+
+        await registry.init()
+
         // CORS preflight handler.
         app.options('*', () => corsPreflight())
-
-        if (this.getFeature('studio') && this.config.studio) {
-            app.get('/studio', async (c) => {
-                return handleStudioRequest(request, {
-                    username: this.config.studio!.username,
-                    password: this.config.studio!.password,
-                    apiKey: this.config.studio!.apiKey,
-                })
-            })
-        }
-
-        if (isUpgrade && this.getFeature('websocket')) {
-            app.all('/socket', () => this.clientConnected())
-        }
 
         app.post('/query/raw', async (c) => this.queryRoute(c.req.raw, true))
         app.post('/query', async (c) => this.queryRoute(c.req.raw, false))
@@ -308,32 +322,6 @@ export class StarbaseDB {
                 500
             )
         }
-    }
-
-    private clientConnected() {
-        const webSocketPair = new WebSocketPair()
-        const [client, server] = Object.values(webSocketPair)
-
-        server.accept()
-        server.addEventListener('message', (event) => {
-            const { sql, params, action } = JSON.parse(event.data as string)
-
-            if (action === 'query') {
-                const executeQueryWrapper = async () => {
-                    const response = await executeQuery({
-                        sql,
-                        params,
-                        isRaw: false,
-                        dataSource: this.dataSource,
-                        config: this.config,
-                    })
-                    server.send(JSON.stringify(response))
-                }
-                executeQueryWrapper()
-            }
-        })
-
-        return new Response(null, { status: 101, webSocket: client })
     }
 
     /**

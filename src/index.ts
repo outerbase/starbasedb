@@ -2,8 +2,10 @@ import { createResponse } from './utils'
 import { StarbaseDB, StarbaseDBConfiguration } from './handler'
 import { DataSource, RegionLocationHint } from './types'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
-import { handleStudioRequest } from './studio'
 import { corsPreflight } from './cors'
+import { handleStudioRequest } from '../plugins/studio/handler'
+import { StarbasePlugin } from './plugin'
+import { WebSocketPlugin } from '../plugins/websocket'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -246,13 +248,15 @@ export default {
                 features: {
                     allowlist: env.ENABLE_ALLOWLIST,
                     rls: env.ENABLE_RLS,
-                    studio: false, // This is handled above in the worker flow.
                 },
             }
+
+            const plugins = [new WebSocketPlugin()] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
                 dataSource,
                 config,
+                plugins,
             })
 
             // Return the final response to our user
