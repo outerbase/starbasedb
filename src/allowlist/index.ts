@@ -80,39 +80,6 @@ export async function isQueryAllowed(opts: {
         const normalizedQuery = parser.astify(normalizeSQL(sql))
 
         // Compare ASTs while ignoring specific values
-        // const isCurrentAllowed = normalizedAllowlist?.some((allowedQuery) => {
-        //     // Create deep copies to avoid modifying original ASTs
-        //     const allowedAst = JSON.parse(JSON.stringify(allowedQuery))
-        //     const queryAst = JSON.parse(JSON.stringify(normalizedQuery))
-
-        //     // Remove or normalize value fields from both ASTs
-        //     const normalizeAst = (ast: any) => {
-        //         if (Array.isArray(ast)) {
-        //             ast.forEach(normalizeAst)
-        //         } else if (ast && typeof ast === 'object') {
-        //             // Remove or normalize fields that contain specific values
-        //             if ('value' in ast) {
-        //                 // Preserve the value for specific clauses like LIMIT
-        //                 if (ast.as === 'limit' || ast.type === 'limit') {
-        //                     // Do not normalize LIMIT values
-        //                     return;
-        //                 }
-        //                 ast.value = '?'; // Normalize other values
-        //             }
-
-        //             // Recursively normalize all other fields
-        //             Object.values(ast).forEach(normalizeAst)
-        //         }
-
-        //         return ast;
-        //     };
-
-        //     normalizeAst(allowedAst)
-        //     normalizeAst(queryAst)
-
-        //     return JSON.stringify(allowedAst) === JSON.stringify(queryAst)
-        // })
-
         const deepCompareAst = (allowedAst: any, queryAst: any): boolean => {
             if (typeof allowedAst !== typeof queryAst) return false
 
