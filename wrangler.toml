@@ -18,8 +18,38 @@ enabled = true
 # Durable Objects can live for as long as needed. Use these when you need a long-running "server", such as in realtime apps.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#durable-objects
 [[durable_objects.bindings]]
-name = "DATABASE_DURABLE_OBJECT"
+name = "DATABASE_DURABLE_OBJECT_WNAM"
 class_name = "StarbaseDBDurableObject"
+script_name = "starbasedb"
+
+[[durable_objects.bindings]]
+name = "DATABASE_DURABLE_OBJECT_ENAM"
+class_name = "StarbaseDBDurableObject"
+script_name = "starbasedb"
+
+[[durable_objects.bindings]]
+name = "DATABASE_DURABLE_OBJECT_WEUR"
+class_name = "StarbaseDBDurableObject"
+script_name = "starbasedb"
+
+[[durable_objects.bindings]]
+name = "DATABASE_DURABLE_OBJECT_EEUR"
+class_name = "StarbaseDBDurableObject"
+script_name = "starbasedb"
+
+[[durable_objects.bindings]]
+name = "DATABASE_DURABLE_OBJECT_APAC"
+class_name = "StarbaseDBDurableObject"
+script_name = "starbasedb"
+
+[durable_objects]
+locations = [
+  { binding = "DATABASE_DURABLE_OBJECT_WNAM", region = "wnam" },  # Western North America
+  { binding = "DATABASE_DURABLE_OBJECT_ENAM", region = "enam" },  # Eastern North America
+  { binding = "DATABASE_DURABLE_OBJECT_WEUR", region = "weur" },  # Western Europe
+  { binding = "DATABASE_DURABLE_OBJECT_EEUR", region = "eeur" },  # Eastern Europe
+  { binding = "DATABASE_DURABLE_OBJECT_APAC", region = "apac" }   # Asia-Pacific
+]
 
 # Durable Object migrations.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#migrations
@@ -28,14 +58,15 @@ tag = "v1"
 new_sqlite_classes = ["StarbaseDBDurableObject"]
 
 [vars]
+# Determines which region acts as the PRIMARY database
+# Available regions include: wnam, enam, weur, eeur, apac
+PRIMARY_REGION = "apac"
+
 # Use this in your Authorization header for full database access
 ADMIN_AUTHORIZATION_TOKEN = "ABC123"
 
 # Use this in your Authorization header for a user role with rules applied
 CLIENT_AUTHORIZATION_TOKEN = "DEF456"
-
-# Deploy the Durable Object in a specific region, default is "auto" or location near first request
-REGION = "auto"
 
 # Uncomment the section below to create a user for logging into your database UI.
 # You can access the Studio UI at: https://your_endpoint/studio

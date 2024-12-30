@@ -266,4 +266,68 @@ export class StarbaseDBDurableObject extends DurableObject {
     //     );
     //   }
     // }
+
+    async fetch(request: Request) {
+        const url = new URL(request.url)
+
+        if (url.pathname === '/replicate') {
+            if (request.method !== 'POST') {
+                return new Response('Method not allowed', { status: 405 })
+            }
+
+            try {
+                const event = (await request.json()) as any
+
+                if ('cf' in request) {
+                    const cf = (request as Request & { cf: { colo: string } })
+                        .cf
+                    console.log(
+                        `Replicating in colo ${cf} :  ${JSON.stringify(event)}`
+                    )
+                }
+
+                // Type guard for the event
+                type SqlEvent = {
+                    sql?: string
+                    transaction?: Array<{ sql: string; params?: unknown[] }>
+                    params?: unknown[]
+                    isRaw?: boolean
+                }
+
+                const sqlEvent = event.body as SqlEvent
+                console.log(`sqlEvent = ${JSON.stringify(sqlEvent)}`)
+                if (sqlEvent.sql || sqlEvent.transaction) {
+                    if (Array.isArray(sqlEvent.transaction)) {
+                        // Handle transaction
+                        const trans = await this.executeTransaction(
+                            sqlEvent.transaction,
+                            sqlEvent.isRaw ?? false
+                        )
+                        console.log('Trans: ', trans)
+
+                        return new Response(JSON.stringify(trans))
+                    } else if (sqlEvent.sql) {
+                        console.log('sqlEvent executeQuery: ', sqlEvent.sql)
+
+                        const test = await this.executeQuery({
+                            sql: sqlEvent.sql,
+                            params: sqlEvent.params,
+                            isRaw: sqlEvent.isRaw,
+                        })
+
+                        console.log('TEST: ', JSON.stringify(test))
+                        // Handle single query
+                        return new Response(JSON.stringify(test))
+                    }
+                }
+
+                return new Response('Invalid event format', { status: 400 })
+            } catch (error) {
+                console.error('Replication error:', error)
+                return new Response('Replication failed', { status: 500 })
+            }
+        }
+
+        return new Response('Not found', { status: 404 })
+    }
 }
