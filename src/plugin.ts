@@ -1,4 +1,5 @@
-import type { StarbaseApp } from './handler'
+import type { StarbaseApp, StarbaseDBConfiguration } from './handler'
+import { DataSource } from './types'
 
 class UnimplementedError extends Error {
     constructor(public method: string) {
@@ -7,10 +8,36 @@ class UnimplementedError extends Error {
 }
 
 export abstract class StarbasePlugin {
-    constructor(public name: string) {}
+    constructor(
+        public name: string,
+        public opts: { requiresAuth: boolean } = { requiresAuth: true },
+        public pathPrefix?: string
+    ) {}
 
     public async register(app: StarbaseApp): Promise<void> {
         throw new UnimplementedError('register')
+    }
+
+    public async beforeQuery(opts: {
+        sql: string
+        params?: unknown[]
+        dataSource?: DataSource
+        config?: StarbaseDBConfiguration
+    }): Promise<{ sql: string; params?: unknown[] }> {
+        return {
+            sql: opts.sql,
+            params: opts.params,
+        }
+    }
+
+    public async afterQuery(opts: {
+        sql: string
+        result: any
+        isRaw: boolean
+        dataSource?: DataSource
+        config?: StarbaseDBConfiguration
+    }): Promise<any> {
+        return opts.result
     }
 }
 

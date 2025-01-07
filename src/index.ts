@@ -3,9 +3,9 @@ import { StarbaseDB, StarbaseDBConfiguration } from './handler'
 import { DataSource, RegionLocationHint } from './types'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { corsPreflight } from './cors'
-import { handleStudioRequest } from '../plugins/studio/handler'
 import { StarbasePlugin } from './plugin'
 import { WebSocketPlugin } from '../plugins/websocket'
+import { StudioPlugin } from '../plugins/studio'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -75,89 +75,6 @@ export default {
                 if (preflightResponse) {
                     return preflightResponse
                 }
-            }
-
-            // Handle Studio requests before auth checks in the worker.
-            // StarbaseDB can handle this for us, but we need to handle it
-            // here before auth checks.
-            if (
-                env.STUDIO_USER &&
-                env.STUDIO_PASS &&
-                request.method === 'GET' &&
-                url.pathname === '/studio'
-            ) {
-                return handleStudioRequest(request, {
-                    username: env.STUDIO_USER,
-                    password: env.STUDIO_PASS,
-                    apiKey: env.ADMIN_AUTHORIZATION_TOKEN,
-                })
-            }
-
-            async function authenticate(token: string) {
-                const isAdminAuthorization =
-                    token === env.ADMIN_AUTHORIZATION_TOKEN
-                const isClientAuthorization =
-                    token === env.CLIENT_AUTHORIZATION_TOKEN
-
-                // If not admin or client auth, check if JWT auth is available
-                if (!isAdminAuthorization && !isClientAuthorization) {
-                    if (env.AUTH_JWKS_ENDPOINT) {
-                        const { payload } = await jwtVerify(
-                            token,
-                            createRemoteJWKSet(new URL(env.AUTH_JWKS_ENDPOINT)),
-                            {
-                                algorithms: env.AUTH_ALGORITHM
-                                    ? [env.AUTH_ALGORITHM]
-                                    : undefined,
-                            }
-                        )
-
-                        if (!payload.sub) {
-                            throw new Error(
-                                'Invalid JWT payload, subject not found.'
-                            )
-                        }
-
-                        context = payload
-                    } else {
-                        // If no JWT secret or JWKS endpoint is provided, then the request has no authorization.
-                        throw new Error('Unauthorized request')
-                    }
-                } else if (isAdminAuthorization) {
-                    role = 'admin'
-                }
-            }
-
-            // JWT Payload from Header or WebSocket query param.
-            let authenticationToken: string | null = null
-
-            /**
-             * Prior to proceeding to the Durable Object, we can perform any necessary validation or
-             * authorization checks here to ensure the request signature is valid and authorized to
-             * interact with the Durable Object.
-             */
-            if (!isWebSocket) {
-                authenticationToken =
-                    request.headers
-                        .get('Authorization')
-                        ?.replace('Bearer ', '') ?? null
-            } else if (isWebSocket) {
-                authenticationToken = url.searchParams.get('token')
-            }
-
-            // There must be some form of authentication token provided to proceed.
-            if (!authenticationToken) {
-                return createResponse(undefined, 'Unauthorized request', 401)
-            }
-
-            try {
-                await authenticate(authenticationToken)
-            } catch (error: any) {
-                return createResponse(
-                    undefined,
-                    error?.message ?? 'Unable to process request.',
-                    400
-                )
             }
 
             /**
@@ -251,13 +168,95 @@ export default {
                 },
             }
 
-            const plugins = [new WebSocketPlugin()] satisfies StarbasePlugin[]
+            const plugins = [
+                new WebSocketPlugin(),
+                new StudioPlugin({
+                    username: env.STUDIO_USER,
+                    password: env.STUDIO_PASS,
+                    apiKey: env.ADMIN_AUTHORIZATION_TOKEN,
+                }),
+            ] satisfies StarbasePlugin[]
+
+            dataSource.plugins = plugins
 
             const starbase = new StarbaseDB({
                 dataSource,
                 config,
                 plugins,
             })
+
+            const preAuthRequest = await starbase.handlePreAuth(request, ctx)
+
+            if (preAuthRequest) {
+                return preAuthRequest
+            }
+
+            async function authenticate(token: string) {
+                const isAdminAuthorization =
+                    token === env.ADMIN_AUTHORIZATION_TOKEN
+                const isClientAuthorization =
+                    token === env.CLIENT_AUTHORIZATION_TOKEN
+
+                // If not admin or client auth, check if JWT auth is available
+                if (!isAdminAuthorization && !isClientAuthorization) {
+                    if (env.AUTH_JWKS_ENDPOINT) {
+                        const { payload } = await jwtVerify(
+                            token,
+                            createRemoteJWKSet(new URL(env.AUTH_JWKS_ENDPOINT)),
+                            {
+                                algorithms: env.AUTH_ALGORITHM
+                                    ? [env.AUTH_ALGORITHM]
+                                    : undefined,
+                            }
+                        )
+
+                        if (!payload.sub) {
+                            throw new Error(
+                                'Invalid JWT payload, subject not found.'
+                            )
+                        }
+
+                        context = payload
+                    } else {
+                        // If no JWT secret or JWKS endpoint is provided, then the request has no authorization.
+                        throw new Error('Unauthorized request')
+                    }
+                } else if (isAdminAuthorization) {
+                    config.role = 'admin'
+                }
+            }
+
+            // JWT Payload from Header or WebSocket query param.
+            let authenticationToken: string | null = null
+
+            /**
+             * Prior to proceeding to the Durable Object, we can perform any necessary validation or
+             * authorization checks here to ensure the request signature is valid and authorized to
+             * interact with the Durable Object.
+             */
+            if (!isWebSocket) {
+                authenticationToken =
+                    request.headers
+                        .get('Authorization')
+                        ?.replace('Bearer ', '') ?? null
+            } else if (isWebSocket) {
+                authenticationToken = url.searchParams.get('token')
+            }
+
+            // There must be some form of authentication token provided to proceed.
+            if (!authenticationToken) {
+                return createResponse(undefined, 'Unauthorized request', 401)
+            }
+
+            try {
+                await authenticate(authenticationToken)
+            } catch (error: any) {
+                return createResponse(
+                    undefined,
+                    error?.message ?? 'Unable to process request.',
+                    400
+                )
+            }
 
             // Return the final response to our user
             return await starbase.handle(request, ctx)

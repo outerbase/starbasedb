@@ -5,7 +5,9 @@ export class WebSocketPlugin extends StarbasePlugin {
     private prefix = '/socket'
 
     constructor(opts?: { prefix?: string }) {
-        super('starbasedb:websocket')
+        super('starbasedb:websocket', {
+            requiresAuth: true,
+        })
         this.prefix = opts?.prefix ?? this.prefix
     }
 
