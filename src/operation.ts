@@ -60,12 +60,10 @@ async function beforeQuery(opts: {
     if (dataSource?.plugins?.length) {
         await Promise.all(
             dataSource.plugins.map(async (plugin: StarbasePlugin) => {
-                if (typeof plugin.beforeQuery === 'function') {
-                    const { sql: _sql, params: _params } =
-                        await plugin.beforeQuery(opts)
-                    sql = _sql
-                    params = _params
-                }
+                const { sql: _sql, params: _params } =
+                    await plugin.beforeQuery(opts)
+                sql = _sql
+                params = _params
             })
         )
     }
@@ -86,9 +84,7 @@ async function afterQuery(opts: {
     if (dataSource?.plugins?.length) {
         await Promise.all(
             dataSource.plugins.map(async (plugin: StarbasePlugin) => {
-                if (typeof plugin.afterQuery === 'function') {
-                    result = await plugin.afterQuery(opts)
-                }
+                result = await plugin.afterQuery(opts)
             })
         )
     }
