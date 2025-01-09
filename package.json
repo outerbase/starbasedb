@@ -1,7 +1,20 @@
 {
-    "name": "durable-object-starter",
-    "version": "0.0.0",
-    "private": true,
+    "name": "starbasedb",
+    "version": "0.1.0",
+    "files": [
+        "src",
+        "dist",
+        "plugins"
+    ],
+    "type": "module",
+    "main": "dist/index.ts",
+    "types": "dist/index.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.ts",
+            "import": "./dist/index.ts"
+        }
+    },
     "scripts": {
         "deploy": "wrangler deploy",
         "dev": "wrangler dev",
