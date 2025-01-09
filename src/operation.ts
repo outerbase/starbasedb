@@ -57,15 +57,11 @@ async function beforeQuery(opts: {
 }): Promise<{ sql: string; params?: unknown[] }> {
     let { sql, params, dataSource, config } = opts
 
-    if (dataSource?.plugins?.length) {
-        await Promise.all(
-            dataSource.plugins.map(async (plugin: StarbasePlugin) => {
-                const { sql: _sql, params: _params } =
-                    await plugin.beforeQuery(opts)
-                sql = _sql
-                params = _params
-            })
-        )
+    if (dataSource?.registry) {
+        const { sql: _sql, params: _params } =
+            await dataSource?.registry?.beforeQuery(opts)
+        sql = _sql
+        params = _params
     }
 
     return { sql, params }
@@ -81,13 +77,10 @@ async function afterQuery(opts: {
     let { result, isRaw, dataSource } = opts
     result = isRaw ? transformRawResults(result, 'from') : result
 
-    if (dataSource?.plugins?.length) {
-        await Promise.all(
-            dataSource.plugins.map(async (plugin: StarbasePlugin) => {
-                result = await plugin.afterQuery(opts)
-            })
-        )
-    }
+    result = await dataSource?.registry?.afterQuery({
+        ...opts,
+        result,
+    })
 
     return isRaw ? transformRawResults(result, 'to') : result
 }
@@ -100,7 +93,7 @@ function transformRawResults(
         // Convert our result from the `raw` output to a traditional object
         result = {
             ...result,
-            rows: result.rows.map((row: any) =>
+            rows: result?.rows?.map((row: any) =>
                 result.columns.reduce(
                     (obj: any, column: string, index: number) => {
                         obj[column] = row[index]

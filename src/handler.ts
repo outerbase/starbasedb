@@ -87,6 +87,7 @@ export class StarbaseDB {
             plugins: this.plugins,
         })
         await registry.init()
+        this.dataSource.registry = registry
 
         this.app.post('/query/raw', async (c) =>
             this.queryRoute(c.req.raw, true)

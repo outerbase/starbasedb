@@ -69,4 +69,52 @@ export class StarbasePluginRegistry {
             throw e
         }
     }
+
+    public async beforeQuery(opts: {
+        sql: string
+        params?: unknown[]
+        dataSource?: DataSource
+        config?: StarbaseDBConfiguration
+    }): Promise<{ sql: string; params?: unknown[] }> {
+        let { sql, params } = opts
+
+        if (this.plugins?.length) {
+            await Promise.all(
+                this.plugins.map(async (plugin: StarbasePlugin) => {
+                    const { sql: _sql, params: _params } =
+                        await plugin.beforeQuery(opts)
+                    sql = _sql
+                    params = _params
+                })
+            )
+        }
+
+        return {
+            sql,
+            params,
+        }
+    }
+
+    public async afterQuery(opts: {
+        sql: string
+        result: any
+        isRaw: boolean
+        dataSource?: DataSource
+        config?: StarbaseDBConfiguration
+    }): Promise<any> {
+        let { result } = opts
+
+        if (this.plugins?.length) {
+            await Promise.all(
+                this.plugins.map(async (plugin: StarbasePlugin) => {
+                    result = await plugin.afterQuery({
+                        ...opts,
+                        result,
+                    })
+                })
+            )
+        }
+
+        return result
+    }
 }

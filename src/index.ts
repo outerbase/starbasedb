@@ -177,8 +177,6 @@ export default {
                 }),
             ] satisfies StarbasePlugin[]
 
-            dataSource.plugins = plugins
-
             const starbase = new StarbaseDB({
                 dataSource,
                 config,
