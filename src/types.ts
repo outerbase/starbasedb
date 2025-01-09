@@ -1,4 +1,5 @@
 import { StarbaseDBDurableObject } from './do'
+import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
 
 export type QueryResult = Record<string, SqlStorageValue>
 
@@ -55,6 +56,7 @@ export type DataSource = {
     context?: Record<string, unknown>
     cache?: boolean
     cacheTTL?: number
+    registry?: StarbasePluginRegistry
 }
 
 export enum RegionLocationHint {
