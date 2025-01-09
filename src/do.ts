@@ -38,7 +38,15 @@ export class StarbaseDBDurableObject extends DurableObject {
         const allowlistStatement = `
         CREATE TABLE IF NOT EXISTS tmp_allowlist_queries (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sql_statement TEXT NOT NULL
+            sql_statement TEXT NOT NULL,
+            source TEXT DEFAULT 'external'
+        )`
+        const allowlistRejectedStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_allowlist_rejections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sql_statement TEXT NOT NULL,
+            source TEXT DEFAULT 'external',
+            created_at TEXT DEFAULT (datetime('now'))
         )`
 
         const rlsStatement = `
@@ -55,6 +63,7 @@ export class StarbaseDBDurableObject extends DurableObject {
 
         this.executeQuery({ sql: cacheStatement })
         this.executeQuery({ sql: allowlistStatement })
+        this.executeQuery({ sql: allowlistRejectedStatement })
         this.executeQuery({ sql: rlsStatement })
     }
 

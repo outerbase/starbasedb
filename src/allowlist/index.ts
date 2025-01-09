@@ -16,13 +16,33 @@ function normalizeSQL(sql: string) {
 
 async function loadAllowlist(dataSource: DataSource): Promise<string[]> {
     try {
-        const statement = `SELECT sql_statement FROM tmp_allowlist_queries WHERE source="${dataSource.source}"`
+        const statement = `SELECT sql_statement, source FROM tmp_allowlist_queries WHERE source="${dataSource.source}"`
         const result = (await dataSource.rpc.executeQuery({
             sql: statement,
         })) as QueryResult[]
-        return result.map((row) => String(row.sql_statement))
+        return result
+            .filter((row) => row.source === dataSource.source)
+            .map((row) => String(row.sql_statement))
     } catch (error) {
         console.error('Error loading allowlist:', error)
+        return []
+    }
+}
+
+async function addRejectedQuery(
+    query: string,
+    dataSource: DataSource
+): Promise<string[]> {
+    try {
+        const statement =
+            'INSERT INTO tmp_allowlist_rejections (sql_statement, source) VALUES (?, ?)'
+        const result = (await dataSource.rpc.executeQuery({
+            sql: statement,
+            params: [query, dataSource.source],
+        })) as QueryResult[]
+        return result.map((row) => String(row.sql_statement))
+    } catch (error) {
+        console.error('Error inserting rejected allowlist query:', error)
         return []
     }
 }
@@ -59,34 +79,45 @@ export async function isQueryAllowed(opts: {
         const normalizedQuery = parser.astify(normalizeSQL(sql))
 
         // Compare ASTs while ignoring specific values
-        const isCurrentAllowed = normalizedAllowlist?.some((allowedQuery) => {
-            // Create deep copies to avoid modifying original ASTs
-            const allowedAst = JSON.parse(JSON.stringify(allowedQuery))
-            const queryAst = JSON.parse(JSON.stringify(normalizedQuery))
+        const deepCompareAst = (allowedAst: any, queryAst: any): boolean => {
+            if (typeof allowedAst !== typeof queryAst) return false
 
-            // Remove or normalize value fields from both ASTs
-            const normalizeAst = (ast: any) => {
-                if (Array.isArray(ast)) {
-                    ast.forEach(normalizeAst)
-                } else if (ast && typeof ast === 'object') {
-                    // Remove or normalize fields that contain specific values
-                    if ('value' in ast) {
-                        ast.value = '?'
-                    }
+            if (Array.isArray(allowedAst) && Array.isArray(queryAst)) {
+                if (allowedAst.length !== queryAst.length) return false
+                return allowedAst.every((item, index) =>
+                    deepCompareAst(item, queryAst[index])
+                )
+            } else if (
+                typeof allowedAst === 'object' &&
+                allowedAst !== null &&
+                queryAst !== null
+            ) {
+                const allowedKeys = Object.keys(allowedAst)
+                const queryKeys = Object.keys(queryAst)
 
-                    Object.values(ast).forEach(normalizeAst)
-                }
+                if (allowedKeys.length !== queryKeys.length) return false
 
-                return ast
+                return allowedKeys.every((key) =>
+                    deepCompareAst(allowedAst[key], queryAst[key])
+                )
             }
 
-            normalizeAst(allowedAst)
-            normalizeAst(queryAst)
+            // Base case: Primitive value comparison
+            return allowedAst === queryAst
+        }
 
-            return JSON.stringify(allowedAst) === JSON.stringify(queryAst)
-        })
+        const isCurrentAllowed = normalizedAllowlist?.some((allowedQuery) =>
+            deepCompareAst(allowedQuery, normalizedQuery)
+        )
 
         if (!isCurrentAllowed) {
+            // For any rejected query, we can add it to a table of rejected queries
+            // to act both as an audit log as well as an easy way to see recent queries
+            // that may need to be added to the allowlist in an easy way via a user
+            // interface.
+            addRejectedQuery(sql, dataSource)
+
+            // Then throw the appropriate error to the user.
             throw new Error('Query not allowed')
         }
 
