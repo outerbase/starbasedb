@@ -177,7 +177,7 @@ export default {
                     apiKey: env.ADMIN_AUTHORIZATION_TOKEN,
                 }),
                 new SqlMacros({
-                    preventSelectStar: true,
+                    preventSelectStar: false,
                 }),
             ] satisfies StarbasePlugin[]
 
