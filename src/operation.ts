@@ -23,6 +23,7 @@ import { afterQueryCache, beforeQueryCache } from './cache'
 import { isQueryAllowed } from './allowlist'
 import { applyRLS } from './rls'
 import type { SqlConnection } from '@outerbase/sdk/dist/connections/sql-base'
+import { StarbasePlugin } from './plugin'
 
 export type OperationQueueItem = {
     queries: { sql: string; params?: any[] }[]
@@ -56,12 +57,14 @@ async function beforeQuery(opts: {
 }): Promise<{ sql: string; params?: unknown[] }> {
     let { sql, params, dataSource, config } = opts
 
-    // ## DO NOT REMOVE: PRE QUERY HOOK ##
-
-    return {
-        sql,
-        params,
+    if (dataSource?.registry) {
+        const { sql: _sql, params: _params } =
+            await dataSource?.registry?.beforeQuery(opts)
+        sql = _sql
+        params = _params
     }
+
+    return { sql, params }
 }
 
 async function afterQuery(opts: {
@@ -71,10 +74,13 @@ async function afterQuery(opts: {
     dataSource?: DataSource
     config?: StarbaseDBConfiguration
 }): Promise<any> {
-    let { result, isRaw, dataSource, config } = opts
+    let { result, isRaw, dataSource } = opts
     result = isRaw ? transformRawResults(result, 'from') : result
 
-    // ## DO NOT REMOVE: POST QUERY HOOK ##
+    result = await dataSource?.registry?.afterQuery({
+        ...opts,
+        result,
+    })
 
     return isRaw ? transformRawResults(result, 'to') : result
 }
@@ -87,7 +93,7 @@ function transformRawResults(
         // Convert our result from the `raw` output to a traditional object
         result = {
             ...result,
-            rows: result.rows.map((row: any) =>
+            rows: result?.rows?.map((row: any) =>
                 result.columns.reduce(
                     (obj: any, column: string, index: number) => {
                         obj[column] = row[index]

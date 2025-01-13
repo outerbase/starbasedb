@@ -1,4 +1,4 @@
-import { Hono } from 'hono'
+import { Context, Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { validator } from 'hono/validator'
 
@@ -12,9 +12,9 @@ import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
 import { importTableFromJsonRoute } from './import/json'
 import { importTableFromCsvRoute } from './import/csv'
-import { handleStudioRequest } from './studio'
 import { corsPreflight } from './cors'
 import { handleApiRequest } from './api'
+import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
 
 export interface StarbaseDBConfiguration {
     outerbaseApiKey?: string
@@ -22,16 +22,21 @@ export interface StarbaseDBConfiguration {
     features?: {
         allowlist?: boolean
         rls?: boolean
-        studio?: boolean
         rest?: boolean
         websocket?: boolean
         export?: boolean
         import?: boolean
     }
-    studio?: {
-        username: string
-        password: string
-        apiKey: string
+}
+
+type HonoContext = {
+    Variables: {
+        config: StarbaseDBConfiguration
+        dataSource: DataSource
+        operations: {
+            executeQuery: typeof executeQuery
+            executeTransaction: typeof executeTransaction
+        }
     }
 }
 
@@ -39,14 +44,20 @@ export class StarbaseDB {
     private dataSource: DataSource
     private config: StarbaseDBConfiguration
     private liteREST: LiteREST
+    private plugins: StarbasePlugin[]
+    private initialized: boolean = false
+    private app: StarbaseApp
 
     constructor(options: {
         dataSource: DataSource
         config: StarbaseDBConfiguration
+        plugins?: StarbasePlugin[]
     }) {
         this.dataSource = options.dataSource
         this.config = options.config
         this.liteREST = new LiteREST(this.dataSource, this.config)
+        this.plugins = options.plugins || []
+        this.app = new Hono<HonoContext>()
 
         if (
             this.dataSource.source === 'external' &&
@@ -54,6 +65,176 @@ export class StarbaseDB {
         ) {
             throw new Error('No external data sources available.')
         }
+    }
+
+    private async initialize() {
+        if (this.initialized) return
+
+        // Set up middleware first
+        this.app.use('*', async (c, next) => {
+            c.set('config', this.config)
+            c.set('dataSource', this.dataSource)
+            c.set('operations', {
+                executeQuery,
+                executeTransaction,
+            })
+            return next()
+        })
+
+        // Initialize plugins
+        const registry = new StarbasePluginRegistry({
+            app: this.app,
+            plugins: this.plugins,
+        })
+        await registry.init()
+        this.dataSource.registry = registry
+
+        this.app.post('/query/raw', async (c) =>
+            this.queryRoute(c.req.raw, true)
+        )
+        this.app.post('/query', async (c) => this.queryRoute(c.req.raw, false))
+
+        if (this.getFeature('rest')) {
+            this.app.all('/rest/*', async (c) => {
+                return this.liteREST.handleRequest(c.req.raw)
+            })
+        }
+
+        if (this.getFeature('export')) {
+            this.app.get('/export/dump', this.isInternalSource, async () => {
+                return dumpDatabaseRoute(this.dataSource, this.config)
+            })
+
+            this.app.get(
+                '/export/json/:tableName',
+                this.isInternalSource,
+                this.hasTableName,
+                async (c) => {
+                    const tableName = c.req.valid('param').tableName
+                    return exportTableToJsonRoute(
+                        tableName,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
+
+            this.app.get(
+                '/export/csv/:tableName',
+                this.isInternalSource,
+                this.hasTableName,
+                async (c) => {
+                    const tableName = c.req.valid('param').tableName
+                    return exportTableToCsvRoute(
+                        tableName,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
+        }
+
+        if (this.getFeature('import')) {
+            this.app.post('/import/dump', this.isInternalSource, async (c) => {
+                return importDumpRoute(c.req.raw, this.dataSource, this.config)
+            })
+
+            this.app.post(
+                '/import/json/:tableName',
+                this.isInternalSource,
+                this.hasTableName,
+                async (c) => {
+                    const tableName = c.req.valid('param').tableName
+                    return importTableFromJsonRoute(
+                        tableName,
+                        c.req.raw,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
+
+            this.app.post(
+                '/import/csv/:tableName',
+                this.isInternalSource,
+                this.hasTableName,
+                async (c) => {
+                    const tableName = c.req.valid('param').tableName
+                    return importTableFromCsvRoute(
+                        tableName,
+                        c.req.raw,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
+        }
+
+        this.app.all('/api/*', async (c) => handleApiRequest(c.req.raw))
+
+        // Set up error handlers
+        this.app.notFound(() => {
+            return createResponse(undefined, 'Not found', 404)
+        })
+
+        this.app.onError((error) => {
+            return createResponse(
+                undefined,
+                error?.message || 'An unexpected error occurred.',
+                500
+            )
+        })
+
+        this.initialized = true
+    }
+
+    public async handlePreAuth(
+        request: Request,
+        ctx: ExecutionContext
+    ): Promise<Response | undefined> {
+        // Initialize everything once
+        await this.initialize()
+
+        const authlessPlugin = this.plugins.find((plugin: StarbasePlugin) => {
+            if (!plugin.opts.requiresAuth && request.url && plugin.pathPrefix) {
+                // Extract the path from the full URL
+                const urlPath = new URL(request.url).pathname
+
+                // Convert plugin path pattern to regex
+                const pathPattern = plugin.pathPrefix
+                    .replace(/:[^/]+/g, '[^/]+') // Replace :param with regex pattern
+                    .replace(/\*/g, '.*') // Replace * with wildcard pattern
+
+                const regex = new RegExp(`^${pathPattern}$`)
+                return regex.test(urlPath)
+            }
+
+            return false
+        })
+
+        if (authlessPlugin) {
+            return this.app.fetch(request)
+        }
+
+        return undefined
+    }
+
+    public async handle(
+        request: Request,
+        ctx: ExecutionContext
+    ): Promise<Response> {
+        // Initialize everything once
+        await this.initialize()
+
+        // Non-blocking operation to remove expired cache entries from our DO
+        ctx.waitUntil(this.expireCache())
+
+        // CORS preflight handler
+        if (request.method === 'OPTIONS') {
+            return corsPreflight()
+        }
+
+        return this.app.fetch(request)
     }
 
     /**
@@ -99,136 +280,6 @@ export class StarbaseDB {
         defaultValue = true
     ): boolean {
         return this.config.features?.[key] ?? !!defaultValue
-    }
-
-    /**
-     * Main handler function for the StarbaseDB.
-     * @param request Request instance from the fetch event.
-     * @returns Promise<Response>
-     */
-    public async handle(
-        request: Request,
-        ctx: ExecutionContext
-    ): Promise<Response> {
-        const app = new Hono()
-        const isUpgrade = request.headers.get('Upgrade') === 'websocket'
-
-        // Non-blocking operation to remove expired cache entries from our DO
-        ctx.waitUntil(this.expireCache())
-
-        // General 404 not found handler
-        app.notFound(() => {
-            return createResponse(undefined, 'Not found', 404)
-        })
-
-        // Thrown error handler
-        app.onError((error) => {
-            return createResponse(
-                undefined,
-                error?.message || 'An unexpected error occurred.',
-                500
-            )
-        })
-
-        // CORS preflight handler.
-        app.options('*', () => corsPreflight())
-
-        if (this.getFeature('studio') && this.config.studio) {
-            app.get('/studio', async (c) => {
-                return handleStudioRequest(request, {
-                    username: this.config.studio!.username,
-                    password: this.config.studio!.password,
-                    apiKey: this.config.studio!.apiKey,
-                })
-            })
-        }
-
-        if (isUpgrade && this.getFeature('websocket')) {
-            app.all('/socket', () => this.clientConnected())
-        }
-
-        app.post('/query/raw', async (c) => this.queryRoute(c.req.raw, true))
-        app.post('/query', async (c) => this.queryRoute(c.req.raw, false))
-
-        if (this.getFeature('rest')) {
-            app.all('/rest/*', async (c) => {
-                return this.liteREST.handleRequest(c.req.raw)
-            })
-        }
-
-        if (this.getFeature('export')) {
-            app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
-            })
-
-            app.get(
-                '/export/json/:tableName',
-                this.isInternalSource,
-                this.hasTableName,
-                async (c) => {
-                    const tableName = c.req.valid('param').tableName
-                    return exportTableToJsonRoute(
-                        tableName,
-                        this.dataSource,
-                        this.config
-                    )
-                }
-            )
-
-            app.get(
-                '/export/csv/:tableName',
-                this.isInternalSource,
-                this.hasTableName,
-                async (c) => {
-                    const tableName = c.req.valid('param').tableName
-                    return exportTableToCsvRoute(
-                        tableName,
-                        this.dataSource,
-                        this.config
-                    )
-                }
-            )
-        }
-
-        if (this.getFeature('import')) {
-            app.post('/import/dump', this.isInternalSource, async (c) => {
-                return importDumpRoute(c.req.raw, this.dataSource, this.config)
-            })
-
-            app.post(
-                '/import/json/:tableName',
-                this.isInternalSource,
-                this.hasTableName,
-                async (c) => {
-                    const tableName = c.req.valid('param').tableName
-                    return importTableFromJsonRoute(
-                        tableName,
-                        request,
-                        this.dataSource,
-                        this.config
-                    )
-                }
-            )
-
-            app.post(
-                '/import/csv/:tableName',
-                this.isInternalSource,
-                this.hasTableName,
-                async (c) => {
-                    const tableName = c.req.valid('param').tableName
-                    return importTableFromCsvRoute(
-                        tableName,
-                        request,
-                        this.dataSource,
-                        this.config
-                    )
-                }
-            )
-        }
-
-        app.all('/api/*', async (c) => handleApiRequest(c.req.raw))
-
-        return app.fetch(request)
     }
 
     async queryRoute(request: Request, isRaw: boolean): Promise<Response> {
@@ -310,32 +361,6 @@ export class StarbaseDB {
         }
     }
 
-    private clientConnected() {
-        const webSocketPair = new WebSocketPair()
-        const [client, server] = Object.values(webSocketPair)
-
-        server.accept()
-        server.addEventListener('message', (event) => {
-            const { sql, params, action } = JSON.parse(event.data as string)
-
-            if (action === 'query') {
-                const executeQueryWrapper = async () => {
-                    const response = await executeQuery({
-                        sql,
-                        params,
-                        isRaw: false,
-                        dataSource: this.dataSource,
-                        config: this.config,
-                    })
-                    server.send(JSON.stringify(response))
-                }
-                executeQueryWrapper()
-            }
-        })
-
-        return new Response(null, { status: 101, webSocket: client })
-    }
-
     /**
      *
      */
@@ -351,3 +376,6 @@ export class StarbaseDB {
         }
     }
 }
+
+export type StarbaseApp = Hono<HonoContext>
+export type StarbaseContext = Context<HonoContext>

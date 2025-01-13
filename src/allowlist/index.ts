@@ -16,8 +16,7 @@ function normalizeSQL(sql: string) {
 
 async function loadAllowlist(dataSource: DataSource): Promise<string[]> {
     try {
-        const statement =
-            'SELECT sql_statement, source FROM tmp_allowlist_queries'
+        const statement = `SELECT sql_statement, source FROM tmp_allowlist_queries WHERE source="${dataSource.source}"`
         const result = (await dataSource.rpc.executeQuery({
             sql: statement,
         })) as QueryResult[]
