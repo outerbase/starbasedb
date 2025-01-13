@@ -1,5 +1,5 @@
 {
-    "name": "starbasedb",
+    "name": "@outerbase/starbasedb",
     "version": "0.1.0",
     "files": [
         "src",
