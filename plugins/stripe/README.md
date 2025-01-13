@@ -26,6 +26,20 @@ const plugins = [
 
 ## How To Use
 
+### Webhook Setup
+
+For our Starbase instance to receive webhook events when subscription events change, we need to add our plugin endpoint to Stripe.
+
+1. Visit the Developer Webhooks page: https://dashboard.stripe.com/webhooks
+2. Click "+ Add Endpoint"
+3. Set "Endpoint URL" to `https://starbasedb.YOUR-IDENTIFIER.dev/stripe/webhook`
+4. Add two events to listen to:
+    - `customer.subscription.deleted`
+    - `checkout.session.completed`
+5. Save by clicking "Add Endpoint"
+
+### Product Subscription Setup
+
 After you create a subscription product inside of Stripe you can get the hosted link by following these steps:
 
 1. Click on the "Product catalog" section
