@@ -13,6 +13,10 @@
         ".": {
             "types": "./dist/index.ts",
             "import": "./dist/index.ts"
+        },
+        "./plugins": {
+            "types": "./dist/plugins.ts",
+            "import": "./dist/plugins.ts"
         }
     },
     "scripts": {
