@@ -6,6 +6,7 @@ import { corsPreflight } from './cors'
 import { StarbasePlugin } from './plugin'
 import { WebSocketPlugin } from '../plugins/websocket'
 import { StudioPlugin } from '../plugins/studio'
+import { StripeSubscriptionPlugin } from '../plugins/stripe'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -174,6 +175,10 @@ export default {
                     username: env.STUDIO_USER,
                     password: env.STUDIO_PASS,
                     apiKey: env.ADMIN_AUTHORIZATION_TOKEN,
+                }),
+                new StripeSubscriptionPlugin({
+                    stripeSecretKey: '',
+                    stripeWebhookSecret: '',
                 }),
             ] satisfies StarbasePlugin[]
 

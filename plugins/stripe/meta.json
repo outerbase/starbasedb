@@ -1,0 +1,23 @@
+{
+    "resources": {
+        "tables": {
+            "subscription": [
+                "user_id",
+                "stripe_customer_id",
+                "stripe_subscription_id",
+                "created_at",
+                "updatd_at",
+                "deleted_at"
+            ]
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {
+            "user": ["id", "email"]
+        },
+        "secrets": {},
+        "variables": {}
+    }
+}
