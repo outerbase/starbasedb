@@ -2,18 +2,12 @@
 
 The SQL Macros Plugin for Starbase provides SQL query validation and enhancement features to improve code quality and prevent common SQL anti-patterns.
 
-## Installation
-
-```bash
-npm install @starbase/sql-macros-plugin
-```
-
 ## Usage
 
 Add the SqlMacros plugin to your Starbase configuration:
 
 ```typescript
-import { SqlMacros } from './plugins/sql-macros-plugin'
+import { SqlMacros } from './plugins/sql-macros'
 const plugins = [
     // ... other plugins
     new SqlMacros({
