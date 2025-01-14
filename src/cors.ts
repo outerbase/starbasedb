@@ -4,7 +4,7 @@ export const corsHeaders = {
     'Access-Control-Allow-Headers':
         'Authorization, Content-Type, X-Starbase-Source, X-Data-Source',
     'Access-Control-Max-Age': '86400',
-}
+} as const
 
 export function corsPreflight(): Response {
     return new Response(null, {
