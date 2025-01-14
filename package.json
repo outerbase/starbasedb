@@ -1,6 +1,6 @@
 {
     "name": "@outerbase/starbasedb",
-    "version": "0.1.0",
+    "version": "0.1.4",
     "files": [
         "src",
         "dist",
@@ -23,6 +23,7 @@
         "deploy": "wrangler deploy",
         "dev": "wrangler dev",
         "start": "wrangler dev",
+        "publish-npm-module": "npm publish --access public",
         "cf-typegen": "wrangler types",
         "delete": "wrangler delete",
         "prepare": "husky"
