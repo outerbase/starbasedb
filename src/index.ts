@@ -176,10 +176,6 @@ export default {
                     password: env.STUDIO_PASS,
                     apiKey: env.ADMIN_AUTHORIZATION_TOKEN,
                 }),
-                new StripeSubscriptionPlugin({
-                    stripeSecretKey: '',
-                    stripeWebhookSecret: '',
-                }),
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({

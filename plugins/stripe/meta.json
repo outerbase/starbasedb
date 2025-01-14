@@ -1,4 +1,5 @@
 {
+    "version": "1.0.0",
     "resources": {
         "tables": {
             "subscription": [
@@ -15,7 +16,7 @@
     },
     "dependencies": {
         "tables": {
-            "user": ["id", "email"]
+            "*": ["user_id"]
         },
         "secrets": {},
         "variables": {}
