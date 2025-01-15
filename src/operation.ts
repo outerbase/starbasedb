@@ -23,7 +23,6 @@ import { afterQueryCache, beforeQueryCache } from './cache'
 import { isQueryAllowed } from './allowlist'
 import { applyRLS } from './rls'
 import type { SqlConnection } from '@outerbase/sdk/dist/connections/sql-base'
-import { StarbasePlugin } from './plugin'
 
 export type OperationQueueItem = {
     queries: { sql: string; params?: any[] }[]

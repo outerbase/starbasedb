@@ -4,6 +4,8 @@ export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
     public sql: SqlStorage
     public storage: DurableObjectStorage
+    // Map of WebSocket connections to their corresponding session IDs
+    private connections = new Map<string, WebSocket>()
 
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
@@ -65,6 +67,19 @@ export class StarbaseDBDurableObject extends DurableObject {
         }
     }
 
+    async fetch(request: Request) {
+        const url = new URL(request.url)
+
+        if (url.pathname === '/socket') {
+            if (request.headers.get('upgrade') === 'websocket') {
+                return this.clientConnected()
+            }
+            return new Response('Expected WebSocket', { status: 400 })
+        }
+
+        return new Response('Unknown operation', { status: 400 })
+    }
+
     private async executeRawQuery<
         T extends Record<string, SqlStorageValue> = Record<
             string,
@@ -110,25 +125,61 @@ export class StarbaseDBDurableObject extends DurableObject {
         return cursor.toArray()
     }
 
-    public executeTransaction(
+    public async executeTransaction(
         queries: { sql: string; params?: unknown[] }[],
         isRaw: boolean
-    ): unknown[] {
-        return this.storage.transactionSync(() => {
-            const results = []
+    ): Promise<any[]> {
+        const results = []
 
-            try {
-                for (const queryObj of queries) {
-                    const { sql, params } = queryObj
-                    const result = this.executeQuery({ sql, params, isRaw })
-                    results.push(result)
-                }
-
-                return results
-            } catch (error) {
-                console.error('Transaction Execution Error:', error)
-                throw error
+        try {
+            for (const queryObj of queries) {
+                const { sql, params } = queryObj
+                const result = await this.executeQuery({ sql, params, isRaw })
+                results.push(result)
             }
-        })
+
+            return results
+        } catch (error) {
+            console.error('Transaction Execution Error:', error)
+            throw error
+        }
+    }
+
+    public async clientConnected() {
+        const webSocketPair = new WebSocketPair()
+        const [client, server] = Object.values(webSocketPair)
+        const wsSessionId = crypto.randomUUID()
+
+        this.ctx.acceptWebSocket(server, [wsSessionId])
+        this.connections.set(wsSessionId, client)
+
+        return new Response(null, { status: 101, webSocket: client })
+    }
+
+    async webSocketMessage(ws: WebSocket, message: any) {
+        const { sql, params, action } = JSON.parse(message)
+
+        if (action === 'query') {
+            const queries = [{ sql, params }]
+            const result = await this.executeTransaction(queries, false)
+            ws.send(JSON.stringify(result))
+        }
+    }
+
+    async webSocketClose(
+        ws: WebSocket,
+        code: number,
+        reason: string,
+        wasClean: boolean
+    ) {
+        // If the client closes the connection, the runtime will invoke the webSocketClose() handler.
+        ws.close(code, 'StarbaseDB is closing WebSocket connection')
+
+        // Remove the WebSocket connection from the map
+        const tags = this.ctx.getTags(ws)
+        if (tags.length) {
+            const wsSessionId = tags[0]
+            this.connections.delete(wsSessionId)
+        }
     }
 }

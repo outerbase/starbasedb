@@ -1,19 +1,36 @@
+import { StarbaseDBDurableObject } from '../../src'
 import { StarbaseApp, StarbaseContext } from '../../src/handler'
 import { StarbasePlugin } from '../../src/plugin'
 
 export class WebSocketPlugin extends StarbasePlugin {
     private prefix = '/socket'
+    private stub
 
-    constructor(opts?: { prefix?: string }) {
+    constructor(opts?: {
+        prefix?: string
+        stub: DurableObjectStub<StarbaseDBDurableObject>
+    }) {
         super('starbasedb:websocket', {
             requiresAuth: true,
         })
         this.prefix = opts?.prefix ?? this.prefix
+        this.stub = opts?.stub
     }
 
     override async register(app: StarbaseApp) {
-        app.all(this.prefix, (c) => {
-            return this.upgrade(c)
+        app.all(this.prefix, async (c) => {
+            const dataSource = c?.get('dataSource')
+
+            if (dataSource.source === 'internal') {
+                // Internal data sources can have more long-living web sockets with
+                // Durable Objects so we will prefer that implementation version. Here
+                // we simply pass on the request to the DO to establish the connection.
+                return this.stub?.fetch(c.req.raw)
+            } else {
+                // External data sources will be executed via the Worker layer and
+                // will likely be more ephemeral in nature.
+                return this.upgrade(c)
+            }
         })
     }
 

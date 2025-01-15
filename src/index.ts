@@ -170,7 +170,9 @@ export default {
             }
 
             const plugins = [
-                new WebSocketPlugin(),
+                new WebSocketPlugin({
+                    stub,
+                }),
                 new StudioPlugin({
                     username: env.STUDIO_USER,
                     password: env.STUDIO_PASS,
