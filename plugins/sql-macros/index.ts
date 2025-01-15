@@ -107,11 +107,16 @@ export class SqlMacrosPlugin extends StarbasePlugin {
         }
 
         try {
+            // Add semicolon if missing
+            const normalizedSql = sql.trim().endsWith(';') ? sql : `${sql};`
+
             // We allow users to write it `$_exclude` but convert it to `__exclude` so it can be
             // parsed with the AST library without throwing an error.
-            sql = sql.replaceAll('$_exclude', '__exclude')
-
-            const normalizedQuery = parser.astify(sql)[0]
+            const preparedSql = normalizedSql.replaceAll(
+                '$_exclude',
+                '__exclude'
+            )
+            const normalizedQuery = parser.astify(preparedSql)[0]
 
             // Only process SELECT statements
             if (normalizedQuery.type !== 'select') {
@@ -181,8 +186,8 @@ export class SqlMacrosPlugin extends StarbasePlugin {
                 }))
             )
 
-            // Convert back to SQL
-            return parser.sqlify(normalizedQuery)
+            // Convert back to SQL and remove trailing semicolon to maintain original format
+            return parser.sqlify(normalizedQuery).replace(/;$/, '')
         } catch (error) {
             console.error('SQL parsing error:', error)
             return sql
