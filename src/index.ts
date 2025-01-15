@@ -6,7 +6,7 @@ import { corsPreflight } from './cors'
 import { StarbasePlugin } from './plugin'
 import { WebSocketPlugin } from '../plugins/websocket'
 import { StudioPlugin } from '../plugins/studio'
-import { StripeSubscriptionPlugin } from '../plugins/stripe'
+import { SqlMacrosPlugin } from '../plugins/sql-macros'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -175,6 +175,9 @@ export default {
                     username: env.STUDIO_USER,
                     password: env.STUDIO_PASS,
                     apiKey: env.ADMIN_AUTHORIZATION_TOKEN,
+                }),
+                new SqlMacrosPlugin({
+                    preventSelectStar: false,
                 }),
             ] satisfies StarbasePlugin[]
 
