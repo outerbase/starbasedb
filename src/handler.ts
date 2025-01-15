@@ -205,7 +205,7 @@ export class StarbaseDB {
                     .replace(/:[^/]+/g, '[^/]+') // Replace :param with regex pattern
                     .replace(/\*/g, '.*') // Replace * with wildcard pattern
 
-                const regex = new RegExp(`^${pathPattern}$`)
+                const regex = new RegExp(`^${pathPattern}`)
                 return regex.test(urlPath)
             }
 

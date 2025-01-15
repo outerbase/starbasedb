@@ -26,7 +26,8 @@
         "publish-npm-module": "npm publish --access public",
         "cf-typegen": "wrangler types",
         "delete": "wrangler delete",
-        "prepare": "husky"
+        "prepare": "husky",
+        "test": "vitest"
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20241216.0",
@@ -35,6 +36,7 @@
         "lint-staged": "^15.2.11",
         "prettier": "3.4.2",
         "typescript": "^5.7.2",
+        "vitest": "^2.1.8",
         "wrangler": "^3.96.0"
     },
     "dependencies": {
