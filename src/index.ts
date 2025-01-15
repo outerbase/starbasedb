@@ -6,6 +6,7 @@ import { corsPreflight } from './cors'
 import { StarbasePlugin } from './plugin'
 import { WebSocketPlugin } from '../plugins/websocket'
 import { StudioPlugin } from '../plugins/studio'
+import { StripeSubscriptionPlugin } from '../plugins/stripe'
 
 export { StarbaseDBDurableObject } from './do'
 
