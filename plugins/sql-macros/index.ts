@@ -8,7 +8,7 @@ import { DataSource, QueryResult } from '../../src/types'
 
 const parser = new (require('node-sql-parser').Parser)()
 
-export class SqlMacros extends StarbasePlugin {
+export class SqlMacrosPlugin extends StarbasePlugin {
     config?: StarbaseDBConfiguration
 
     // Prevents SQL statements with `SELECT *` from being executed

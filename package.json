@@ -1,14 +1,32 @@
 {
-    "name": "durable-object-starter",
-    "version": "0.0.0",
-    "private": true,
+    "name": "@outerbase/starbasedb",
+    "version": "0.1.0",
+    "files": [
+        "src",
+        "dist",
+        "plugins"
+    ],
+    "type": "module",
+    "main": "dist/index.ts",
+    "types": "dist/index.ts",
+    "exports": {
+        ".": {
+            "types": "./dist/index.ts",
+            "import": "./dist/index.ts"
+        },
+        "./plugins": {
+            "types": "./dist/plugins.ts",
+            "import": "./dist/plugins.ts"
+        }
+    },
     "scripts": {
         "deploy": "wrangler deploy",
         "dev": "wrangler dev",
         "start": "wrangler dev",
         "cf-typegen": "wrangler types",
         "delete": "wrangler delete",
-        "prepare": "husky"
+        "prepare": "husky",
+        "test": "vitest"
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20241216.0",
@@ -17,6 +35,7 @@
         "lint-staged": "^15.2.11",
         "prettier": "3.4.2",
         "typescript": "^5.7.2",
+        "vitest": "^2.1.8",
         "wrangler": "^3.96.0"
     },
     "dependencies": {
