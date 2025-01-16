@@ -17,14 +17,27 @@ export class WebSocketPlugin extends StarbasePlugin {
         })
     }
 
+    public createConnection(context: StarbaseContext): WebSocket | null {
+        return this.acceptConnection(context)
+    }
+
+    public sendMessage(message: string, client: WebSocket) {
+        client.send(message)
+    }
+
     private upgrade(ctx: StarbaseContext): Response {
         if (ctx.req.header('upgrade') !== 'websocket') {
             return new Response('Expected upgrade request', { status: 400 })
         }
 
-        const config = ctx.get('config')
-        const dataSource = ctx.get('dataSource')
-        const { executeQuery } = ctx.get('operations')
+        const client = this.acceptConnection(ctx)
+        return new Response(null, { status: 101, webSocket: client })
+    }
+
+    private acceptConnection(context: StarbaseContext): WebSocket | null {
+        const config = context.get('config')
+        const dataSource = context.get('dataSource')
+        const { executeQuery } = context.get('operations')
 
         const webSocketPair = new WebSocketPair()
         const [client, server] = Object.values(webSocketPair)
@@ -48,6 +61,6 @@ export class WebSocketPlugin extends StarbasePlugin {
             }
         })
 
-        return new Response(null, { status: 101, webSocket: client })
+        return client
     }
 }
