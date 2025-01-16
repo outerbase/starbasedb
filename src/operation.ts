@@ -90,6 +90,11 @@ function transformRawResults(
     direction: 'to' | 'from'
 ): Record<string, any> {
     if (direction === 'from') {
+        // If result is already an array of objects, return it directly
+        if (Array.isArray(result)) {
+            return result
+        }
+
         // Convert our result from the `raw` output to a traditional object
         result = {
             ...result,
@@ -107,8 +112,9 @@ function transformRawResults(
         return result.rows
     } else if (direction === 'to') {
         // Convert our traditional object to the `raw` output format
-        const columns = Object.keys(result[0] || {})
-        const rows = result.map((row: any) => columns.map((col) => row[col]))
+        const columns: string[] = Object.keys(result?.[0] || {}) ?? []
+        const rows =
+            result?.map((row: any) => columns.map((col) => row[col])) ?? []
 
         return {
             columns,
