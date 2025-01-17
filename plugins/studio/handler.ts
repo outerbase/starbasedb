@@ -109,6 +109,7 @@ function createStudioHTML(apiKey: string): string {
 
 <iframe
   id="editor"
+  allow="clipboard-read; clipboard-write"
   src="https://studio.outerbase.com/embed/starbase"
 />
 </body>
