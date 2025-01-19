@@ -17,6 +17,14 @@ interface ChangeEvent {
     column?: string
 }
 
+// Add this new interface
+interface CDCEventPayload {
+    action: string
+    schema: string
+    table: string
+    data: any
+}
+
 export class ChangeDataCapturePlugin extends StarbasePlugin {
     // Prefix
     public prefix: string = '/cdc'
@@ -32,55 +40,58 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
             table: 'orders',
         },
     ]
-    // WebSocketPlugin instance for us to communicate changes
-    private webSocket?: WebSocketPlugin
-
-    private context?: StarbaseContext
+    // Configuration details about the request and user
+    private config?: StarbaseDBConfiguration
+    // Add this new property
+    private eventCallbacks: ((payload: CDCEventPayload) => void)[] = []
 
     constructor(opts?: {
         stub?: DurableObjectStub<StarbaseDBDurableObject>
         broadcastAllEvents?: boolean
-        webSocketPlugin?: WebSocketPlugin
     }) {
         super('starbasedb:change-data-capture', {
             requiresAuth: false,
         })
         this.durableObjectStub = opts?.stub
         this.broadcastAllEvents = opts?.broadcastAllEvents
-        this.webSocket = opts?.webSocketPlugin
     }
 
     override async register(app: StarbaseApp) {
         app.use(async (c, next) => {
-            this.context = c
+            this.config = c?.get('config')
             await next()
         })
 
         app.all(this.prefix, async (c, next) => {
-            if (!this.context) {
-                await next()
-                return
+            if (c.req.header('upgrade') !== 'websocket') {
+                return new Response('Expected upgrade request', { status: 400 })
             }
 
-            const client = this.webSocket?.createConnection(this.context)
-
-            if (!client) {
-                return new Response(null, { status: 400 })
+            // Only admin authorized users are permitted to subscribe to CDC events.
+            if (this.config?.role !== 'admin') {
+                return new Response('Unauthorized request', { status: 400 })
             }
 
-            // this.connections.set(`${Math.random()}`, client)
-            return new Response(null, { status: 101, webSocket: client })
+            // Create a new Request object with the modified URL
+            let raw: Request = c.req.raw.clone()
+            const sessionId = crypto.randomUUID()
+
+            // Save active sessionId in a `tmp_change_detection` table
+            // In the DO we should assign this sessionId to a web socket connection
+            // Then when we hit `/broadcast?sessionId=123` append the sessionId to it
+            // If we detect that query param, only send to connections matching that
+
+            raw = new Request(
+                `https://example.com/socket?sessionId=${sessionId}`,
+                {
+                    method: raw.method,
+                    headers: raw.headers,
+                    body: raw.body,
+                }
+            )
+
+            return this.durableObjectStub?.fetch(raw)
         })
-
-        // app.get('/cdc/socket', async (c) => {
-        //     const client = this.webSocket?.createConnection()
-        //     if (!client) {
-        //         return new Response(null, { status: 400 })
-        //     }
-
-        //     this.connections.set(`${Math.random()}`, client)
-        //     return new Response(null, { status: 101, webSocket: client })
-        // })
     }
 
     override async afterQuery(opts: {
@@ -93,13 +104,15 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
         try {
             // Parse the SQL statement
             const ast = parser.astify(opts.sql)
+            const astObject = Array.isArray(ast) ? ast[0] : ast
+            const type = ast.type || ast[0].type
 
-            if (ast.type === 'insert') {
-                this.queryEventDetected('INSERT', ast, opts.result)
-            } else if (ast.type === 'delete') {
-                this.queryEventDetected('DELETE', ast, opts.result)
-            } else if (ast.type === 'update') {
-                this.queryEventDetected('UPDATE', ast, opts.result)
+            if (type === 'insert') {
+                this.queryEventDetected('INSERT', astObject, opts.result)
+            } else if (type === 'delete') {
+                this.queryEventDetected('DELETE', astObject, opts.result)
+            } else if (type === 'update') {
+                this.queryEventDetected('UPDATE', astObject, opts.result)
             }
         } catch (error) {
             console.error('Error parsing SQL in CDC plugin:', error)
@@ -116,6 +129,8 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
      * @returns true if there is a matching event subscription, false otherwise
      */
     isEventMatch(action: string, schema: string, table: string): boolean {
+        if (this.broadcastAllEvents) return true
+
         const matchingEvent = this.listeningEvents?.find(
             (event) =>
                 (event.action === action || event.action === '*') &&
@@ -123,7 +138,7 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
                 event.table === table
         )
 
-        return matchingEvent || this.broadcastAllEvents ? true : false
+        return matchingEvent ? true : false
     }
 
     /**
@@ -146,23 +161,58 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
             !eventData ||
             (Array.isArray(eventData) && eventData.length === 0)
         ) {
-            const columns = ast.columns
-            const values = ast.values?.[0].value
-
-            // Create an object mapping columns to their values
-            eventData = columns.reduce(
-                (obj: any, col: string, index: number) => {
-                    obj[col] = values[index].value
+            if (ast.type === 'delete') {
+                // For DELETE queries, extract the WHERE clause information
+                const whereClause = ast.where
+                if (whereClause && whereClause.type === 'binary_expr') {
+                    eventData = {
+                        [whereClause.left.column]: whereClause.right.value,
+                    }
+                }
+            } else if (ast.type === 'update') {
+                // For UPDATE queries, extract from the set array
+                eventData = ast.set.reduce((obj: any, item: any) => {
+                    obj[item.column] = item.value.value
                     return obj
-                },
-                {}
-            )
+                }, {})
+
+                // Also include the WHERE clause information
+                if (ast.where && ast.where.type === 'binary_expr') {
+                    eventData[ast.where.left.column] = ast.where.right.value
+                }
+            } else {
+                // Handle INSERT queries
+                const columns = ast.columns
+                const values = ast.values?.[0].value
+
+                // Create an object mapping columns to their values
+                eventData = columns.reduce(
+                    (obj: any, col: string, index: number) => {
+                        obj[col] = values[index].value
+                        return obj
+                    },
+                    {}
+                )
+            }
         }
 
         return eventData
     }
 
-    queryEventDetected(action: string, ast: any, result: any) {
+    /**
+     * Register a callback function to be called when CDC events occur
+     * @param callback The function to be called with the CDC event payload
+     */
+    public onEvent(callback: (payload: CDCEventPayload) => void) {
+        this.eventCallbacks.push(callback)
+    }
+
+    queryEventDetected(
+        action: string,
+        ast: any,
+        result: any,
+        sessionId?: string
+    ) {
         // Extract the table info
         const table = ast.table?.[0]
         const schema = table?.schema || 'main'
@@ -173,28 +223,37 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
 
         if (matchingEvent) {
             const eventData = this.extractValuesFromQuery(ast, result)
-
-            console.log('CDC Event Detected:', {
-                type: 'INSERT',
+            const payload = {
+                action,
                 schema,
                 table: tableName,
-                result: eventData,
+                data: eventData,
+            }
+
+            const message = {
+                type: 'cdc_event',
+                payload,
+            }
+
+            // Trigger all registered callbacks
+            this.eventCallbacks.forEach((callback) => {
+                try {
+                    callback(payload)
+                } catch (error) {
+                    console.error('Error in CDC event callback:', error)
+                }
             })
 
-            // QUESTION:
-            // How do I push this back out of a websocket instead of just logging?
-            // if (this.currentRequest) {
-            // - Add a property to the request for a webSocketID
-            // - Need a way to make sure only authorized requests are receiving these events
-            // this.durableObjectStub?.fetch(this.currentRequest);
-            // this.durableObjectStub?.state.getWebSockets()
-            // }
-
-            // this.connections.forEach(connection => {
-            //     console.log('Sending CDC to socket: ', connection)
-            //     connection.send('CDC Event detected...')
-            //     // this.webSocket?.sendMessage('Test', connection)
-            // });
+            // Send the broadcast message to the Durable Object
+            this.durableObjectStub?.fetch(
+                new Request(
+                    `https://example.com/socket/broadcast${sessionId ? `?sessionId=${sessionId}` : ''}`,
+                    {
+                        method: 'POST',
+                        body: JSON.stringify(message),
+                    }
+                )
+            )
         }
     }
 }
