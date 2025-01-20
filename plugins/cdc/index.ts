@@ -1,12 +1,7 @@
 import { StarbaseDBDurableObject } from '../../src'
-import {
-    StarbaseApp,
-    StarbaseContext,
-    StarbaseDBConfiguration,
-} from '../../src/handler'
+import { StarbaseApp, StarbaseDBConfiguration } from '../../src/handler'
 import { StarbasePlugin } from '../../src/plugin'
-import { DataSource, QueryResult } from '../../src/types'
-import { WebSocketPlugin } from '../websocket'
+import { DataSource } from '../../src/types'
 
 const parser = new (require('node-sql-parser').Parser)()
 

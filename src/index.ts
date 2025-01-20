@@ -8,6 +8,7 @@ import { WebSocketPlugin } from '../plugins/websocket'
 import { StudioPlugin } from '../plugins/studio'
 import { SqlMacrosPlugin } from '../plugins/sql-macros'
 import { ChangeDataCapturePlugin } from '../plugins/cdc'
+import { QueryLogPlugin } from '../plugins/query-log'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -191,6 +192,7 @@ export default {
                     preventSelectStar: false,
                 }),
                 cdcPlugin,
+                new QueryLogPlugin(),
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
