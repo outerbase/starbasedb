@@ -7,6 +7,8 @@ import { StarbasePlugin } from './plugin'
 import { WebSocketPlugin } from '../plugins/websocket'
 import { StudioPlugin } from '../plugins/studio'
 import { SqlMacrosPlugin } from '../plugins/sql-macros'
+import { ChangeDataCapturePlugin } from '../plugins/cdc'
+import { QueryLogPlugin } from '../plugins/query-log'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -169,8 +171,15 @@ export default {
                 },
             }
 
+            const webSocketPlugin = new WebSocketPlugin()
+            const cdcPlugin = new ChangeDataCapturePlugin({
+                stub,
+                broadcastAllEvents: false,
+                events: [],
+            })
+
             const plugins = [
-                new WebSocketPlugin(),
+                webSocketPlugin,
                 new StudioPlugin({
                     username: env.STUDIO_USER,
                     password: env.STUDIO_PASS,
@@ -179,6 +188,8 @@ export default {
                 new SqlMacrosPlugin({
                     preventSelectStar: false,
                 }),
+                new QueryLogPlugin({ ctx }),
+                cdcPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({

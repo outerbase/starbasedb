@@ -4,6 +4,8 @@ export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
     public sql: SqlStorage
     public storage: DurableObjectStorage
+    // Map of WebSocket connections to their corresponding session IDs
+    public connections = new Map<string, WebSocket>()
 
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
@@ -65,6 +67,94 @@ export class StarbaseDBDurableObject extends DurableObject {
         }
     }
 
+    async fetch(request: Request) {
+        const url = new URL(request.url)
+
+        if (url.pathname === '/socket') {
+            if (request.headers.get('upgrade') === 'websocket') {
+                const sessionId = url.searchParams.get('sessionId') ?? undefined
+                return this.clientConnected(sessionId)
+            }
+            return new Response('Expected WebSocket', { status: 400 })
+        }
+
+        if (url.pathname === '/socket/broadcast') {
+            const message = await request.json()
+            const sessionId = url.searchParams.get('sessionId') ?? undefined
+
+            // Broadcast to all connected clients using server-side sockets
+            for (const [id, connection] of this.connections) {
+                try {
+                    // If the broadcast event included a specific sessionId then we should expect
+                    // that message was intended to be broadcasted to a particular session only.
+                    if (sessionId && sessionId != id) {
+                        continue
+                    }
+
+                    connection.send(JSON.stringify(message))
+                } catch (err) {
+                    // Clean up dead connections
+                    this.connections.delete(id)
+                }
+            }
+
+            return new Response('Broadcast sent', { status: 200 })
+        }
+
+        return new Response('Unknown operation', { status: 400 })
+    }
+
+    public async clientConnected(sessionId?: string) {
+        const webSocketPair = new WebSocketPair()
+        const [client, server] = Object.values(webSocketPair)
+        const wsSessionId = sessionId ?? crypto.randomUUID()
+
+        // Store the server-side socket instead of client-side
+        this.connections.set(wsSessionId, server)
+
+        // Accept and configure the WebSocket
+        server.accept()
+
+        // Add message and error handling
+        server.addEventListener('message', async (msg) => {
+            await this.webSocketMessage(server, msg.data)
+        })
+
+        server.addEventListener('error', (err) => {
+            console.error(`WebSocket error for ${wsSessionId}:`, err)
+            this.connections.delete(wsSessionId)
+        })
+
+        return new Response(null, { status: 101, webSocket: client })
+    }
+
+    async webSocketMessage(ws: WebSocket, message: any) {
+        const { sql, params, action } = JSON.parse(message)
+
+        if (action === 'query') {
+            const queries = [{ sql, params }]
+            const result = await this.executeTransaction(queries, false)
+            ws.send(JSON.stringify(result))
+        }
+    }
+
+    async webSocketClose(
+        ws: WebSocket,
+        code: number,
+        reason: string,
+        wasClean: boolean
+    ) {
+        // If the client closes the connection, the runtime will invoke the webSocketClose() handler.
+        ws.close(code, 'StarbaseDB is closing WebSocket connection')
+
+        // Remove the WebSocket connection from the map
+        const tags = this.ctx.getTags(ws)
+        if (tags.length) {
+            const wsSessionId = tags[0]
+            this.connections.delete(wsSessionId)
+        }
+    }
+
     private async executeRawQuery<
         T extends Record<string, SqlStorageValue> = Record<
             string,
@@ -110,25 +200,23 @@ export class StarbaseDBDurableObject extends DurableObject {
         return cursor.toArray()
     }
 
-    public executeTransaction(
+    public async executeTransaction(
         queries: { sql: string; params?: unknown[] }[],
         isRaw: boolean
-    ): unknown[] {
-        return this.storage.transactionSync(() => {
-            const results = []
+    ): Promise<any[]> {
+        const results = []
 
-            try {
-                for (const queryObj of queries) {
-                    const { sql, params } = queryObj
-                    const result = this.executeQuery({ sql, params, isRaw })
-                    results.push(result)
-                }
-
-                return results
-            } catch (error) {
-                console.error('Transaction Execution Error:', error)
-                throw error
+        try {
+            for (const queryObj of queries) {
+                const { sql, params } = queryObj
+                const result = await this.executeQuery({ sql, params, isRaw })
+                results.push(result)
             }
-        })
+
+            return results
+        } catch (error) {
+            console.error('Transaction Execution Error:', error)
+            throw error
+        }
     }
 }

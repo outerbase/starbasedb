@@ -93,6 +93,12 @@ export class StarbaseDB {
             this.queryRoute(c.req.raw, true)
         )
         this.app.post('/query', async (c) => this.queryRoute(c.req.raw, false))
+        this.app.get('/status/trace', async (c) => {
+            const response = await fetch('https://cloudflare.com/cdn-cgi/trace')
+            return new Response(response.body, {
+                headers: response.headers,
+            })
+        })
 
         if (this.getFeature('rest')) {
             this.app.all('/rest/*', async (c) => {
