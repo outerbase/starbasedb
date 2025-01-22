@@ -87,7 +87,7 @@ export class QueryLogPlugin extends StarbasePlugin {
     private async addQuery(dataSource: DataSource) {
         try {
             const statement =
-                'INSERT INTO tmp_query_log (sql_statement, duration) VALUES (?, ?, ?)'
+                'INSERT INTO tmp_query_log (sql_statement, duration) VALUES (?, ?)'
             await dataSource.rpc.executeQuery({
                 sql: statement,
                 params: [this.state.query, this.state.totalTime],
