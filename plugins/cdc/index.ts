@@ -21,20 +21,14 @@ interface CDCEventPayload {
 }
 
 export class ChangeDataCapturePlugin extends StarbasePlugin {
-    // Prefix
+    // Prefix route
     public prefix: string = '/cdc'
     // Stub of the Durable Object class for us to access the web socket
     private durableObjectStub
     // If all events should be broadcasted,
     private broadcastAllEvents?: boolean
     // A list of events that the user is listening to
-    private listeningEvents?: ChangeEvent[] = [
-        {
-            action: 'INSERT',
-            schema: 'main',
-            table: 'orders',
-        },
-    ]
+    private listeningEvents?: ChangeEvent[] = []
     // Configuration details about the request and user
     private config?: StarbaseDBConfiguration
     // Add this new property
@@ -43,12 +37,14 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
     constructor(opts?: {
         stub?: DurableObjectStub<StarbaseDBDurableObject>
         broadcastAllEvents?: boolean
+        events?: ChangeEvent[]
     }) {
         super('starbasedb:change-data-capture', {
             requiresAuth: false,
         })
         this.durableObjectStub = opts?.stub
         this.broadcastAllEvents = opts?.broadcastAllEvents
+        this.listeningEvents = opts?.events
     }
 
     override async register(app: StarbaseApp) {
@@ -70,11 +66,6 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
             // Create a new Request object with the modified URL
             let raw: Request = c.req.raw.clone()
             const sessionId = crypto.randomUUID()
-
-            // Save active sessionId in a `tmp_change_detection` table
-            // In the DO we should assign this sessionId to a web socket connection
-            // Then when we hit `/broadcast?sessionId=123` append the sessionId to it
-            // If we detect that query param, only send to connections matching that
 
             raw = new Request(
                 `https://example.com/socket?sessionId=${sessionId}`,
@@ -197,9 +188,22 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
     /**
      * Register a callback function to be called when CDC events occur
      * @param callback The function to be called with the CDC event payload
+     * @param ctx Optional ExecutionContext for waitUntil support
      */
-    public onEvent(callback: (payload: CDCEventPayload) => void) {
-        this.eventCallbacks.push(callback)
+    public onEvent(
+        callback: (payload: CDCEventPayload) => void | Promise<void>,
+        ctx?: ExecutionContext
+    ) {
+        // For any registered callback to the `onEvent` of our CDC plugin, we
+        // will execute it after the response has been returned as to not impact
+        // roundtrip query times – hence the usage of `ctx.waitUntil(...)`
+        const wrappedCallback = async (payload: CDCEventPayload) => {
+            const result = callback(payload)
+            if (result instanceof Promise && ctx) {
+                ctx.waitUntil(result)
+            }
+        }
+        this.eventCallbacks.push(wrappedCallback)
     }
 
     queryEventDetected(

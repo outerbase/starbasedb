@@ -172,13 +172,10 @@ export default {
             }
 
             const webSocketPlugin = new WebSocketPlugin()
-
             const cdcPlugin = new ChangeDataCapturePlugin({
                 stub,
-                broadcastAllEvents: true,
-            })
-            cdcPlugin.onEvent((payload) => {
-                console.log('CDC Event Callback received:', payload)
+                broadcastAllEvents: false,
+                events: [],
             })
 
             const plugins = [
@@ -191,8 +188,8 @@ export default {
                 new SqlMacrosPlugin({
                     preventSelectStar: false,
                 }),
+                new QueryLogPlugin({ ctx }),
                 cdcPlugin,
-                new QueryLogPlugin(),
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({

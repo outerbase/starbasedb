@@ -1,8 +1,4 @@
-import {
-    StarbaseApp,
-    StarbaseContext,
-    StarbaseDBConfiguration,
-} from '../../src/handler'
+import { StarbaseApp, StarbaseDBConfiguration } from '../../src/handler'
 import { StarbasePlugin } from '../../src/plugin'
 import { DataSource } from '../../src/types'
 
@@ -12,37 +8,36 @@ const SQL_QUERIES = {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             sql_statement TEXT NOT NULL,
             duration INTEGER NOT NULL,
-            status INTEGER NOT NULL,
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP
         )
     `,
 }
 
 export class QueryLogPlugin extends StarbasePlugin {
-    config?: StarbaseDBConfiguration
-    context?: StarbaseContext
+    // Data source to run internal RPC queries
+    dataSource?: DataSource
+    // Execution context is the `ctx` from the worker for running delayed operations
+    executionContext?: ExecutionContext
+    // Add TTL configuration (default 1 day)
+    private readonly ttl: number = 1
 
     state = {
         startTime: new Date(),
         endTime: new Date(),
         totalTime: 0,
         query: '',
-        status: 200,
     }
 
-    constructor() {
+    constructor(opts?: { ctx?: ExecutionContext }) {
         super('starbasedb:query-log')
+        this.executionContext = opts?.ctx
     }
 
     override async register(app: StarbaseApp) {
         app.use(async (c, next) => {
-            this.config = c?.get('config')
-            this.context = c
-
-            console.log('Registered my QueryLogPlugin')
             // Create subscription table if it doesn't exist
-            const dataSource = c?.get('dataSource')
-            await dataSource?.rpc.executeQuery({
+            this.dataSource = c?.get('dataSource')
+            await this.dataSource?.rpc.executeQuery({
                 sql: SQL_QUERIES.CREATE_TABLE,
                 params: [],
             })
@@ -84,8 +79,7 @@ export class QueryLogPlugin extends StarbasePlugin {
         }
 
         // Do a purge action for older than TTL items
-        // this.context.waitUntil(this.expireLog())
-        // Maybe a global callable method to trigger ctx.waitUntil and pass in an arbitrary function to execute?
+        this.executionContext?.waitUntil(this.expireLog())
 
         return opts.result
     }
@@ -93,14 +87,10 @@ export class QueryLogPlugin extends StarbasePlugin {
     private async addQuery(dataSource: DataSource) {
         try {
             const statement =
-                'INSERT INTO tmp_query_log (sql_statement, duration, status) VALUES (?, ?, ?)'
+                'INSERT INTO tmp_query_log (sql_statement, duration) VALUES (?, ?, ?)'
             await dataSource.rpc.executeQuery({
                 sql: statement,
-                params: [
-                    this.state.query,
-                    this.state.totalTime,
-                    this.state.status,
-                ],
+                params: [this.state.query, this.state.totalTime],
             })
         } catch (error) {
             console.error('Error inserting rejected allowlist query:', error)
@@ -108,5 +98,24 @@ export class QueryLogPlugin extends StarbasePlugin {
         }
     }
 
-    private expireLog() {}
+    private async expireLog(): Promise<boolean> {
+        try {
+            if (!this.dataSource) {
+                return false
+            }
+
+            const statement = `
+                DELETE FROM tmp_query_log 
+                WHERE created_at < datetime('now', '-' || ? || ' days')
+            `
+            await this.dataSource.rpc.executeQuery({
+                sql: statement,
+                params: [this.ttl],
+            })
+            return true
+        } catch (error) {
+            console.error('Error purging old query logs:', error)
+            return false
+        }
+    }
 }
