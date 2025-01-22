@@ -87,6 +87,11 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
         dataSource?: DataSource
         config?: StarbaseDBConfiguration
     }): Promise<any> {
+        // Exit early if no listening events exist
+        if (!this.broadcastAllEvents && this.listeningEvents?.length === 0) {
+            return opts.result
+        }
+
         try {
             // Parse the SQL statement
             const ast = parser.astify(opts.sql)
