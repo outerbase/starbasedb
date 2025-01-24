@@ -3,7 +3,7 @@ import { DataSource, QueryResult } from '../types'
 import sqlparser from 'node-sql-parser'
 const parser = new sqlparser.Parser()
 
-function hasModifyingStatement(ast: any): boolean {
+export function hasModifyingStatement(ast: any): boolean {
     // Check if current node is a modifying statement
     if (
         ast.type &&
@@ -59,6 +59,7 @@ export async function beforeQueryCache(opts: {
         timestamp: string
         ttl: number
         results: string
+        [key: string]: any
     }
 
     const result = (await dataSource.rpc.executeQuery({

@@ -14,17 +14,11 @@ export function createResponse(
     error: string | undefined,
     status: number
 ): Response {
-    return Response.json(
-        {
-            result,
-            error,
+    return new Response(JSON.stringify({ result, error }), {
+        status,
+        headers: {
+            ...corsHeaders,
+            'Content-Type': 'application/json',
         },
-        {
-            status,
-            headers: {
-                ...corsHeaders,
-                'Content-Type': 'application/json',
-            },
-        }
-    )
+    })
 }

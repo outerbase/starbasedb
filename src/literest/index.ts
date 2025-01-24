@@ -367,8 +367,11 @@ export class LiteREST {
             const response = await this.executeOperation([
                 { sql: query, params },
             ])
-            const resultArray = response.result
-            return createResponse(resultArray, undefined, 200)
+            let resultData = response.result
+            if (!Array.isArray(resultData)) {
+                resultData = [resultData]
+            }
+            return createResponse(resultData, undefined, 200)
         } catch (error: any) {
             console.error('GET Operation Error:', error)
             return createResponse(
@@ -567,9 +570,30 @@ export class LiteREST {
         schemaName: string | undefined,
         id: string | undefined
     ): Promise<Response> {
+        console.log(`Executing DELETE on table: ${tableName}, ID: ${id}`)
+
         const pkColumns = await this.getPrimaryKeyColumns(tableName, schemaName)
+        console.log('Primary Key Columns:', pkColumns)
 
         let data: any = {}
+
+        if (!id) {
+            console.error('DELETE Error: Missing primary key value for ID')
+            return createResponse(
+                undefined,
+                "Missing primary key value for 'id'",
+                400
+            )
+        }
+
+        if (!pkColumns.length) {
+            console.error('DELETE Error: No primary key found for table')
+            return createResponse(
+                undefined,
+                `No primary key found for table '${tableName}'`,
+                400
+            )
+        }
 
         // Currently the DELETE only works with single primary key tables.
         if (pkColumns.length) {
@@ -596,10 +620,14 @@ export class LiteREST {
         const query = `DELETE FROM ${
             schemaName ? `${schemaName}.` : ''
         }${tableName} WHERE ${pkConditions.join(' AND ')}`
+
+        console.log('Final DELETE Query:', query, 'Params:', pkParams)
         const queries = [{ sql: query, params: pkParams }]
 
         try {
-            await this.executeOperation(queries)
+            const result = await this.executeOperation(queries)
+            console.log('DELETE Operation Result:', result)
+
             return createResponse(
                 { message: 'Resource deleted successfully' },
                 undefined,

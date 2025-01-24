@@ -6,14 +6,17 @@ export async function executeOperation(
     queries: { sql: string; params?: any[] }[],
     dataSource: DataSource,
     config: StarbaseDBConfiguration
-): Promise<any> {
+): Promise<any[]> {
     const results: any[] = (await executeTransaction({
         queries,
         isRaw: false,
         dataSource,
         config,
     })) as any[]
-    return results?.length > 0 ? results[0] : undefined
+    // return results?.length > 0 ? results[0] : undefined
+    return results.length > 0 && Array.isArray(results[0])
+        ? results[0]
+        : results
 }
 
 export async function getTableData(
@@ -34,7 +37,7 @@ export async function getTableData(
             config
         )
 
-        if (tableExistsResult.length === 0) {
+        if (!tableExistsResult || tableExistsResult.length === 0) {
             return null
         }
 
