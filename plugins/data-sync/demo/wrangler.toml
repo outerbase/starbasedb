@@ -1,0 +1,32 @@
+# Demo configuration for data-sync plugin
+name = "starbasedb-data-sync-demo"
+main = "test.ts"
+compatibility_date = "2024-01-24"
+
+[durable_objects]
+bindings = [{ name = "DATABASE_DURABLE_OBJECT", class_name = "StarbaseDBDurableObject" }]
+
+[[migrations]]
+tag = "v1"
+new_classes = ["StarbaseDBDurableObject"]
+
+# External database source details
+[vars]
+# These should be set via environment variables in production
+ADMIN_AUTHORIZATION_TOKEN = ""  # Set via environment: ADMIN_TOKEN
+CLIENT_AUTHORIZATION_TOKEN = ""  # Set via environment: CLIENT_TOKEN
+REGION = "auto"
+EXTERNAL_DB_TYPE = "postgresql"
+EXTERNAL_DB_HOST = "localhost"
+EXTERNAL_DB_PORT = 5432
+EXTERNAL_DB_USER = ""  # Set via environment: DB_USER
+EXTERNAL_DB_PASS = ""  # Set via environment: DB_PASSWORD
+EXTERNAL_DB_DATABASE = "demo"
+EXTERNAL_DB_DEFAULT_SCHEMA = "public"
+ENABLE_ALLOWLIST = 0
+ENABLE_RLS = 0
+
+# Plugin configuration
+[plugins.data-sync]
+sync_interval = 30  # Sync every 30 seconds for demo purposes
+tables = ["users", "posts"] 
