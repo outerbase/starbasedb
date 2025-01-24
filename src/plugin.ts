@@ -79,10 +79,15 @@ export class StarbasePluginRegistry {
         let { sql, params } = opts
 
         for (const plugin of this.plugins) {
-            const { sql: _sql, params: _params } =
-                await plugin.beforeQuery(opts)
-            sql = _sql
-            params = _params
+            const modified = await plugin.beforeQuery({
+                sql,
+                params,
+                dataSource: opts.dataSource,
+                config: opts.config,
+            })
+            await plugin.beforeQuery(opts)
+            sql = modified.sql
+            params = modified.params
         }
 
         return {
