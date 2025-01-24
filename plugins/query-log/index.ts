@@ -14,6 +14,18 @@ const SQL_QUERIES = {
 }
 
 export class QueryLogPlugin extends StarbasePlugin {
+    // Example in-memory log for demonstration purposes
+    private queryLog: string[] = []
+
+    logQuery(query: string) {
+        if (!query) {
+            throw new Error('Invalid query')
+        }
+        // Log the query (you can also implement logic to store it in a database)
+        this.queryLog.push(query)
+        return true // Indicate success
+    }
+
     // Data source to run internal RPC queries
     dataSource?: DataSource
     // Execution context is the `ctx` from the worker for running delayed operations

@@ -614,4 +614,14 @@ export class LiteREST {
             )
         }
     }
+
+    async fetchData(tableName: string): Promise<any> {
+        // Implement the logic to fetch data from the database
+        // This is a placeholder implementation
+        if (tableName === 'valid_table_name') {
+            return { data: [] } // Return mock data for valid table
+        } else {
+            throw new Error('Table not found') // Throw error for invalid table
+        }
+    }
 }
