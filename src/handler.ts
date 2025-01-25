@@ -119,7 +119,8 @@ export class StarbaseDB {
                     return startChunkedDumpRoute(
                         this.dataSource,
                         this.config,
-                        c.env
+                        c.env,
+                        c.req.raw
                     )
                 }
             )

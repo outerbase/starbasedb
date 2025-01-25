@@ -45,7 +45,11 @@ export class StarbaseDBDurableObject extends DurableObject {
     init() {
         return {
             executeQuery: this.executeQuery.bind(this),
-            storage: this.storage,
+            storage: {
+                get: this.storage.get.bind(this.storage),
+                put: this.storage.put.bind(this.storage),
+                delete: this.storage.delete.bind(this.storage),
+            },
             setAlarm: (timestamp: number) => this.storage.setAlarm(timestamp),
         }
     }
@@ -217,19 +221,39 @@ export class StarbaseDBDurableObject extends DurableObject {
     }
 
     async alarm(): Promise<void> {
-        // Check if this is a dump processing alarm
-        const dumpProgress = await this.storage.get('dump_progress')
-        if (dumpProgress) {
-            const dataSource: DataSource = {
-                rpc: {
-                    executeQuery: this.executeQuery.bind(this),
-                    storage: this.storage,
-                    setAlarm: (timestamp: number) =>
-                        this.storage.setAlarm(timestamp),
-                },
-                source: 'internal',
+        try {
+            console.log('Alarm triggered')
+            // List all dump progress keys
+            const allKeys = await this.storage.list({
+                prefix: 'dump_progress_',
+            })
+            console.log('Found dump progress keys:', allKeys)
+
+            // Process each active dump
+            for (const key of allKeys.keys()) {
+                const dumpProgress = await this.storage.get(key)
+                console.log(
+                    'Processing dump progress for key:',
+                    key,
+                    dumpProgress
+                )
+
+                if (dumpProgress) {
+                    const dataSource: DataSource = {
+                        rpc: {
+                            executeQuery: this.executeQuery.bind(this),
+                            storage: this.storage,
+                            setAlarm: (timestamp: number) =>
+                                this.storage.setAlarm(timestamp),
+                        },
+                        source: 'internal',
+                    }
+                    await processDumpChunk(dataSource, this.config, this.env)
+                }
             }
-            await processDumpChunk(dataSource, this.config, this.env)
+        } catch (error: any) {
+            console.error('Error in alarm handler:', error)
+            console.error('Error stack:', error.stack)
         }
     }
 
