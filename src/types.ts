@@ -50,7 +50,22 @@ export type ExternalDatabaseSource =
     | TursoDBSource
 
 export type DataSource = {
-    rpc: Awaited<ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>>
+    rpc: {
+        executeQuery: (opts: {
+            sql: string
+            params?: unknown[]
+            isRaw?: boolean
+        }) => Promise<
+            | QueryResult[]
+            | {
+                  columns: string[]
+                  rows: any[][]
+                  meta: { rows_read: number; rows_written: number }
+              }
+        >
+        storage: DurableObjectStorage
+        setAlarm: (timestamp: number) => Promise<void>
+    }
     source: 'internal' | 'external'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>

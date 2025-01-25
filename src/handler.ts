@@ -15,6 +15,11 @@ import { importTableFromCsvRoute } from './import/csv'
 import { corsPreflight } from './cors'
 import { handleApiRequest } from './api'
 import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
+import {
+    startChunkedDumpRoute,
+    getDumpStatusRoute,
+    getDumpFileRoute,
+} from './export/chunked-dump'
 
 export interface StarbaseDBConfiguration {
     outerbaseApiKey?: string
@@ -107,6 +112,36 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
+            this.app.post(
+                '/export/dump/chunked',
+                this.isInternalSource,
+                async (c) => {
+                    return startChunkedDumpRoute(
+                        this.dataSource,
+                        this.config,
+                        c.env
+                    )
+                }
+            )
+
+            this.app.get(
+                '/export/dump/:dumpId/status',
+                this.isInternalSource,
+                async (c) => {
+                    const dumpId = c.req.param('dumpId')
+                    return getDumpStatusRoute(dumpId, this.dataSource)
+                }
+            )
+
+            this.app.get(
+                '/export/dump/:dumpId',
+                this.isInternalSource,
+                async (c) => {
+                    const dumpId = c.req.param('dumpId')
+                    return getDumpFileRoute(dumpId, this.dataSource, c.env)
+                }
+            )
+
             this.app.get('/export/dump', this.isInternalSource, async () => {
                 return dumpDatabaseRoute(this.dataSource, this.config)
             })

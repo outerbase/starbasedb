@@ -1,4 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
+import { processDumpChunk } from './export/chunked-dump'
+import { StarbaseDBConfiguration } from './handler'
+import { DataSource } from './types'
 
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
@@ -6,6 +9,10 @@ export class StarbaseDBDurableObject extends DurableObject {
     public storage: DurableObjectStorage
     // Map of WebSocket connections to their corresponding session IDs
     public connections = new Map<string, WebSocket>()
+    // Configuration for the database instance
+    private config: StarbaseDBConfiguration
+    // Environment variables
+    protected env: Env
 
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
@@ -14,56 +21,32 @@ export class StarbaseDBDurableObject extends DurableObject {
      * @param ctx - The interface for interacting with Durable Object state
      * @param env - The interface to reference bindings declared in wrangler.toml
      */
-    constructor(ctx: DurableObjectState, env: Env) {
-        super(ctx, env)
-        this.sql = ctx.storage.sql
-        this.storage = ctx.storage
+    constructor(state: DurableObjectState, env: Env) {
+        super(state, env)
+        this.storage = state.storage
+        this.sql = state.storage.sql
+        this.env = env
 
-        // Install default necessary `tmp_` tables for various features here.
-        const cacheStatement = `
-        CREATE TABLE IF NOT EXISTS tmp_cache (
-            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-            "timestamp" REAL NOT NULL,
-            "ttl" INTEGER NOT NULL,
-            "query" TEXT UNIQUE NOT NULL,
-            "results" TEXT
-        );`
+        // Initialize configuration
+        this.config = {
+            role: 'admin',
+            features: {
+                import: true,
+                export: true,
+                allowlist: Boolean(env.ENABLE_ALLOWLIST),
+                rls: Boolean(env.ENABLE_RLS),
+            },
+        }
 
-        const allowlistStatement = `
-        CREATE TABLE IF NOT EXISTS tmp_allowlist_queries (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sql_statement TEXT NOT NULL,
-            source TEXT DEFAULT 'external'
-        )`
-        const allowlistRejectedStatement = `
-        CREATE TABLE IF NOT EXISTS tmp_allowlist_rejections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            sql_statement TEXT NOT NULL,
-            source TEXT DEFAULT 'external',
-            created_at TEXT DEFAULT (datetime('now'))
-        )`
-
-        const rlsStatement = `
-        CREATE TABLE IF NOT EXISTS tmp_rls_policies (
-            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
-            "actions" TEXT NOT NULL CHECK(actions IN ('SELECT', 'UPDATE', 'INSERT', 'DELETE')),
-            "schema" TEXT,
-            "table" TEXT NOT NULL,
-            "column" TEXT NOT NULL,
-            "value" TEXT NOT NULL,
-            "value_type" TEXT NOT NULL DEFAULT 'string',
-            "operator" TEXT DEFAULT '='
-        )`
-
-        this.executeQuery({ sql: cacheStatement })
-        this.executeQuery({ sql: allowlistStatement })
-        this.executeQuery({ sql: allowlistRejectedStatement })
-        this.executeQuery({ sql: rlsStatement })
+        // Initialize tables
+        this.initializeTables()
     }
 
     init() {
         return {
             executeQuery: this.executeQuery.bind(this),
+            storage: this.storage,
+            setAlarm: (timestamp: number) => this.storage.setAlarm(timestamp),
         }
     }
 
@@ -218,5 +201,78 @@ export class StarbaseDBDurableObject extends DurableObject {
             console.error('Transaction Execution Error:', error)
             throw error
         }
+    }
+
+    private convertToStubArrayBuffer(value: ArrayBuffer): {
+        byteLength: number
+        slice: (begin: number, end?: number) => Promise<ArrayBuffer>
+        [Symbol.toStringTag]: string
+    } {
+        return {
+            byteLength: value.byteLength,
+            slice: async (begin: number, end?: number) =>
+                value.slice(begin, end),
+            [Symbol.toStringTag]: 'ArrayBuffer',
+        }
+    }
+
+    async alarm(): Promise<void> {
+        // Check if this is a dump processing alarm
+        const dumpProgress = await this.storage.get('dump_progress')
+        if (dumpProgress) {
+            const dataSource: DataSource = {
+                rpc: {
+                    executeQuery: this.executeQuery.bind(this),
+                    storage: this.storage,
+                    setAlarm: (timestamp: number) =>
+                        this.storage.setAlarm(timestamp),
+                },
+                source: 'internal',
+            }
+            await processDumpChunk(dataSource, this.config, this.env)
+        }
+    }
+
+    private async initializeTables() {
+        // Install default necessary `tmp_` tables for various features here.
+        const cacheStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_cache (
+            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "timestamp" REAL NOT NULL,
+            "ttl" INTEGER NOT NULL,
+            "query" TEXT UNIQUE NOT NULL,
+            "results" TEXT
+        );`
+
+        const allowlistStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_allowlist_queries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sql_statement TEXT NOT NULL,
+            source TEXT DEFAULT 'external'
+        )`
+        const allowlistRejectedStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_allowlist_rejections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sql_statement TEXT NOT NULL,
+            source TEXT DEFAULT 'external',
+            created_at TEXT DEFAULT (datetime('now'))
+        )`
+
+        const rlsStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_rls_policies (
+            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "actions" TEXT NOT NULL CHECK(actions IN ('SELECT', 'UPDATE', 'INSERT', 'DELETE')),
+            "schema" TEXT,
+            "table" TEXT NOT NULL,
+            "column" TEXT NOT NULL,
+            "value" TEXT NOT NULL,
+            "value_type" TEXT NOT NULL DEFAULT 'string',
+            "operator" TEXT DEFAULT '='
+        )`
+
+        await this.executeQuery({ sql: cacheStatement })
+        await this.executeQuery({ sql: allowlistStatement })
+        await this.executeQuery({ sql: allowlistRejectedStatement })
+        await this.executeQuery({ sql: rlsStatement })
     }
 }

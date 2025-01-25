@@ -14,6 +14,12 @@ compatibility_flags = ["nodejs_compat_v2"]
 [observability]
 enabled = true
 
+# R2 bucket for storing database dumps
+[[r2_buckets]]
+binding = "DATABASE_DUMPS"
+bucket_name = "starbasedb-dumps"
+preview_bucket_name = "starbasedb-dumps-dev"
+
 # Bind a Durable Object. Durable objects are a scale-to-zero compute primitive based on the actor model.
 # Durable Objects can live for as long as needed. Use these when you need a long-running "server", such as in realtime apps.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#durable-objects
