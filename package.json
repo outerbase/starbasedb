@@ -27,8 +27,7 @@
         "cf-typegen": "wrangler types",
         "delete": "wrangler delete",
         "prepare": "husky",
-        "test": "vitest",
-        "test:ci": "vitest --coverage.enabled true --coverage.reporter json-summary --coverage.reporter json --mode ci"
+        "test": "vitest"
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20241216.0",
