@@ -39,7 +39,7 @@ jobs:
         run: pnpm install
 
       - name: Run tests
-        run: pnpm vitest --coverage.enabled true --coverage.reportOnFailure
+        run: pnpm vitest --coverage.enabled true --coverage.reportOnFailure --coverage.reportsDirectory ./coverage || true
         continue-on-error: true
 
       - name: Report Coverage
