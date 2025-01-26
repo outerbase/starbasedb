@@ -1,6 +1,13 @@
 name: Test
 
 on:
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to run tests on'
+        required: true
+        default: 'main'
+        type: string
   push:
     branches:
       - main
@@ -9,6 +16,10 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+
+    permissions:
+      contents: read
+      pull-requests: write
 
     steps:
       - uses: actions/checkout@v3
@@ -28,4 +39,7 @@ jobs:
         run: pnpm install
 
       - name: Run tests
-        run: pnpm test
+        run: pnpm vitest --coverage.enabled true --coverage.reporter json-summary --coverage.reporter json
+
+      - name: Report Coverage
+        uses: davelosert/vitest-coverage-report-action@v2
