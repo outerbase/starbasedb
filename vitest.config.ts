@@ -9,10 +9,10 @@ export default defineConfig({
             exclude: ['**/node_modules/**'],
             reportOnFailure: true, // Ensures the report is generated even if tests fail
             thresholds: {
-                lines: 60,
-                branches: 60,
-                functions: 60,
-                statements: 60,
+                lines: 75,
+                branches: 75,
+                functions: 75,
+                statements: 75,
             },
         },
     },
