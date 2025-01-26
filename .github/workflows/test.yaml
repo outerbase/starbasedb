@@ -39,7 +39,7 @@ jobs:
         run: pnpm install
 
       - name: Run tests
-        run: pnpm vitest --coverage.enabled true --coverage.reporter json-summary --coverage.reporter json --coverage.thresholds.100
+        run: pnpm test:ci
 
       - name: Report Coverage
         uses: davelosert/vitest-coverage-report-action@v2

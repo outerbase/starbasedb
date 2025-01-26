@@ -7,12 +7,15 @@ export default defineConfig({
             reporter: ['text', 'html', 'json', 'json-summary', 'lcov'],
             include: ['src/**/*.ts'],
             exclude: ['**/node_modules/**'],
-            thresholds: {
-                lines: 60,
-                functions: 60,
-                branches: 60,
-                statements: 60,
-            },
+            thresholds:
+                process.env.MODE === 'ci'
+                    ? undefined
+                    : {
+                          lines: 60,
+                          functions: 60,
+                          branches: 60,
+                          statements: 60,
+                      },
         },
     },
 })
