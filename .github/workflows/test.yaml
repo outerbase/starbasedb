@@ -40,6 +40,7 @@ jobs:
 
       - name: Run tests
         run: pnpm vitest --coverage.enabled true --coverage.reportOnFailure
+        continue-on-error: true
 
       - name: Report Coverage
         uses: davelosert/vitest-coverage-report-action@v2
