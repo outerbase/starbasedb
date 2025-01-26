@@ -88,12 +88,17 @@ export class QueryLogPlugin extends StarbasePlugin {
             this.state.endTime.getTime() - this.state.startTime.getTime()
 
         // Queries can be omitted from
-        if (
-            opts.dataSource &&
-            !opts.sql.toUpperCase().trim().startsWith(this.omitPrefix) &&
-            this.omitEnabled
-        ) {
-            this.addQuery(opts?.dataSource)
+        if (opts.dataSource) {
+            if (
+                (this.omitEnabled &&
+                    !opts.sql
+                        .toUpperCase()
+                        .trim()
+                        .startsWith(this.omitPrefix)) ||
+                !this.omitEnabled
+            ) {
+                this.addQuery(opts?.dataSource)
+            }
         }
 
         // Do a purge action for older than TTL items
