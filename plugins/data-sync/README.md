@@ -1,111 +1,158 @@
 # Data Sync Plugin
 
-The Data Sync plugin enables automatic synchronization of data from external data sources (like PostgreSQL) to StarbaseDB's internal SQLite database. This plugin is useful for creating a close-to-edge replica of your data that can be queried as an alternative to querying the external database directly.
+The Data Sync plugin enables automatic data synchronization between external data sources and StarbaseDB's internal SQLite database. This plugin creates close-to-edge replicas by automatically pulling and synchronizing data from external sources at configurable intervals.
 
 ## Features
 
-- Automatic synchronization of specified tables from external to internal database
-- Configurable sync interval
-- Incremental updates based on timestamps and IDs
-- Automatic schema mapping from PostgreSQL to SQLite types
-- Persistent tracking of sync state
-- Graceful handling of connection issues and errors
-- Query interception hooks for monitoring and modification
-- Debug endpoints for monitoring sync status
+- Automatic data synchronization from external sources
+- Configurable sync intervals per table
+- Selective table synchronization
+- Incremental updates using timestamp and/or ID columns
+- Schema-aware table synchronization
+- Comprehensive type mapping
+- Error handling and retry logic
+- Sync state tracking and monitoring
 
 ## Installation
 
-The plugin is included in the StarbaseDB core package. To use it, simply configure it in your `wrangler.toml` file:
-
 ```toml
+# wrangler.toml
 [plugins.data-sync]
-sync_interval = 300  # Sync interval in seconds (default: 300)
-tables = ["users", "products"]  # List of tables to synchronize
+sync_interval = 300 # 5 minutes
+tables = [
+    "users",                    # Simple table (public schema)
+    "public.products",          # Explicit public schema
+    "users.profile",           # Custom schema
+    {
+        name: "orders",         # Config object with default schema
+        timestamp_column: "created_at"
+    },
+    {
+        name: "audit.logs",     # Config object with schema in name
+        timestamp_column: "logged_at",
+        batch_size: 500
+    }
+]
 ```
 
-## Configuration Options
+## Configuration
 
-| Option          | Type     | Description                                     | Default |
-| --------------- | -------- | ----------------------------------------------- | ------- |
-| `sync_interval` | number   | The interval in seconds between sync operations | 300     |
-| `tables`        | string[] | Array of table names to synchronize             | []      |
+### Basic Configuration
 
-## How It Works
+- `sync_interval`: Time between sync operations in seconds (default: 300)
+- `tables`: Array of tables to sync (can be string or object)
 
-1. The plugin creates a metadata table in the internal database to track sync state
-2. For each configured table:
-    - Retrieves the table schema from the external database
-    - Creates a corresponding table in the internal database
-    - Periodically checks for new or updated records based on `created_at` timestamp and `id`
-    - Syncs new data to the internal database
-    - Updates the sync state in the metadata table
-3. Provides hooks for query interception:
-    - `beforeQuery`: For monitoring or modifying queries before execution
-    - `afterQuery`: For processing results after query execution
+### Table Configuration Options
 
-## Requirements
+- `name`: Table name (can include schema, e.g., "schema.table")
+- `schema`: Database schema (optional, defaults to "public")
+- `timestamp_column`: Column for timestamp-based syncing (default: "created_at")
+- `id_column`: Column for ID-based syncing (default: "id")
+- `batch_size`: Number of records to sync per batch (default: 1000)
 
-- The external database tables must have:
-    - A `created_at` timestamp column for tracking changes
-    - An `id` column (numeric or string) for tracking record identity
-- The external database must support the `information_schema` for retrieving table metadata
+### Environment Variables
 
-## Type Mapping
+```env
+EXTERNAL_DB_TYPE=postgresql
+EXTERNAL_DB_HOST=localhost
+EXTERNAL_DB_PORT=5432
+EXTERNAL_DB_USER=postgres
+EXTERNAL_DB_PASS=postgres
+EXTERNAL_DB_DATABASE=demo
+EXTERNAL_DB_DEFAULT_SCHEMA=public
+```
 
-The plugin automatically maps PostgreSQL types to SQLite types:
+## Usage
 
-| PostgreSQL Type                          | SQLite Type |
-| ---------------------------------------- | ----------- |
-| integer, bigint                          | INTEGER     |
-| text, varchar, char                      | TEXT        |
-| boolean                                  | INTEGER     |
-| timestamp, date                          | TEXT        |
-| numeric, decimal, real, double precision | REAL        |
-| json, jsonb                              | TEXT        |
-
-## Example Usage
+### Basic Usage
 
 ```typescript
-import { DataSyncPlugin } from '@starbasedb/plugins/data-sync'
+import { DataSyncPlugin } from '@starbasedb/data-sync'
+import { PostgresSyncSource } from '@starbasedb/postgres-sync'
 
-// Initialize the plugin
-const dataSyncPlugin = new DataSyncPlugin({
-    sync_interval: 300, // 5 minutes
-    tables: ['users', 'orders'],
+// Create a sync source for your database
+const postgresSync = new PostgresSyncSource({
+    dialect: 'postgresql',
+    schema: 'public',
 })
 
-// Add to your StarbaseDB configuration
-const config = {
-    plugins: [dataSyncPlugin],
-    // ... other config options
+// Create the plugin
+const dataSyncPlugin = new DataSyncPlugin(postgresSync, {
+    sync_interval: 300,
+    tables: ['users', 'products'],
+})
+
+// Register with your app
+app.register(dataSyncPlugin)
+```
+
+### Advanced Usage
+
+```typescript
+const dataSyncPlugin = new DataSyncPlugin(postgresSync, {
+    sync_interval: 300,
+    tables: [
+        // Simple table with defaults
+        'users',
+
+        // Custom sync configuration
+        {
+            name: 'orders',
+            timestamp_column: 'order_date',
+            id_column: 'order_id',
+            batch_size: 500,
+        },
+
+        // Schema-specific table
+        {
+            name: 'audit.logs',
+            timestamp_column: 'logged_at',
+            batch_size: 200,
+        },
+    ],
+})
+```
+
+## Table Naming
+
+The plugin prefixes all synced tables with `tmp_` to distinguish them from user-created tables:
+
+- `users` → `tmp_users`
+- `public.products` → `tmp_products`
+- `audit.logs` → `tmp_audit_logs`
+
+## Monitoring
+
+Monitor sync status using the provided endpoints:
+
+```bash
+# Check sync status
+curl http://localhost:8787/sync-status
+
+# View synced data
+curl http://localhost:8787/sync-data
+
+# Debug information
+curl http://localhost:8787/debug
+```
+
+## Error Handling
+
+The plugin provides comprehensive error handling:
+
+- Failed records are logged but don't stop the sync process
+- Sync errors are stored in metadata
+- Automatic retries on next sync interval
+- Detailed error logging with context
+
+## Extending
+
+Support for new databases can be added by implementing the `DatabaseSyncSource` abstract class:
+
+```typescript
+class MySQLSyncSource extends DatabaseSyncSource {
+    // Implement required methods
 }
 ```
 
-## Demo
-
-A complete demo implementation is available in the `demo` directory. The demo shows:
-
-- Setting up the plugin with PostgreSQL
-- Using query hooks for monitoring
-- Testing sync functionality
-- Debugging and monitoring endpoints
-
-See [Demo README](./demo/README.md) for detailed instructions.
-
-## Limitations
-
-- The plugin currently assumes the presence of `created_at` and `id` columns
-- Large tables may take longer to sync initially
-- Deleted records in the external database are not automatically removed from the internal database
-- The sync operation is pull-based and runs on a fixed interval
-
-## Security Notes
-
-- Always use secure, randomly generated tokens for authentication
-- Store sensitive credentials in environment variables
-- In production, enable authentication and use secure database credentials
-- The demo uses example tokens (like "ABC123") for illustration only
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
+See the PostgreSQL implementation for a reference.
