@@ -1,0 +1,20 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {},
+        "secrets": {
+            "pg_connection_string": ""
+        },
+        "variables": {
+            "schema": "public"
+        }
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {
+            "sync_interval": "",
+            "tables": ""
+        }
+    }
+}

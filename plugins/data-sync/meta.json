@@ -1,20 +1,23 @@
 {
-    "name": "data-sync",
     "version": "1.0.0",
-    "description": "Synchronizes data from external sources to StarbaseDB's internal SQLite database",
-    "author": "StarbaseDB",
-    "license": "MIT",
-    "type": "sync",
-    "config": {
-        "sync_interval": {
-            "type": "number",
-            "description": "Interval in seconds between sync operations",
-            "default": 300
-        },
+    "resources": {
         "tables": {
-            "type": "array",
-            "description": "List of tables to synchronize",
-            "default": []
+            "tmp_data_sync_metadata": [
+                "table_name",
+                "last_sync_timestamp",
+                "last_sync_id",
+                "sync_errors"
+            ]
+        },
+        "secrets": {},
+        "variables": {
+            "sync_interval": "300",
+            "tables": "[]"
         }
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
     }
 }
