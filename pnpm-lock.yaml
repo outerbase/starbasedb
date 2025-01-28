@@ -55,7 +55,7 @@ importers:
         specifier: ^5.7.2
         version: 5.7.2
       vitest:
-        specifier: ^2.1.8
+        specifier: 2.1.8
         version: 2.1.8(@types/node@22.10.2)
       wrangler:
         specifier: ^3.96.0
