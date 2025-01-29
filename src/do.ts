@@ -73,7 +73,9 @@ export class StarbaseDBDurableObject extends DurableObject {
         activeConnections: number
         recentQueries: number
     }> {
-        const sql = 'SELECT COUNT(*) as count FROM tmp_query_log'
+        const sql = `SELECT COUNT(*) as count 
+            FROM tmp_query_log 
+            WHERE created_at >= datetime('now', '-24 hours')`
         const result = (await this.executeQuery({
             sql,
             isRaw: false,
