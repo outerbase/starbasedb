@@ -8,7 +8,6 @@ interface Env {
     STUDIO_PASS: '123456'
     ENABLE_ALLOWLIST: 0
     ENABLE_RLS: 0
-    EXTERNAL_DB_TYPE: 'postgresql'
     AUTH_ALGORITHM: 'RS256'
     AUTH_JWKS_ENDPOINT: ''
     DATABASE_DURABLE_OBJECT: DurableObjectNamespace<
