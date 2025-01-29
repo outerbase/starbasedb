@@ -86,7 +86,7 @@ export class StarbaseDBDurableObject extends DurableObject {
             // Size in bytes
             databaseSize: this.sql.databaseSize,
             // Count of persistent web socket connections
-            activeConnections: this.connections.keys.length,
+            activeConnections: this.connections.size,
             // Assuming the `QueryLogPlugin` is in use, count is of the last 24 hours
             recentQueries: Number(row.count),
         }
