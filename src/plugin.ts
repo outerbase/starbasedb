@@ -70,6 +70,10 @@ export class StarbasePluginRegistry {
         }
     }
 
+    public currentPlugins(): string[] {
+        return this.plugins.map((plugin) => plugin.name)
+    }
+
     public async beforeQuery(opts: {
         sql: string
         params?: unknown[]

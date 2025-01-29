@@ -63,7 +63,30 @@ export class StarbaseDBDurableObject extends DurableObject {
 
     init() {
         return {
+            getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
+        }
+    }
+
+    public async getStatistics(): Promise<{
+        databaseSize: number
+        activeConnections: number
+        recentQueries: number
+    }> {
+        const sql = 'SELECT COUNT(*) as count FROM tmp_query_log'
+        const result = (await this.executeQuery({
+            sql,
+            isRaw: false,
+        })) as Record<string, SqlStorageValue>[]
+        const row = result.length ? result[0] : { count: 0 }
+
+        return {
+            // Size in bytes
+            databaseSize: this.sql.databaseSize,
+            // Count of persistent web socket connections
+            activeConnections: this.connections.keys.length,
+            // Assuming the `QueryLogPlugin` is in use, count is of the last 24 hours
+            recentQueries: Number(row.count),
         }
     }
 
