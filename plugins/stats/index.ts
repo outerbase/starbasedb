@@ -1,6 +1,7 @@
 import { DataSource } from '../../dist'
 import { StarbaseApp, StarbaseDBConfiguration } from '../../src/handler'
 import { StarbasePlugin } from '../../src/plugin'
+import { createResponse } from '../../src/utils'
 
 export class StatsPlugin extends StarbasePlugin {
     // Prefix route
@@ -35,11 +36,7 @@ export class StatsPlugin extends StarbasePlugin {
                 ...stats,
                 plugins: this.dataSource?.registry?.currentPlugins(),
             }
-            return new Response(JSON.stringify(additionalStats), {
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-            })
+            return createResponse(additionalStats, undefined, 200)
         })
     }
 }
