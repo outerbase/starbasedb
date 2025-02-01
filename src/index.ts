@@ -9,6 +9,7 @@ import { StudioPlugin } from '../plugins/studio'
 import { SqlMacrosPlugin } from '../plugins/sql-macros'
 import { ChangeDataCapturePlugin } from '../plugins/cdc'
 import { QueryLogPlugin } from '../plugins/query-log'
+import { StatsPlugin } from '../plugins/stats'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -190,6 +191,7 @@ export default {
                 }),
                 new QueryLogPlugin({ ctx }),
                 cdcPlugin,
+                new StatsPlugin(),
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
