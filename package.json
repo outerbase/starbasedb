@@ -43,6 +43,7 @@
     "dependencies": {
         "@libsql/client": "^0.14.0",
         "@outerbase/sdk": "2.0.0-rc.3",
+        "cron-parser": "^4.9.0",
         "hono": "^4.6.14",
         "jose": "^5.9.6",
         "mongodb": "^6.11.0",
