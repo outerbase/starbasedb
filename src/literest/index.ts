@@ -252,6 +252,12 @@ export class LiteREST {
         )
         const schemaName = this.sanitizeIdentifier(pathParts[0])
         const id = pathParts.length === 3 ? pathParts[2] : undefined
+        console.log('Parsed Request:', {
+            method: liteRequest.method,
+            tableName,
+            id,
+        })
+
         const body = ['POST', 'PUT', 'PATCH'].includes(liteRequest.method)
             ? await liteRequest.json()
             : undefined

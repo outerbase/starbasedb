@@ -90,7 +90,7 @@ describe('StarbasePlugin', () => {
             sql: 'SELECT * FROM users',
         })
 
-        expect(result.sql).toBe('[B] [A] SELECT * FROM users') // Ensures order is correct
+        expect(result.sql).toBe('[B] [A] SELECT * FROM users')
     })
 })
 

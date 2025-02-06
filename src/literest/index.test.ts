@@ -32,15 +32,12 @@ beforeEach(() => {
     vi.clearAllMocks()
 
     mockDataSource = {
-        source: 'internal',
+        source: 'external',
         external: {
             dialect: 'sqlite',
         } as any,
         rpc: {
-            executeQuery: vi.fn().mockResolvedValue([
-                { id: 1, name: 'Alice' },
-                { id: 2, name: 'Bob' },
-            ]),
+            executeQuery: vi.fn(),
         },
     } as any
 
@@ -270,52 +267,52 @@ describe('LiteREST', () => {
             expect(jsonResponse.error).toBe('Invalid data format')
         })
 
-        // it('should handle DELETE requests successfully', async () => {
-        //     vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
-        //         console.log('Mock executeQuery called with:', sql)
+        it('should handle DELETE requests successfully', async () => {
+            vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
+                console.log('Mock executeQuery called with:', sql)
 
-        //         if (sql.includes('PRAGMA table_info(users)')) {
-        //             return [{ name: 'id', pk: 1 }]
-        //         }
+                if (sql.includes('PRAGMA table_info(users)')) {
+                    return [{ name: 'id', pk: 1 }]
+                }
 
-        //         return []
-        //     })
-        //     vi.mocked(executeTransaction).mockResolvedValue([])
+                return []
+            })
+            vi.mocked(executeTransaction).mockResolvedValue([])
 
-        //     const request = new Request('http://localhost/rest/users/1', {
-        //         method: 'DELETE',
-        //     })
-        //     const response = await liteRest.handleRequest(request)
+            const request = new Request('http://localhost/rest/users/1', {
+                method: 'DELETE',
+            })
+            const response = await liteRest.handleRequest(request)
 
-        //     console.log('DELETE Test Response:', response)
+            console.log('DELETE Test Response:', response)
 
-        //     expect(response).toBeInstanceOf(Response)
-        //     expect(response.status).toBe(200)
+            expect(response).toBeInstanceOf(Response)
+            expect(response.status).toBe(200)
 
-        //     const jsonResponse = (await response.json()) as {
-        //         result: { message: string }
-        //     }
-        //     console.log('Parsed JSON Response:', jsonResponse)
+            const jsonResponse = (await response.json()) as {
+                result: { message: string }
+            }
+            console.log('Parsed JSON Response:', jsonResponse)
 
-        //     expect(jsonResponse.result).toEqual({
-        //         message: 'Resource deleted successfully',
-        //     })
-        // })
+            expect(jsonResponse.result).toEqual({
+                message: 'Resource deleted successfully',
+            })
+        })
 
-        // it('should return 400 for DELETE without ID', async () => {
-        //     const request = new Request('http://localhost/rest/users', {
-        //         method: 'DELETE',
-        //     })
-        //     const response = await liteRest.handleRequest(request)
+        it('should return 400 for DELETE without ID', async () => {
+            const request = new Request('http://localhost/rest/users', {
+                method: 'DELETE',
+            })
+            const response = await liteRest.handleRequest(request)
 
-        //     expect(response).toBeInstanceOf(Response)
-        //     expect(response.status).toBe(400)
+            expect(response).toBeInstanceOf(Response)
+            expect(response.status).toBe(400)
 
-        //     const jsonResponse = (await response.json()) as { error: string }
-        //     expect(jsonResponse.error).toBe(
-        //         "Missing primary key value for 'id'"
-        //     )
-        // })
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe(
+                "Missing primary key value for 'id'"
+            )
+        })
 
         it('should return 500 for DELETE errors', async () => {
             vi.mocked(executeQuery).mockRejectedValue(

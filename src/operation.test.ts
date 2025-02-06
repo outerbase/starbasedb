@@ -10,16 +10,82 @@ import { applyRLS } from './rls'
 import { beforeQueryCache, afterQueryCache } from './cache'
 import type { DataSource } from './types'
 import type { StarbaseDBConfiguration } from './handler'
+import type { SqlConnection } from '@outerbase/sdk/dist/connections/sql-base'
 
-vi.mock('./operation', async (importOriginal) => {
-    const original = await importOriginal<typeof import('./operation')>()
-    return {
-        ...original,
-        executeSDKQuery: vi
-            .fn()
-            .mockResolvedValue([{ id: 1, name: 'SDK-Result' }]),
-    }
-})
+// const mockSqlConnection = vi.hoisted(() => ({
+//     connect: vi.fn().mockResolvedValue(undefined),
+//     raw: vi
+//         .fn()
+//         .mockResolvedValue({ data: [{ id: 1, name: 'SDK-Test-Result' }] }),
+// })) as unknown as SqlConnection
+
+// const mockConfig = vi.hoisted(() => ({
+//     outerbaseApiKey: 'mock-api-key',
+//     role: 'admin',
+//     features: { allowlist: true, rls: true, rest: true },
+// })) as StarbaseDBConfiguration
+
+// const mockDataSource = vi.hoisted(() => ({
+//     source: 'internal',
+//     external: {
+//         dialect: 'postgresql',
+//         provider: 'postgresql',
+//         host: 'mock-host',
+//         port: 5432,
+//         user: 'mock-user',
+//         password: 'mock-password',
+//         database: 'mock-db',
+//     } as any,
+//     rpc: {
+//         executeQuery: vi.fn().mockResolvedValue([
+//             { id: 1, name: 'Alice' },
+//             { id: 2, name: 'Bob' },
+//         ]),
+//     },
+// })) as unknown as DataSource
+
+// vi.mock('./operation', async (importOriginal) => {
+//     const actual = await importOriginal<typeof import('./operation')>()
+//     return {
+//         ...actual,
+//         executeQuery: vi.fn().mockResolvedValue([
+//             { id: 1, name: 'Mocked Alice' },
+//             { id: 2, name: 'Mocked Bob' },
+//         ]),
+//         executeSDKQuery: vi
+//             .fn()
+//             .mockResolvedValue([{ id: 1, name: 'SDK-Result' }]),
+//         createSDKPostgresConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//         createSDKMySQLConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//         createSDKCloudflareConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//         createSDKStarbaseConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//         createSDKTursoConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//     }
+// })
+
+// vi.mock('./operation', () => ({
+//     executeSDKQuery: vi.fn().mockResolvedValue([{ id: 1, name: 'SDK-Result' }]),
+// }))
+
+// vi.mock('./operation', async (importOriginal) => {
+//     const original = await importOriginal<typeof import('./operation')>()
+//     return {
+//         ...original,
+//         executeSDKQuery: vi
+//             .fn()
+//             .mockResolvedValue([{ id: 1, name: 'SDK-Result' }]),
+//     }
+// })
 
 vi.mock('./allowlist', () => ({ isQueryAllowed: vi.fn() }))
 vi.mock('./rls', () => ({ applyRLS: vi.fn(async ({ sql }) => sql) }))
@@ -28,10 +94,18 @@ vi.mock('./cache', () => ({
     afterQueryCache: vi.fn(),
 }))
 
+let mockSqlConnection: SqlConnection
 let mockDataSource: DataSource
 let mockConfig: StarbaseDBConfiguration
 
 beforeEach(() => {
+    // mockSqlConnection = {
+    //     connect: vi.fn().mockResolvedValue(undefined),
+    //     raw: vi
+    //         .fn()
+    //         .mockResolvedValue({ data: [{ id: 1, name: 'SDK-Test-Result' }] }),
+    // } as unknown as SqlConnection
+
     mockConfig = {
         outerbaseApiKey: 'mock-api-key',
         role: 'admin',
@@ -42,12 +116,13 @@ beforeEach(() => {
         source: 'internal',
         external: {
             dialect: 'postgresql',
+            provider: 'postgresql',
             host: 'mock-host',
             port: 5432,
             user: 'mock-user',
             password: 'mock-password',
             database: 'mock-db',
-        },
+        } as any,
         rpc: {
             executeQuery: vi.fn().mockResolvedValue([
                 { id: 1, name: 'Alice' },
@@ -58,9 +133,82 @@ beforeEach(() => {
 
     vi.mocked(beforeQueryCache).mockResolvedValue(null)
     vi.mocked(afterQueryCache).mockResolvedValue(null)
+    // vi.mock('./operation', () => ({
+    //     createSDKPostgresConnection: vi
+    //         .fn()
+    //         .mockResolvedValue({ database: mockSqlConnection }),
+    //     createSDKMySQLConnection: vi
+    //         .fn()
+    //         .mockResolvedValue({ database: mockSqlConnection }),
+    //     createSDKCloudflareConnection: vi
+    //         .fn()
+    //         .mockResolvedValue({ database: mockSqlConnection }),
+    //     createSDKStarbaseConnection: vi
+    //         .fn()
+    //         .mockResolvedValue({ database: mockSqlConnection }),
+    //     createSDKTursoConnection: vi
+    //         .fn()
+    //         .mockResolvedValue({ database: mockSqlConnection }),
+    // }))
 
     vi.clearAllMocks()
 })
+// beforeEach(() => {
+//     vi.clearAllMocks()
+
+//     vi.mocked(beforeQueryCache).mockResolvedValue(null)
+//     vi.mocked(afterQueryCache).mockResolvedValue(null)
+//     const mockExecuteQueryResult = [
+//         { id: 1, name: 'Alice' },
+//         { id: 2, name: 'Bob' },
+//     ] as any
+//     mockExecuteQueryResult[Symbol.dispose] = vi.fn()
+//     vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue(
+//         mockExecuteQueryResult
+//     )
+// })
+// vi.mock('./operation', async (importOriginal) => {
+//     const original = await importOriginal<typeof import('./operation')>()
+//     return {
+//         ...original,
+//         executeSDKQuery: vi
+//             .fn()
+//             .mockResolvedValue([{ id: 1, name: 'SDK-Result' }]),
+//         createSDKPostgresConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//         createSDKMySQLConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//         createSDKCloudflareConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//         createSDKStarbaseConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//         createSDKTursoConnection: vi
+//             .fn()
+//             .mockResolvedValue({ database: mockSqlConnection }),
+//     }
+// })
+
+// vi.mock('./operation', () => ({
+//     createSDKPostgresConnection: vi
+//         .fn()
+//         .mockResolvedValue({ database: mockSqlConnection }),
+//     createSDKMySQLConnection: vi
+//         .fn()
+//         .mockResolvedValue({ database: mockSqlConnection }),
+//     createSDKCloudflareConnection: vi
+//         .fn()
+//         .mockResolvedValue({ database: mockSqlConnection }),
+//     createSDKStarbaseConnection: vi
+//         .fn()
+//         .mockResolvedValue({ database: mockSqlConnection }),
+//     createSDKTursoConnection: vi
+//         .fn()
+//         .mockResolvedValue({ database: mockSqlConnection }),
+// }))
 
 describe('executeQuery', () => {
     it('should execute a valid SQL query', async () => {
@@ -92,6 +240,7 @@ describe('executeQuery', () => {
             config: mockConfig,
         })
 
+        expect(isQueryAllowed).toHaveBeenCalledTimes(1)
         expect(isQueryAllowed).toHaveBeenCalledWith(
             expect.objectContaining({ sql: 'SELECT * FROM users' })
         )
@@ -297,3 +446,142 @@ describe('executeExternalQuery', () => {
         expect(result).toEqual([])
     })
 })
+
+// describe('executeSDKQuery', () => {
+//     it('should execute a query using PostgreSQL connection', async () => {
+//         const result = await executeSDKQuery({
+//             sql: 'SELECT * FROM users',
+//             params: [],
+//             dataSource: mockDataSource,
+//             config: mockConfig,
+//         })
+
+//         expect(mockSqlConnection.connect).toHaveBeenCalled()
+//         expect(mockSqlConnection.raw).toHaveBeenCalledWith(
+//             'SELECT * FROM users',
+//             []
+//         )
+//         expect(result).toEqual([{ id: 1, name: 'SDK-Test-Result' }])
+//     })
+
+//     it('should execute a query using MySQL connection', async () => {
+//         if (mockDataSource.external) {
+//             mockDataSource.external.dialect = 'mysql'
+//         }
+
+//         const result = await executeSDKQuery({
+//             sql: 'SELECT * FROM users',
+//             params: [],
+//             dataSource: mockDataSource,
+//             config: mockConfig,
+//         })
+
+//         expect(mockSqlConnection.connect).toHaveBeenCalled()
+//         expect(mockSqlConnection.raw).toHaveBeenCalledWith(
+//             'SELECT * FROM users',
+//             []
+//         )
+//         expect(result).toEqual([{ id: 1, name: 'SDK-Test-Result' }])
+//     })
+
+//     it('should execute a query using Cloudflare D1 connection', async () => {
+//         if (mockDataSource.external && 'provider' in mockDataSource.external) {
+//             mockDataSource.external.provider = 'cloudflare-d1'
+//         }
+//         const result = await executeSDKQuery({
+//             sql: 'SELECT * FROM users',
+//             params: [],
+//             dataSource: mockDataSource,
+//             config: mockConfig,
+//         })
+
+//         expect(mockSqlConnection.connect).toHaveBeenCalled()
+//         expect(mockSqlConnection.raw).toHaveBeenCalledWith(
+//             'SELECT * FROM users',
+//             []
+//         )
+//         expect(result).toEqual([{ id: 1, name: 'SDK-Test-Result' }])
+//     })
+
+//     it('should execute a query using Starbase connection', async () => {
+//         if (mockDataSource.external && 'provider' in mockDataSource.external) {
+//             mockDataSource.external.provider = 'starbase'
+//         }
+
+//         const result = await executeSDKQuery({
+//             sql: 'SELECT * FROM users',
+//             params: [],
+//             dataSource: mockDataSource,
+//             config: mockConfig,
+//         })
+
+//         expect(mockSqlConnection.connect).toHaveBeenCalled()
+//         expect(mockSqlConnection.raw).toHaveBeenCalledWith(
+//             'SELECT * FROM users',
+//             []
+//         )
+//         expect(result).toEqual([{ id: 1, name: 'SDK-Test-Result' }])
+//     })
+
+//     it('should execute a query using Turso connection', async () => {
+//         if (mockDataSource.external && 'provider' in mockDataSource.external) {
+//             mockDataSource.external.provider = 'turso'
+//         }
+
+//         const result = await executeSDKQuery({
+//             sql: 'SELECT * FROM users',
+//             params: [],
+//             dataSource: mockDataSource,
+//             config: mockConfig,
+//         })
+
+//         expect(mockSqlConnection.connect).toHaveBeenCalled()
+//         expect(mockSqlConnection.raw).toHaveBeenCalledWith(
+//             'SELECT * FROM users',
+//             []
+//         )
+//         expect(result).toEqual([{ id: 1, name: 'SDK-Test-Result' }])
+//     })
+//     it('should return an empty array if external connection is missing', async () => {
+//         mockDataSource.external = undefined as any
+
+//         const result = await executeSDKQuery({
+//             sql: 'SELECT * FROM users',
+//             params: [],
+//             dataSource: mockDataSource,
+//             config: mockConfig,
+//         })
+
+//         expect(result).toEqual([])
+//     })
+
+//     it('should handle database connection errors gracefully', async () => {
+//         vi.mocked(mockSqlConnection.connect).mockRejectedValueOnce(
+//             new Error('DB connection failed')
+//         )
+
+//         await expect(
+//             executeSDKQuery({
+//                 sql: 'SELECT * FROM users',
+//                 params: [],
+//                 dataSource: mockDataSource,
+//                 config: mockConfig,
+//             })
+//         ).rejects.toThrow('DB connection failed')
+//     })
+
+//     it('should handle query execution errors gracefully', async () => {
+//         vi.mocked(mockSqlConnection.raw).mockRejectedValueOnce(
+//             new Error('Query execution failed')
+//         )
+
+//         await expect(
+//             executeSDKQuery({
+//                 sql: 'SELECT * FROM users',
+//                 params: [],
+//                 dataSource: mockDataSource,
+//                 config: mockConfig,
+//             })
+//         ).rejects.toThrow('Query execution failed')
+//     })
+// })
