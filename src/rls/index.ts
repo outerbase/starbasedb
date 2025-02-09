@@ -47,7 +47,7 @@ function normalizeIdentifier(name: string): string {
     return name
 }
 
-export async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
+async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
     try {
         const statement =
             'SELECT "actions", "schema", "table", "column", "value", "value_type", "operator" FROM tmp_rls_policies'
