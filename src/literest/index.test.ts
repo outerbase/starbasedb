@@ -172,8 +172,6 @@ describe('LiteREST', () => {
 
         it('should handle PATCH requests successfully', async () => {
             vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
-                console.log('Mock executeQuery called with:', sql)
-
                 if (sql.includes('PRAGMA table_info(users)')) {
                     return [{ name: 'id', pk: 1 }]
                 }
@@ -189,8 +187,6 @@ describe('LiteREST', () => {
             })
 
             const response = await liteRest.handleRequest(request)
-            console.log('PATCH Test Response:', response)
-
             expect(response).toBeInstanceOf(Response)
             expect(response.status).toBe(200)
 
@@ -242,8 +238,6 @@ describe('LiteREST', () => {
 
         it('should handle PUT requests successfully', async () => {
             vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
-                console.log('Mock executeQuery called with:', sql)
-
                 if (sql.includes('PRAGMA table_info(users)')) {
                     return [{ name: 'id', pk: 1 }]
                 }

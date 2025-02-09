@@ -252,11 +252,6 @@ export class LiteREST {
         )
         const schemaName = this.sanitizeIdentifier(pathParts[0])
         const id = pathParts.length === 3 ? pathParts[2] : undefined
-        console.log('Parsed Request:', {
-            method: liteRequest.method,
-            tableName,
-            id,
-        })
 
         const body = ['POST', 'PUT', 'PATCH'].includes(liteRequest.method)
             ? await liteRequest.json()
@@ -576,10 +571,7 @@ export class LiteREST {
         schemaName: string | undefined,
         id: string | undefined
     ): Promise<Response> {
-        console.log(`Executing DELETE on table: ${tableName}, ID: ${id}`)
-
         const pkColumns = await this.getPrimaryKeyColumns(tableName, schemaName)
-        console.log('Primary Key Columns:', pkColumns)
 
         let data: any = {}
 
@@ -627,13 +619,10 @@ export class LiteREST {
             schemaName ? `${schemaName}.` : ''
         }${tableName} WHERE ${pkConditions.join(' AND ')}`
 
-        console.log('Final DELETE Query:', query, 'Params:', pkParams)
         const queries = [{ sql: query, params: pkParams }]
 
         try {
             const result = await this.executeOperation(queries)
-            console.log('DELETE Operation Result:', result)
-
             return createResponse(
                 { message: 'Resource deleted successfully' },
                 undefined,
