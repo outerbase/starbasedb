@@ -75,7 +75,7 @@ describe('LiteREST', () => {
 
     describe('handleRequest', () => {
         it('should return 405 for unsupported methods', async () => {
-            const request = new Request('http://localhost/rest/users', {
+            const request = new Request('http://localhost/rest/main/users', {
                 method: 'OPTIONS',
             })
             const response = await liteRest.handleRequest(request)
@@ -87,7 +87,7 @@ describe('LiteREST', () => {
                 { id: 1, name: 'Alice' },
             ])
 
-            const request = new Request('http://localhost/rest/users', {
+            const request = new Request('http://localhost/rest/main/users', {
                 method: 'GET',
             })
             const response = await liteRest.handleRequest(request)
@@ -103,7 +103,7 @@ describe('LiteREST', () => {
                 .mockImplementation(() => {})
             vi.mocked(executeQuery).mockRejectedValue(new Error('DB Error'))
 
-            const request = new Request('http://localhost/rest/users', {
+            const request = new Request('http://localhost/rest/main/users', {
                 method: 'GET',
             })
             const response = await liteRest.handleRequest(request)
@@ -118,7 +118,7 @@ describe('LiteREST', () => {
                 { id: 1, name: 'New User' },
             ])
 
-            const request = new Request('http://localhost/rest/users', {
+            const request = new Request('http://localhost/rest/main/users', {
                 method: 'POST',
                 body: JSON.stringify({ name: 'New User' }),
             })
@@ -136,7 +136,7 @@ describe('LiteREST', () => {
         })
 
         it('should return 400 for invalid POST data', async () => {
-            const request = new Request('http://localhost/rest/users', {
+            const request = new Request('http://localhost/rest/main/users', {
                 method: 'POST',
                 body: JSON.stringify(null),
                 headers: { 'Content-Type': 'application/json' },
@@ -155,7 +155,7 @@ describe('LiteREST', () => {
                 new Error('Insert failed')
             )
 
-            const request = new Request('http://localhost/rest/users', {
+            const request = new Request('http://localhost/rest/main/users', {
                 method: 'POST',
                 body: JSON.stringify({ name: 'Error User' }),
                 headers: { 'Content-Type': 'application/json' },
@@ -182,7 +182,7 @@ describe('LiteREST', () => {
             })
             vi.mocked(executeTransaction).mockResolvedValue([])
 
-            const request = new Request('http://localhost/rest/users/1', {
+            const request = new Request('http://localhost/rest/main/users/1', {
                 method: 'PATCH',
                 body: JSON.stringify({ name: 'Updated Name' }),
                 headers: { 'Content-Type': 'application/json' },
@@ -205,7 +205,7 @@ describe('LiteREST', () => {
         })
 
         it('should return 400 for invalid PATCH data', async () => {
-            const request = new Request('http://localhost/rest/users/1', {
+            const request = new Request('http://localhost/rest/main/users/1', {
                 method: 'PATCH',
                 body: JSON.stringify(null),
                 headers: { 'Content-Type': 'application/json' },
@@ -217,6 +217,27 @@ describe('LiteREST', () => {
 
             const jsonResponse = (await response.json()) as { error: string }
             expect(jsonResponse.error).toBe('Invalid data format')
+        })
+
+        it('should return 400 for PATCH request missing composite PK values', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([
+                { name: 'user_id', pk: 1 },
+                { name: 'group_id', pk: 1 },
+            ])
+
+            const request = new Request('http://localhost/rest/main/users', {
+                method: 'PATCH',
+                body: JSON.stringify({ user_id: 1, name: 'Updated' }),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+            expect(response.status).toBe(400)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe(
+                "Missing primary key value for 'group_id'"
+            )
         })
 
         it('should handle PUT requests successfully', async () => {
@@ -231,7 +252,7 @@ describe('LiteREST', () => {
             })
             vi.mocked(executeTransaction).mockResolvedValue([])
 
-            const request = new Request('http://localhost/rest/users/1', {
+            const request = new Request('http://localhost/rest/main/users/1', {
                 method: 'PUT',
                 body: JSON.stringify({ id: 1, name: 'Replaced User' }),
                 headers: { 'Content-Type': 'application/json' },
@@ -253,7 +274,7 @@ describe('LiteREST', () => {
         })
 
         it('should return 400 for missing PUT data', async () => {
-            const request = new Request('http://localhost/rest/users/1', {
+            const request = new Request('http://localhost/rest/main/users/1', {
                 method: 'PUT',
                 body: JSON.stringify(null),
                 headers: { 'Content-Type': 'application/json' },
@@ -267,10 +288,26 @@ describe('LiteREST', () => {
             expect(jsonResponse.error).toBe('Invalid data format')
         })
 
+        it('should return 405 for invalid HTTP methods', async () => {
+            const methods = ['HEAD']
+            for (const method of methods) {
+                const request = new Request(
+                    'http://localhost/rest/main/users',
+                    {
+                        method,
+                    }
+                )
+                const response = await liteRest.handleRequest(request)
+                expect(response.status).toBe(405)
+                const jsonResponse = (await response.json()) as {
+                    error: string
+                }
+                expect(jsonResponse.error).toBe('Method not allowed')
+            }
+        })
+
         it('should handle DELETE requests successfully', async () => {
             vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
-                console.log('Mock executeQuery called with:', sql)
-
                 if (sql.includes('PRAGMA table_info(users)')) {
                     return [{ name: 'id', pk: 1 }]
                 }
@@ -279,12 +316,10 @@ describe('LiteREST', () => {
             })
             vi.mocked(executeTransaction).mockResolvedValue([])
 
-            const request = new Request('http://localhost/rest/users/1', {
+            const request = new Request('http://localhost/rest/main/users/1', {
                 method: 'DELETE',
             })
             const response = await liteRest.handleRequest(request)
-
-            console.log('DELETE Test Response:', response)
 
             expect(response).toBeInstanceOf(Response)
             expect(response.status).toBe(200)
@@ -292,15 +327,13 @@ describe('LiteREST', () => {
             const jsonResponse = (await response.json()) as {
                 result: { message: string }
             }
-            console.log('Parsed JSON Response:', jsonResponse)
-
             expect(jsonResponse.result).toEqual({
                 message: 'Resource deleted successfully',
             })
         })
 
         it('should return 400 for DELETE without ID', async () => {
-            const request = new Request('http://localhost/rest/users', {
+            const request = new Request('http://localhost/rest/main/users', {
                 method: 'DELETE',
             })
             const response = await liteRest.handleRequest(request)
@@ -319,7 +352,7 @@ describe('LiteREST', () => {
                 new Error('Delete failed')
             )
 
-            const request = new Request('http://localhost/rest/users/1', {
+            const request = new Request('http://localhost/rest/main/users/1', {
                 method: 'DELETE',
             })
             const response = await liteRest.handleRequest(request)
@@ -329,6 +362,36 @@ describe('LiteREST', () => {
 
             const jsonResponse = (await response.json()) as { error: string }
             expect(jsonResponse.error).toBe('Delete failed')
+        })
+        it('should return 400 if DELETE is attempted with missing composite PK values', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([
+                { name: 'user_id', pk: 1 },
+                { name: 'group_id', pk: 1 },
+            ])
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'DELETE',
+            })
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(400)
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe(
+                "Missing primary key value for 'group_id'"
+            )
+        })
+
+        it('should return 500 if primary key query fails', async () => {
+            vi.mocked(executeQuery).mockRejectedValue(new Error('DB Error'))
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'GET',
+            })
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(500)
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('DB Error')
         })
     })
 
@@ -396,6 +459,40 @@ describe('LiteREST', () => {
 
             expect(query).toContain('LIMIT ? OFFSET ?')
             expect(params).toEqual([10, 5])
+        })
+
+        it('should ignore invalid limit and offset parameters', async () => {
+            const searchParams = new URLSearchParams({
+                limit: 'invalid',
+                offset: '-5',
+            })
+
+            // @ts-expect-error: Testing private method
+            const { query, params } = await liteRest.buildSelectQuery(
+                'users',
+                undefined,
+                undefined,
+                searchParams
+            )
+
+            expect(query).not.toContain('LIMIT ? OFFSET ?')
+            expect(params).toEqual([])
+        })
+
+        it('should ignore invalid sort_by parameter', async () => {
+            const searchParams = new URLSearchParams({
+                sort_by: 'DROP TABLE users;',
+            })
+
+            // @ts-expect-error: Testing private method
+            const { query } = await liteRest.buildSelectQuery(
+                'users',
+                undefined,
+                undefined,
+                searchParams
+            )
+
+            expect(query).not.toContain('DROP TABLE users')
         })
     })
 })
