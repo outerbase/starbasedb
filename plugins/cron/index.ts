@@ -7,7 +7,7 @@ import { getNextExecutionTime } from './utils'
 const SQL_QUERIES = {
     CREATE_TABLE: `
         CREATE TABLE IF NOT EXISTS tmp_cron_tasks (
-            name TEXT PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE PRIMARY KEY,
             cron_tab TEXT NOT NULL,
             payload TEXT,
             callback_host TEXT,
@@ -52,7 +52,7 @@ export interface CronEventPayload {
 }
 
 export class CronPlugin extends StarbasePlugin {
-    public prefix: string = '/cron'
+    public pathPrefix: string = '/cron'
     private dataSource?: DataSource
     private eventCallbacks: ((payload: CronEventPayload) => void)[] = []
 
@@ -70,7 +70,7 @@ export class CronPlugin extends StarbasePlugin {
             await next()
         })
 
-        app.post(`${this.prefix}/callback`, async (c) => {
+        app.post(`${this.pathPrefix}/callback`, async (c) => {
             const payload = (await c.req.json()) as CronEventPayload[]
 
             this.eventCallbacks.forEach((callback) => {
@@ -145,13 +145,6 @@ export class CronPlugin extends StarbasePlugin {
         }
 
         if (nextTasks.length > 0) {
-            console.log(
-                'Cron Task(s) Queued:',
-                nextTasks.map((t) => t.name).join(', '),
-                'at',
-                new Date(nextExecutionMs).toISOString()
-            )
-
             // Update active status for all tasks
             // Fill remaining parameter slots with null if fewer than 10 tasks
             const taskNames = [
