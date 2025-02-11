@@ -11,6 +11,7 @@ import { ChangeDataCapturePlugin } from '../plugins/cdc'
 import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
+import { InterfacePlugin } from '../plugins/interface'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -203,6 +204,7 @@ export default {
                 cdcPlugin,
                 cronPlugin,
                 new StatsPlugin(),
+                new InterfacePlugin({ prefix: '/ui' }),
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
