@@ -9,6 +9,8 @@ import { StudioPlugin } from '../plugins/studio'
 import { SqlMacrosPlugin } from '../plugins/sql-macros'
 import { ChangeDataCapturePlugin } from '../plugins/cdc'
 import { QueryLogPlugin } from '../plugins/query-log'
+import { StatsPlugin } from '../plugins/stats'
+import { CronPlugin } from '../plugins/cron'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -172,11 +174,20 @@ export default {
             }
 
             const webSocketPlugin = new WebSocketPlugin()
+            const cronPlugin = new CronPlugin()
             const cdcPlugin = new ChangeDataCapturePlugin({
                 stub,
                 broadcastAllEvents: false,
                 events: [],
             })
+
+            cdcPlugin.onEvent(({ action, schema, table, data }) => {
+                // Include change data capture code here
+            }, ctx)
+
+            cronPlugin.onEvent(({ name, cron_tab, payload }) => {
+                // Include cron event code here
+            }, ctx)
 
             const plugins = [
                 webSocketPlugin,
@@ -190,6 +201,8 @@ export default {
                 }),
                 new QueryLogPlugin({ ctx }),
                 cdcPlugin,
+                cronPlugin,
+                new StatsPlugin(),
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({

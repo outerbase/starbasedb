@@ -6,14 +6,12 @@ import { DataSource } from './types'
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
     public sql: SqlStorage
+    // Durable storage for the instance
     public storage: DurableObjectStorage
     // Map of WebSocket connections to their corresponding session IDs
     public connections = new Map<string, WebSocket>()
-    // Configuration for the database instance
-    private config: StarbaseDBConfiguration
-    // Environment variables
-    protected env: Env
-
+    // Store the client auth token for requests back to our Worker
+    private clientAuthToken: string
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
      * 	`DurableObjectStub::get` for a given identifier (no-op constructors can be omitted)
@@ -21,22 +19,48 @@ export class StarbaseDBDurableObject extends DurableObject {
      * @param ctx - The interface for interacting with Durable Object state
      * @param env - The interface to reference bindings declared in wrangler.toml
      */
-    constructor(state: DurableObjectState, env: Env) {
-        super(state, env)
-        this.storage = state.storage
-        this.sql = state.storage.sql
-        this.env = env
 
-        // Initialize configuration
-        this.config = {
-            role: 'admin',
-            features: {
-                import: true,
-                export: true,
-                allowlist: Boolean(env.ENABLE_ALLOWLIST),
-                rls: Boolean(env.ENABLE_RLS),
-            },
-        }
+    constructor(ctx: DurableObjectState, env: Env) {
+        super(ctx, env)
+        this.clientAuthToken = env.CLIENT_AUTHORIZATION_TOKEN
+        this.sql = ctx.storage.sql
+        this.storage = ctx.storage
+
+        // Install default necessary `tmp_` tables for various features here.
+        const cacheStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_cache (
+            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "timestamp" REAL NOT NULL,
+            "ttl" INTEGER NOT NULL,
+            "query" TEXT UNIQUE NOT NULL,
+            "results" TEXT
+        );`
+
+        const allowlistStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_allowlist_queries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sql_statement TEXT NOT NULL,
+            source TEXT DEFAULT 'external'
+        )`
+        const allowlistRejectedStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_allowlist_rejections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sql_statement TEXT NOT NULL,
+            source TEXT DEFAULT 'external',
+            created_at TEXT DEFAULT (datetime('now'))
+        )`
+
+        const rlsStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_rls_policies (
+            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "actions" TEXT NOT NULL CHECK(actions IN ('SELECT', 'UPDATE', 'INSERT', 'DELETE')),
+            "schema" TEXT,
+            "table" TEXT NOT NULL,
+            "column" TEXT NOT NULL,
+            "value" TEXT NOT NULL,
+            "value_type" TEXT NOT NULL DEFAULT 'string',
+            "operator" TEXT DEFAULT '='
+        )`
 
         // Initialize tables
         this.initializeTables()
@@ -44,6 +68,10 @@ export class StarbaseDBDurableObject extends DurableObject {
 
     init() {
         return {
+            getAlarm: this.getAlarm.bind(this),
+            setAlarm: this.setAlarm.bind(this),
+            deleteAlarm: this.deleteAlarm.bind(this),
+            getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
             storage: {
                 get: this.storage.get.bind(this.storage),
@@ -51,6 +79,103 @@ export class StarbaseDBDurableObject extends DurableObject {
                 delete: this.storage.delete.bind(this.storage),
             },
             setAlarm: (timestamp: number) => this.storage.setAlarm(timestamp),
+        }
+    }
+
+    public async getAlarm(): Promise<number | null> {
+        return await this.storage.getAlarm()
+    }
+
+    public async setAlarm(
+        scheduledTime: number | Date,
+        options?: DurableObjectSetAlarmOptions
+    ): Promise<void> {
+        try {
+            const now = Date.now()
+            const inputTime =
+                scheduledTime instanceof Date
+                    ? scheduledTime.getTime()
+                    : scheduledTime
+
+            // Ensure the time is in the future and at least 1 second from now
+            const minimumTime = now + 1000
+            const finalTime = Math.max(inputTime, minimumTime)
+            await this.storage.setAlarm(finalTime, options)
+        } catch (e) {
+            console.error('Error setting alarm: ', e)
+            throw e
+        }
+    }
+
+    public deleteAlarm(options?: DurableObjectSetAlarmOptions): Promise<void> {
+        return this.storage.deleteAlarm(options)
+    }
+
+    async alarm() {
+        try {
+            // Fetch all the tasks that are marked to emit an event for this cycle.
+            const task = (await this.executeQuery({
+                sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
+                isRaw: false,
+            })) as Record<string, SqlStorageValue>[]
+
+            if (!task.length) {
+                return
+            }
+
+            try {
+                const firstTask = task[0]
+                await fetch(`${firstTask.callback_host}/cron/callback`, {
+                    method: 'POST',
+                    headers: {
+                        Authorization: `Bearer ${this.clientAuthToken}`,
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(task ?? []),
+                })
+            } catch (error) {
+                console.error('Failed to call the alarm/cron callback:', error)
+
+                // If the callback fails, we should try to reschedule to prevent the chain from breaking
+                try {
+                    await this.setAlarm(Date.now() + 60000)
+                } catch (retryError) {
+                    console.error('Failed to set recovery alarm:', retryError)
+                }
+            }
+        } catch (e) {
+            console.error('There was an error processing an alarm: ', e)
+
+            // Try to recover by scheduling a retry in 1 minute
+            try {
+                await this.setAlarm(Date.now() + 60000)
+            } catch (retryError) {
+                console.error('Failed to set recovery alarm:', retryError)
+            }
+        }
+    }
+
+    public async getStatistics(): Promise<{
+        databaseSize: number
+        activeConnections: number
+        recentQueries: number
+    }> {
+        const sql = `SELECT COUNT(*) as count 
+            FROM tmp_query_log 
+            WHERE created_at >= datetime('now', '-24 hours')`
+        const result = (await this.executeQuery({
+            sql,
+            isRaw: false,
+        })) as Record<string, SqlStorageValue>[]
+        const row = result.length ? result[0] : { count: 0 }
+
+        return {
+            // Size in bytes
+            databaseSize: this.sql.databaseSize,
+            // Count of persistent web socket connections
+            activeConnections: this.connections.size,
+            // Assuming the `QueryLogPlugin` is in use, count is of the last 24 hours
+            recentQueries: Number(row.count),
         }
     }
 
