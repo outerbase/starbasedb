@@ -37,26 +37,60 @@ async function estimateDatabaseSize(
 ): Promise<number> {
     let totalSize = 0
     for (const table of tables) {
+        const quotedTable = `"${table.replace(/"/g, '""')}"` // Properly escape quotes in table names
+
         // Get row count
         const countResult = (await dataSource.rpc.executeQuery({
-            sql: `SELECT COUNT(*) as count FROM ${table};`,
+            sql: `SELECT COUNT(*) as count FROM ${quotedTable};`,
         })) as Record<string, number>[]
         const rowCount = countResult[0]?.count || 0
 
-        // Get average row size from a sample
-        const sampleResult = (await dataSource.rpc.executeQuery({
-            sql: `SELECT * FROM ${table} LIMIT 100;`,
-        })) as Record<string, SqlStorageValue>[]
-        let avgRowSize = 0
-        if (Array.isArray(sampleResult) && sampleResult.length > 0) {
-            const totalSize = sampleResult.reduce((size, row) => {
-                return size + JSON.stringify(row).length
-            }, 0)
-            avgRowSize = totalSize / sampleResult.length
+        // Get table schema to understand column types
+        const schemaResult = (await dataSource.rpc.executeQuery({
+            sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
+            params: [table],
+        })) as Record<string, string>[]
+
+        // Sample some rows to get average row size
+        const sampleSize = Math.min(100, rowCount) // Sample up to 100 rows
+        if (sampleSize > 0) {
+            const sampleResult = (await dataSource.rpc.executeQuery({
+                sql: `SELECT * FROM ${quotedTable} LIMIT ?;`,
+                params: [sampleSize],
+            })) as Record<string, unknown>[]
+
+            // Calculate average row size from sample
+            if (sampleResult.length > 0) {
+                const totalSampleSize = sampleResult.reduce((size, row) => {
+                    // Convert row to SQL insert statement to estimate actual dump size
+                    const values = Object.values(row).map((value) =>
+                        typeof value === 'string'
+                            ? `'${value.replace(/'/g, "''")}'`
+                            : value === null
+                              ? 'NULL'
+                              : String(value)
+                    )
+                    const insertStmt = `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+                    return size + insertStmt.length
+                }, 0)
+
+                const avgRowSize = Math.ceil(
+                    totalSampleSize / sampleResult.length
+                )
+                totalSize += rowCount * avgRowSize
+            }
         }
 
-        totalSize += rowCount * avgRowSize
+        // Add size for table schema
+        if (schemaResult[0]?.sql) {
+            totalSize += schemaResult[0].sql.length + 20 // Add some padding for formatting
+        }
     }
+
+    // Add some overhead for SQLite header and formatting
+    totalSize += 100 // SQLite header
+    totalSize = Math.ceil(totalSize * 1.1) // Add 10% overhead for safety
+
     return totalSize
 }
 
@@ -145,12 +179,24 @@ export async function startChunkedDumpRoute(
         console.log('Estimated database size:', estimatedSize, 'bytes')
 
         // Determine storage type based on size
-        const shouldUseR2 =
+        const shouldUseR2 = Boolean(
             env?.DATABASE_DUMPS && estimatedSize > SIZE_THRESHOLD_FOR_R2
+        )
         if (shouldUseR2) {
-            console.log('Using R2 storage due to large estimated size')
-        } else {
-            console.log('Using DO storage due to small estimated size')
+            if (!env?.DATABASE_DUMPS) {
+                throw new Error(
+                    'R2 storage requested but R2 binding not available'
+                )
+            }
+            // Test R2 access
+            try {
+                await env.DATABASE_DUMPS.head(r2Key)
+            } catch (error) {
+                console.error('R2 access test failed:', error)
+                throw new Error(
+                    'R2 storage is not accessible. Please check your R2 bucket configuration.'
+                )
+            }
         }
 
         // Store initial content
@@ -228,22 +274,26 @@ export async function processDumpChunk(
         })
         console.log('Found dump progress keys:', allKeys)
 
+        let hasActiveDumps = false
+
         // Process each active dump
         for (const progressKey of allKeys.keys()) {
-            console.log('Processing dump with key:', progressKey)
             const stored = (await dataSource.rpc.storage.get(
                 progressKey
             )) as StoredDumpData & { useR2: boolean }
-            console.log('Stored dump progress:', stored)
 
-            if (!stored) {
-                console.log(
-                    'No stored dump progress found for key:',
-                    progressKey
-                )
+            if (
+                !stored ||
+                stored.progress.status === 'completed' ||
+                stored.progress.status === 'failed'
+            ) {
+                // Clean up completed or failed dumps that weren't properly cleaned
+                await dataSource.rpc.storage.delete(progressKey)
                 continue
             }
 
+            hasActiveDumps = true
+            console.log('Processing dump with key:', progressKey)
             const {
                 progress,
                 tables,
@@ -268,29 +318,48 @@ export async function processDumpChunk(
                 // Get table schema if this is the first chunk of the table
                 if (currentOffset === 0) {
                     console.log('Getting schema for table:', table)
-                    const schemaResult = await dataSource.rpc.executeQuery({
+                    const schemaResult = (await dataSource.rpc.executeQuery({
                         sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
                         params: [table],
-                    })
+                    })) as Record<string, string>[]
                     console.log('Schema result:', schemaResult)
 
-                    if (
-                        Array.isArray(schemaResult) &&
-                        schemaResult.length > 0
-                    ) {
-                        const schema = schemaResult[0].sql
+                    if (schemaResult && schemaResult[0]?.sql) {
+                        const schema = schemaResult[0]?.sql
                         const schemaContent = `\n-- Table: ${table}\n${schema};\n\n`
 
                         // Append schema to file
                         if (useR2 && progress.r2Key) {
-                            const existingContent =
-                                await env.DATABASE_DUMPS.get(
-                                    progress.r2Key
-                                ).text()
-                            await env.DATABASE_DUMPS.put(
-                                progress.r2Key,
-                                existingContent + schemaContent
+                            const r2Object = await env.DATABASE_DUMPS.get(
+                                progress.r2Key
                             )
+                            if (!r2Object) {
+                                const existingContent = ''
+                                await env.DATABASE_DUMPS.put(
+                                    progress.r2Key,
+                                    existingContent + schemaContent,
+                                    {
+                                        httpMetadata: {
+                                            contentType: 'application/sql',
+                                        },
+                                    }
+                                )
+                            } else {
+                                const existingContent = await r2Object
+                                    .arrayBuffer()
+                                    .then((buf: ArrayBuffer) =>
+                                        new TextDecoder().decode(buf)
+                                    )
+                                await env.DATABASE_DUMPS.put(
+                                    progress.r2Key,
+                                    existingContent + schemaContent,
+                                    {
+                                        httpMetadata: {
+                                            contentType: 'application/sql',
+                                        },
+                                    }
+                                )
+                            }
                         } else if (progress.r2Key) {
                             const existingContent =
                                 ((await dataSource.rpc.storage.get(
@@ -303,14 +372,11 @@ export async function processDumpChunk(
                         }
 
                         // Determine chunk size based on table size
-                        const countResult = await dataSource.rpc.executeQuery({
-                            sql: `SELECT COUNT(*) as count FROM ${table};`,
-                        })
-                        if (
-                            Array.isArray(countResult) &&
-                            countResult.length > 0
-                        ) {
-                            const rowCount = countResult[0].count as number
+                        const rows = (await dataSource.rpc.executeQuery({
+                            sql: `SELECT * FROM "${table.replace(/"/g, '""')}";`,
+                        })) as Record<string, unknown>[]
+                        if (rows && rows.length > 0) {
+                            const rowCount = rows.length as number
                             stored.chunkSize = determineChunkSize(rowCount)
                             console.log(
                                 `Adjusted chunk size for table ${table}:`,
@@ -322,10 +388,10 @@ export async function processDumpChunk(
 
                 // Get chunk of data
                 console.log('Getting data chunk for table:', table)
-                const dataResult = await dataSource.rpc.executeQuery({
-                    sql: `SELECT * FROM ${table} LIMIT ? OFFSET ?;`,
+                const dataResult = (await dataSource.rpc.executeQuery({
+                    sql: `SELECT * FROM "${table.replace(/"/g, '""')}" LIMIT ? OFFSET ?;`,
                     params: [stored.chunkSize, currentOffset],
-                })
+                })) as Record<string, unknown>[]
                 console.log('Data result:', dataResult)
 
                 // Process the chunk
@@ -352,13 +418,36 @@ export async function processDumpChunk(
                 if (insertStatements && progress.r2Key) {
                     console.log('Appending insert statements to file')
                     if (useR2) {
-                        const existingContent = await env.DATABASE_DUMPS.get(
+                        const r2Object = await env.DATABASE_DUMPS.get(
                             progress.r2Key
-                        ).text()
-                        await env.DATABASE_DUMPS.put(
-                            progress.r2Key,
-                            existingContent + insertStatements
                         )
+                        if (!r2Object) {
+                            const existingContent = ''
+                            await env.DATABASE_DUMPS.put(
+                                progress.r2Key,
+                                existingContent + insertStatements,
+                                {
+                                    httpMetadata: {
+                                        contentType: 'application/sql',
+                                    },
+                                }
+                            )
+                        } else {
+                            const existingContent = await r2Object
+                                .arrayBuffer()
+                                .then((buf: ArrayBuffer) =>
+                                    new TextDecoder().decode(buf)
+                                )
+                            await env.DATABASE_DUMPS.put(
+                                progress.r2Key,
+                                existingContent + insertStatements,
+                                {
+                                    httpMetadata: {
+                                        contentType: 'application/sql',
+                                    },
+                                }
+                            )
+                        }
                     } else {
                         const existingContent =
                             ((await dataSource.rpc.storage.get(
@@ -444,8 +533,8 @@ export async function processDumpChunk(
             }
         }
 
-        // Schedule next processing if there are active dumps
-        if (allKeys.size > 0) {
+        // Only schedule next processing if there are active dumps in progress
+        if (hasActiveDumps) {
             await dataSource.rpc.setAlarm(Date.now() + BREATHING_INTERVAL)
         }
     } catch (error: any) {
@@ -520,39 +609,65 @@ export async function getDumpFileRoute(
         }
 
         let content: string | ReadableStream
-        if (stored.useR2) {
-            const r2Object = await env.DATABASE_DUMPS.get(stored.progress.r2Key)
-            if (!r2Object) {
-                return createResponse(
-                    undefined,
-                    'Dump file not found in R2',
-                    404
-                )
-            }
-            content = r2Object.body
-        } else {
-            content =
-                ((await dataSource.rpc.storage.get(
-                    stored.progress.r2Key
-                )) as string) || ''
-            if (!content) {
-                return createResponse(
-                    undefined,
-                    'Dump file not found in storage',
-                    404
-                )
-            }
-        }
-
-        const headers = new Headers({
-            'Content-Type': 'application/x-sqlite3',
+        let headers = new Headers({
+            'Content-Type': 'application/sql',
             'Content-Disposition': `attachment; filename="database_dump_${dumpId}.sql"`,
         })
 
-        // Delete the progress after successful download
-        await dataSource.rpc.storage.delete(progressKey)
+        try {
+            if (stored.useR2) {
+                const r2Object = await env.DATABASE_DUMPS.get(
+                    stored.progress.r2Key
+                )
+                if (!r2Object) {
+                    return createResponse(
+                        undefined,
+                        'Dump file not found in R2',
+                        404
+                    )
+                }
+                content = r2Object.body
+            } else {
+                content =
+                    ((await dataSource.rpc.storage.get(
+                        stored.progress.r2Key
+                    )) as string) || ''
+                if (!content) {
+                    return createResponse(
+                        undefined,
+                        'Dump file not found in storage',
+                        404
+                    )
+                }
+            }
 
-        return new Response(content, { headers })
+            // Create response before cleanup
+            const response = new Response(content, { headers })
+
+            // Clean up after successful retrieval
+            try {
+                // Delete progress data
+                await dataSource.rpc.storage.delete(progressKey)
+
+                // Delete the dump file if using DO storage
+                if (!stored.useR2) {
+                    await dataSource.rpc.storage.delete(stored.progress.r2Key)
+                }
+
+                // Delete from R2 if using R2 storage
+                if (stored.useR2 && env?.DATABASE_DUMPS) {
+                    await env.DATABASE_DUMPS.delete(stored.progress.r2Key)
+                }
+            } catch (cleanupError) {
+                console.error('Error during cleanup:', cleanupError)
+                // Continue with response even if cleanup fails
+            }
+
+            return response
+        } catch (error) {
+            console.error('Error retrieving dump file:', error)
+            return createResponse(undefined, 'Error retrieving dump file', 500)
+        }
     } catch (error: any) {
         console.error('Error getting dump file:', error)
         console.error('Error stack:', error.stack)
