@@ -181,11 +181,11 @@ export default {
                 events: [],
             })
 
-            cdcPlugin.onEvent(({ action, schema, table, data }) => {
+            cdcPlugin.onEvent(async ({ action, schema, table, data }) => {
                 // Include change data capture code here
             }, ctx)
 
-            cronPlugin.onEvent(({ name, cron_tab, payload }) => {
+            cronPlugin.onEvent(async ({ name, cron_tab, payload }) => {
                 // Include cron event code here
             }, ctx)
 
