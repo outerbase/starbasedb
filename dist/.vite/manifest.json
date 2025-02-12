@@ -1,0 +1,25 @@
+{
+    "_index-!~{003}~.js": {
+        "file": "assets/index-B6C_ztwE.css",
+        "src": "_index-!~{003}~.js"
+    },
+    "_index-BFIILGGG.js": {
+        "file": "assets/index-BFIILGGG.js",
+        "name": "index",
+        "css": ["assets/index-B6C_ztwE.css"]
+    },
+    "plugins/interface/client/index.tsx": {
+        "file": "assets/main-CzBGxEyQ.js",
+        "name": "main",
+        "src": "plugins/interface/client/index.tsx",
+        "isEntry": true,
+        "imports": ["_index-BFIILGGG.js"]
+    },
+    "plugins/interface/client/index2.tsx": {
+        "file": "assets/admin-BfR0neOk.js",
+        "name": "admin",
+        "src": "plugins/interface/client/index2.tsx",
+        "isEntry": true,
+        "imports": ["_index-BFIILGGG.js"]
+    }
+}

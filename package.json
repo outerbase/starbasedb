@@ -20,8 +20,9 @@
         }
     },
     "scripts": {
-        "deploy": "wrangler deploy",
-        "dev": "wrangler dev",
+        "deploy": "pnpm run build && wrangler deploy",
+        "dev": "vite dev",
+        "build": "vite build --mode client && vite build",
         "start": "wrangler dev",
         "publish-npm-module": "npm publish --access public",
         "cf-typegen": "wrangler types",
@@ -31,6 +32,8 @@
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20241216.0",
+        "@hono/vite-build": "^1.1.0",
+        "@hono/vite-dev-server": "^0.17.0",
         "@types/pg": "^8.11.10",
         "@vitest/coverage-istanbul": "2.1.8",
         "husky": "^9.1.7",
@@ -49,7 +52,8 @@
         "mongodb": "^6.11.0",
         "mysql2": "^3.11.4",
         "node-sql-parser": "^4.18.0",
-        "pg": "^8.13.1"
+        "pg": "^8.13.1",
+        "vite": "^5.4.11"
     },
     "lint-staged": {
         "*.{js,jsx,ts,tsx,json,css,md}": [

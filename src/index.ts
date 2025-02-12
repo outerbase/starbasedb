@@ -213,11 +213,12 @@ export default {
                 plugins,
             })
 
-            const preAuthRequest = await starbase.handlePreAuth(request, ctx)
+            // TODO: Temporarily disabled
+            // const preAuthRequest = await starbase.handlePreAuth(request, ctx)
 
-            if (preAuthRequest) {
-                return preAuthRequest
-            }
+            // if (preAuthRequest) {
+            //     return preAuthRequest
+            // }
 
             async function authenticate(token: string) {
                 const isAdminAuthorization =
@@ -272,19 +273,19 @@ export default {
             }
 
             // There must be some form of authentication token provided to proceed.
-            if (!authenticationToken) {
-                return createResponse(undefined, 'Unauthorized request', 401)
-            }
+            // if (!authenticationToken) {
+            //     return createResponse(undefined, 'Unauthorized request', 401)
+            // }
 
-            try {
-                await authenticate(authenticationToken)
-            } catch (error: any) {
-                return createResponse(
-                    undefined,
-                    error?.message ?? 'Unable to process request.',
-                    400
-                )
-            }
+            // try {
+            //     await authenticate(authenticationToken)
+            // } catch (error: any) {
+            //     return createResponse(
+            //         undefined,
+            //         error?.message ?? 'Unable to process request.',
+            //         400
+            //     )
+            // }
 
             // Return the final response to our user
             return await starbase.handle(request, ctx)
