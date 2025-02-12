@@ -178,17 +178,19 @@ export default {
             const cronPlugin = new CronPlugin()
             const cdcPlugin = new ChangeDataCapturePlugin({
                 stub,
-                broadcastAllEvents: false,
+                broadcastAllEvents: true,
                 events: [],
             })
 
-            cdcPlugin.onEvent(({ action, schema, table, data }) => {
+            cdcPlugin.onEvent(async ({ action, schema, table, data }) => {
                 // Include change data capture code here
             }, ctx)
 
-            cronPlugin.onEvent(({ name, cron_tab, payload }) => {
+            cronPlugin.onEvent(async ({ name, cron_tab, payload }) => {
                 // Include cron event code here
             }, ctx)
+
+            const interfacePlugin = new InterfacePlugin()
 
             const plugins = [
                 webSocketPlugin,
@@ -204,7 +206,7 @@ export default {
                 cdcPlugin,
                 cronPlugin,
                 new StatsPlugin(),
-                new InterfacePlugin({ prefix: '/ui' }),
+                interfacePlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
@@ -213,12 +215,17 @@ export default {
                 plugins,
             })
 
-            // TODO: Temporarily disabled
-            // const preAuthRequest = await starbase.handlePreAuth(request, ctx)
+            const preAuthRequest = await starbase.handlePreAuth(request, ctx)
 
-            // if (preAuthRequest) {
-            //     return preAuthRequest
-            // }
+            if (preAuthRequest) {
+                return preAuthRequest
+            }
+
+            // If request route matches a supported route from the InterfacePlugin
+            // automatically accept and handle it.
+            if (interfacePlugin.supportedRoutes.includes(url.pathname)) {
+                return await starbase.handle(request, ctx)
+            }
 
             async function authenticate(token: string) {
                 const isAdminAuthorization =
@@ -273,19 +280,19 @@ export default {
             }
 
             // There must be some form of authentication token provided to proceed.
-            // if (!authenticationToken) {
-            //     return createResponse(undefined, 'Unauthorized request', 401)
-            // }
+            if (!authenticationToken) {
+                return createResponse(undefined, 'Unauthorized request', 401)
+            }
 
-            // try {
-            //     await authenticate(authenticationToken)
-            // } catch (error: any) {
-            //     return createResponse(
-            //         undefined,
-            //         error?.message ?? 'Unable to process request.',
-            //         400
-            //     )
-            // }
+            try {
+                await authenticate(authenticationToken)
+            } catch (error: any) {
+                return createResponse(
+                    undefined,
+                    error?.message ?? 'Unable to process request.',
+                    400
+                )
+            }
 
             // Return the final response to our user
             return await starbase.handle(request, ctx)

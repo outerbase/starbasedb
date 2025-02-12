@@ -12,7 +12,6 @@ interface ChangeEvent {
     column?: string
 }
 
-// Add this new interface
 interface CDCEventPayload {
     action: string
     schema: string
@@ -93,10 +92,16 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
         }
 
         try {
+            // Strip out RETURNING clause before parsing
+            const sqlWithoutReturning = opts.sql.replace(
+                /\s+RETURNING\s+.*$/i,
+                ''
+            )
+
             // Parse the SQL statement
-            const ast = parser.astify(opts.sql)
+            const ast = parser.astify(sqlWithoutReturning)
             const astObject = Array.isArray(ast) ? ast[0] : ast
-            const type = ast.type || ast[0].type
+            const type = astObject.type
 
             if (type === 'insert') {
                 this.queryEventDetected('INSERT', astObject, opts.result)
@@ -106,7 +111,7 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
                 this.queryEventDetected('UPDATE', astObject, opts.result)
             }
         } catch (error) {
-            console.error('Error parsing SQL in CDC plugin:', error)
+            console.error('Error parsing SQL in CDC plugin:', opts?.sql, error)
         }
 
         return opts.result
@@ -201,7 +206,7 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
     ) {
         // For any registered callback to the `onEvent` of our CDC plugin, we
         // will execute it after the response has been returned as to not impact
-        // roundtrip query times – hence the usage of `ctx.waitUntil(...)`
+        // roundtrip query times – hence the usage of `ctx.waitUntil(...)`
         const wrappedCallback = async (payload: CDCEventPayload) => {
             const result = callback(payload)
             if (result instanceof Promise && ctx) {

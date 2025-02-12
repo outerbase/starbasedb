@@ -1,4 +1,4 @@
-import { StrictMode, useState } from 'hono/jsx'
+import { StrictMode, useState, useEffect } from 'hono/jsx'
 import { hydrateRoot } from 'hono/jsx/dom/client'
 
 import '../../public/global.css'
@@ -27,6 +27,49 @@ if (root) {
 
 function Page2({ initialCount = 0, message = '' }: ServerProps) {
     const [count, setCount] = useState(initialCount)
+    const [wsMessages, setWsMessages] = useState<string[]>([])
+    const [wsStatus, setWsStatus] = useState('Disconnected')
+
+    useEffect(() => {
+        // Create WebSocket connection using current host
+        const socket = new WebSocket(
+            `wss://${window.location.host}/cdc?token=ABC123&source=internal`
+        )
+
+        // Connection opened
+        socket.onopen = () => {
+            setWsStatus('Connected')
+            setWsMessages((prev) => [...prev, 'WebSocket connection opened'])
+        }
+
+        // Listen for messages
+        socket.onmessage = (event) => {
+            setWsMessages((prev) => [...prev, `Received: ${event.data}`])
+        }
+
+        // Connection closed
+        socket.onclose = (event) => {
+            setWsStatus('Disconnected')
+            setWsMessages((prev) => [
+                ...prev,
+                `WebSocket closed with code: ${event.code}, reason: ${event.reason}, clean: ${event.wasClean}`,
+            ])
+        }
+
+        // Connection error
+        socket.onerror = (error: any) => {
+            setWsStatus('Error')
+            setWsMessages((prev) => [
+                ...prev,
+                `WebSocket error: ${error.message}`,
+            ])
+        }
+
+        // Cleanup on component unmount
+        return () => {
+            socket.close()
+        }
+    }, [])
 
     return (
         <section>
@@ -43,6 +86,16 @@ function Page2({ initialCount = 0, message = '' }: ServerProps) {
                         Increase count
                     </button>
                     <span>Count: {count}</span>
+
+                    {/* WebSocket Status and Messages */}
+                    <div style={{ marginTop: '20px' }}>
+                        <h3>WebSocket Status: {wsStatus}</h3>
+                        <div style={{ maxHeight: '200px', overflowY: 'auto' }}>
+                            {wsMessages.map((msg, index) => (
+                                <div key={index}>{msg}</div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             </div>
         </section>
