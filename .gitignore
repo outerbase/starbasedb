@@ -112,6 +112,9 @@ web_modules/
 
 .next
 out
+dist
+public/.vite
+public/assets
 
 # Nuxt.js build / generate output
 

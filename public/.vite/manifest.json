@@ -1,25 +1,31 @@
 {
-    "_index-!~{003}~.js": {
-        "file": "assets/index-B6C_ztwE.css",
-        "src": "_index-!~{003}~.js"
-    },
-    "_index-BFIILGGG.js": {
-        "file": "assets/index-BFIILGGG.js",
-        "name": "index",
-        "css": ["assets/index-B6C_ztwE.css"]
-    },
-    "plugins/interface/client/index.tsx": {
-        "file": "assets/main-CzBGxEyQ.js",
-        "name": "main",
-        "src": "plugins/interface/client/index.tsx",
-        "isEntry": true,
-        "imports": ["_index-BFIILGGG.js"]
-    },
-    "plugins/interface/client/index2.tsx": {
-        "file": "assets/admin-BfR0neOk.js",
-        "name": "admin",
-        "src": "plugins/interface/client/index2.tsx",
-        "isEntry": true,
-        "imports": ["_index-BFIILGGG.js"]
-    }
+  "_global-!~{003}~.js": {
+    "file": "assets/global-B6C_ztwE.css",
+    "src": "_global-!~{003}~.js"
+  },
+  "_global-Djzxos8N.js": {
+    "file": "assets/global-Djzxos8N.js",
+    "name": "global",
+    "css": [
+      "assets/global-B6C_ztwE.css"
+    ]
+  },
+  "plugins/interface/pages/page1/index.tsx": {
+    "file": "assets/page1-B39HthmS.js",
+    "name": "page1",
+    "src": "plugins/interface/pages/page1/index.tsx",
+    "isEntry": true,
+    "imports": [
+      "_global-Djzxos8N.js"
+    ]
+  },
+  "plugins/interface/pages/page2/index.tsx": {
+    "file": "assets/page2-CnKtWUeG.js",
+    "name": "page2",
+    "src": "plugins/interface/pages/page2/index.tsx",
+    "isEntry": true,
+    "imports": [
+      "_global-Djzxos8N.js"
+    ]
+  }
 }

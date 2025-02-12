@@ -6,20 +6,6 @@ import type { JSX } from 'hono/jsx'
  * Setting `build.manifest` to `true` in the Vite config is required for this.
  */
 export async function getAssetImportTagsFromManifest() {
-    //   if (!import.meta.env.PROD) {
-    //     return <script type="module" src="/plugins/interface/client/index.tsx" />;
-    //   }
-
-    //   const rootManifest = import.meta.glob<{ default: Manifest }>(
-    //     "../../public/.vite/manifest.json",
-    //     { eager: true },
-    //   );
-
-    //   const manifest = Object.values(rootManifest).at(0)?.default;
-    //   if (!manifest) {
-    //     return null;
-    //   }
-
     const rootManifest = await import('../../public/.vite/manifest.json')
 
     const manifest = rootManifest.default
@@ -31,12 +17,21 @@ export async function getAssetImportTagsFromManifest() {
         JSX.IntrinsicElements['link'] | JSX.IntrinsicElements['script']
     > = []
 
-    for (const { file, css } of Object.values(manifest)) {
-        const scriptTag = <script key={file} type="module" src={file} />
-        importTags.push(scriptTag)
+    for (const entry of Object.values(manifest)) {
+        // Skip creating script tags for CSS files
+        if (!entry.file.endsWith('.css')) {
+            const scriptTag = (
+                <script key={entry.file} type="module" src={entry.file} />
+            )
+            importTags.push(scriptTag)
+        }
 
-        if (css && css.length > 0) {
-            const cssTags = css.map((cssPath) => (
+        if (
+            'css' in entry &&
+            Array.isArray(entry.css) &&
+            entry.css.length > 0
+        ) {
+            const cssTags = entry.css.map((cssPath) => (
                 <link key={cssPath} rel="stylesheet" href={cssPath} />
             ))
             importTags.push(cssTags)

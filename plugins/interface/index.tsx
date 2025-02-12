@@ -1,7 +1,14 @@
+import { Hono } from 'hono'
 import { DataSource } from '../../dist'
 import { StarbaseApp } from '../../src/handler'
 import { StarbasePlugin } from '../../src/plugin'
-import web from './web'
+// import web from './web'
+
+import { getAssetImportTagsFromManifest } from './utils'
+import { jsxRenderer } from 'hono/jsx-renderer'
+import { Style } from 'hono/css'
+
+const web = new Hono()
 
 export class InterfacePlugin extends StarbasePlugin {
     // Prefix route
@@ -25,29 +32,59 @@ export class InterfacePlugin extends StarbasePlugin {
             await next()
         })
 
-        app.route('/', web)
+        app.use(
+            '*',
+            jsxRenderer(
+                async ({ children }) => {
+                    const assetImportTags =
+                        await getAssetImportTagsFromManifest()
 
-        // web.get("/client", (c) => {
-        //     return c.render(
-        //       <div id="ssr-root" data-root>
-        //         <Counter />
-        //       </div>,
-        //     );
-        //   });
+                    return (
+                        <html lang="en">
+                            <head>
+                                <meta charSet="utf-8" />
+                                <meta
+                                    content="width=device-width, initial-scale=1"
+                                    name="viewport"
+                                />
 
-        // app.get(`${this.pathPrefix}/`, (c) => {
-        //     const messages = ['Good Morning', 'Good Evening', 'Good Night']
-        //     return c.html(html`${IndexPage({ messages })}`)
-        // })
+                                <title>Starbase + Hono</title>
+                                <link rel="icon" href="/favicon.svg" />
 
-        // app.get(`${this.pathPrefix}/2`, async (c) => {
-        //     const result = (await this.dataSource?.rpc.executeQuery({
-        //         sql: `SELECT * FROM users LIMIT ?`,
-        //         params: [25],
-        //     })) as Record<string, any>[]
+                                <Style />
+                                {assetImportTags}
+                            </head>
 
-        //     const messages = result.map((x) => x.name)
-        //     return c.html(html`${IndexPage({ messages })}`)
-        // })
+                            <body>{children}</body>
+                        </html>
+                    )
+                },
+                { docType: true }
+            )
+        )
+
+        app.get('/', (c) => {
+            return c.render(<div id="root" data-client="page1"></div>)
+        })
+
+        app.get('/1', (c) => {
+            return c.render(<div id="root" data-client="page1"></div>)
+        })
+
+        app.get('/2', async (c) => {
+            // Example server-side logic
+            const serverData = {
+                initialCount: 42,
+                message: 'Hello from server!',
+            }
+
+            return c.render(
+                <div
+                    id="root"
+                    data-client="page2"
+                    data-server-props={JSON.stringify(serverData)}
+                ></div>
+            )
+        })
     }
 }
