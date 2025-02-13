@@ -158,13 +158,13 @@ function Page2({ initialCount = 0, message = '' }: ServerProps) {
                         </Label>
                     </div>
 
-                    <div className="mt-8">
-                        <Label title="Cards">
-                            <Card variant="primary">Content</Card>
-                            <Card as="a" href="/" variant="secondary">
-                                Link Content
-                            </Card>
-                        </Label>
+                    <div className="mt-8 flex flex-col gap-2">
+                        {/* <Label title="Cards"> */}
+                        <Card variant="primary">Content</Card>
+                        <Card as="a" href="/" variant="secondary">
+                            Link Content
+                        </Card>
+                        {/* </Label> */}
                     </div>
 
                     <div className="mt-8 w-[160px]">
@@ -195,6 +195,7 @@ function Page2({ initialCount = 0, message = '' }: ServerProps) {
                                 size="lg"
                                 onClick={handleClickLoading}
                                 loading={loading}
+                                displayContent={'items-first'}
                             />
                             <Button
                                 title={'Click to toggle'}

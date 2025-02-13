@@ -1,25 +1,26 @@
-import { cn } from '../../utils/index'
-import { FC, JSX } from 'hono/jsx'
+import { cn } from '../../utils'
+import { useState, type FC, type JSX } from 'hono/jsx'
+import type { Child } from 'hono/jsx'
 
 export const inputClasses = cn(
     'bg-ob-btn-secondary-bg text-ob-base-300 border-ob-border focus:border-ob-border-active placeholder:text-ob-base-100 ob-disable border border-1 transition-colors focus:outline-none'
 )
 
-export type InputProps = Omit<JSX.HTMLAttributes, 'size'> & {
-    children?: any
-    class?: string
+export type InputProps = Omit<JSX.IntrinsicElements['input'], 'size'> & {
+    children?: Child
+    className?: string
     displayContent?: 'items-first' | 'items-last'
     initialValue?: string
     isValid?: boolean
-    onValueChange?: (value: string, isValid: boolean) => void
-    preText?: string[] | any[] | any
-    postText?: string[] | any[] | any
+    onValueChange: ((value: string, isValid: boolean) => void) | undefined
+    preText?: string[] | Child[] | Child
+    postText?: string[] | Child[] | Child
     size?: 'sm' | 'base' | 'lg'
 }
 
 export const Input: FC<InputProps> = ({
     children,
-    class: className,
+    className,
     displayContent,
     initialValue,
     isValid = true,
@@ -29,6 +30,22 @@ export const Input: FC<InputProps> = ({
     size = 'base',
     ...props
 }) => {
+    const [currentValue, setCurrentValue] = useState(initialValue ?? '')
+
+    const updateCurrentValue = (event: Event) => {
+        const target = event.target as HTMLInputElement
+        const newValue = target.value
+        setCurrentValue(newValue)
+
+        if (onValueChange) {
+            if (!props.min) {
+                onValueChange(newValue, isValid)
+            } else if (typeof props.min === 'number') {
+                onValueChange(newValue.slice(0, props.min), isValid)
+            }
+        }
+    }
+
     return preText ? (
         <div
             class={cn(
@@ -53,7 +70,8 @@ export const Input: FC<InputProps> = ({
                         'text-ob-destructive': !isValid,
                     }
                 )}
-                value={initialValue ?? ''}
+                onChange={updateCurrentValue}
+                value={currentValue}
                 {...props}
             />
 
@@ -73,7 +91,8 @@ export const Input: FC<InputProps> = ({
                 },
                 className
             )}
-            value={initialValue ?? ''}
+            onChange={updateCurrentValue}
+            value={currentValue}
             {...props}
         />
     )

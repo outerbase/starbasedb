@@ -3,7 +3,7 @@ import { cn } from '../../utils'
 
 export interface LabelProps {
     children?: Child
-    class?: string
+    className?: string
     isValid?: boolean
     title: string
     required?: boolean
@@ -13,7 +13,7 @@ export interface LabelProps {
 
 export function Label({
     children,
-    class: className,
+    className,
     isValid,
     title,
     required,
@@ -23,7 +23,7 @@ export function Label({
     return (
         <label
             className={cn(
-                'text-ob-base-200 relative block w-full items-center gap-1 text-sm transition-colors *:w-full',
+                'text-base text-ob-base-200 relative block w-full items-center gap-1 text-sm transition-colors *:w-full',
                 className
             )}
             {...props}

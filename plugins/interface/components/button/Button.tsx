@@ -39,7 +39,7 @@ export const Button: FC<ButtonProps> = ({
     return (
         <Component
             class={cn(
-                'ob-btn ob-focus interactive font-medium select-none',
+                'ob-btn ob-focus interactive flex shrink-0 items-center justify-center font-medium select-none',
                 {
                     'btn-primary btn-shadow': variant === 'primary',
                     'btn-secondary btn-shadow': variant === 'secondary',
@@ -68,7 +68,7 @@ export const Button: FC<ButtonProps> = ({
 
             {loading ? (
                 <span
-                    class={cn({
+                    className={cn({
                         'w-3': size === 'sm',
                         'w-3.5': size === 'base',
                         'w-4': size === 'lg',
