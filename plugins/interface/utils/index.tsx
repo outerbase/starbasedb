@@ -1,4 +1,10 @@
 import type { JSX } from 'hono/jsx'
+import { ClassValue, clsx } from 'clsx'
+import { twMerge } from 'tailwind-merge'
+
+export const cn = (...inputs: ClassValue[]) => {
+    return twMerge(clsx(inputs))
+}
 
 /**
  * Helper function that reads the Vite manifest and returns the import tags for
@@ -6,7 +12,7 @@ import type { JSX } from 'hono/jsx'
  * Setting `build.manifest` to `true` in the Vite config is required for this.
  */
 export async function getAssetImportTagsFromManifest() {
-    const rootManifest = await import('../../public/.vite/manifest.json')
+    const rootManifest = await import('../../../public/.vite/manifest.json')
 
     const manifest = rootManifest.default
     if (!manifest) {

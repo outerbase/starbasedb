@@ -4,6 +4,7 @@ import cloudflareAdapter from '@hono/vite-dev-server/cloudflare'
 import { defineConfig } from 'vite'
 import fs from 'fs'
 import path from 'path'
+import tailwindcss from '@tailwindcss/vite'
 
 // Helper function to get page entries
 function getPageEntries() {
@@ -42,6 +43,7 @@ export default defineConfig(({ mode }) => {
                 emptyOutDir: true,
                 manifest: true,
             },
+            plugins: [tailwindcss()],
             publicDir: './plugins/interface/public',
         }
     }
@@ -52,6 +54,7 @@ export default defineConfig(({ mode }) => {
         plugins: [
             devServer({ adapter: cloudflareAdapter, entry }),
             build({ entry }),
+            tailwindcss(),
         ],
         build: {
             rollupOptions: {

@@ -2,7 +2,7 @@ import { DataSource } from '../../dist'
 import { StarbaseApp } from '../../src/handler'
 import { StarbasePlugin } from '../../src/plugin'
 
-import { getAssetImportTagsFromManifest } from './utils'
+import { getAssetImportTagsFromManifest } from './utils/index'
 import { jsxRenderer } from 'hono/jsx-renderer'
 import { Style } from 'hono/css'
 
