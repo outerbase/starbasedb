@@ -11,36 +11,57 @@ export const cn = (...inputs: ClassValue[]) => {
  * the JS/CSS assets processed by Vite.
  * Setting `build.manifest` to `true` in the Vite config is required for this.
  */
-export async function getAssetImportTagsFromManifest() {
+export async function getAssetImportTagsFromManifest(currentPage?: string) {
     const rootManifest = await import('../../../public/.vite/manifest.json')
-
     const manifest = rootManifest.default
-    if (!manifest) {
-        return null
-    }
+    if (!manifest) return null
 
     const importTags: Array<
         JSX.IntrinsicElements['link'] | JSX.IntrinsicElements['script']
     > = []
 
-    for (const entry of Object.values(manifest)) {
-        // Skip creating script tags for CSS files
-        if (!entry.file.endsWith('.css')) {
+    // Always include global CSS if it exists
+    const globalCssEntry = Object.values(manifest).find((entry) =>
+        entry.file.includes('global')
+    )
+    if (globalCssEntry?.file) {
+        importTags.push(
+            <link
+                key={globalCssEntry.file}
+                rel="stylesheet"
+                href={`/${globalCssEntry.file}`}
+            />
+        )
+    }
+
+    // Include only current page JS and shared chunks
+    for (const [key, entry] of Object.entries(manifest)) {
+        // Debug each entry evaluation
+        const isCurrentPage =
+            currentPage && entry.file.includes(`${currentPage}.`)
+        const isSharedChunk =
+            entry.file.includes('vendor.') || entry.file.includes('components.')
+
+        if (!entry.file.endsWith('.css') && (isCurrentPage || isSharedChunk)) {
             const scriptTag = (
-                <script key={entry.file} type="module" src={entry.file} />
+                <script key={entry.file} type="module" src={`/${entry.file}`} />
             )
             importTags.push(scriptTag)
         }
 
-        if (
-            'css' in entry &&
-            Array.isArray(entry.css) &&
-            entry.css.length > 0
-        ) {
-            const cssTags = entry.css.map((cssPath) => (
-                <link key={cssPath} rel="stylesheet" href={cssPath} />
-            ))
-            importTags.push(cssTags)
+        // Include any additional CSS files
+        if ('css' in entry && Array.isArray(entry.css)) {
+            entry.css.forEach((cssPath) => {
+                if (!cssPath.includes('global')) {
+                    importTags.push(
+                        <link
+                            key={cssPath}
+                            rel="stylesheet"
+                            href={`/${cssPath}`}
+                        />
+                    )
+                }
+            })
         }
     }
 

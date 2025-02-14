@@ -11,7 +11,6 @@ function getPageEntries() {
     const pagesDir = './plugins/interface/pages'
     const entries: Record<string, string> = {}
 
-    // Check if directory exists
     if (fs.existsSync(pagesDir)) {
         const folders = fs
             .readdirSync(pagesDir, { withFileTypes: true })
@@ -35,7 +34,18 @@ export default defineConfig(({ mode }) => {
                 rollupOptions: {
                     input: getPageEntries(),
                     output: {
-                        entryFileNames: 'assets/[name]-[hash].js',
+                        entryFileNames: 'assets/[name].[hash].js',
+                        chunkFileNames: 'assets/[name].[hash].js',
+                        assetFileNames: 'assets/[name].[hash][extname]',
+                        manualChunks: {
+                            vendor: ['hono/jsx', 'hono/jsx/dom/client'],
+                            components: [
+                                './plugins/interface/components/button/Button',
+                                './plugins/interface/components/input/Input',
+                                './plugins/interface/components/card',
+                                './plugins/interface/components/avatar',
+                            ],
+                        },
                     },
                 },
                 outDir: './public',

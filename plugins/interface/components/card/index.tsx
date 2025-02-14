@@ -6,7 +6,7 @@ type CardProps = {
     children?: Child
     variant?: 'primary' | 'secondary' | 'ghost' | 'destructive'
     href?: string
-    class?: string
+    className?: string
     [key: string]: any
 }
 
@@ -15,7 +15,7 @@ export function Card({
     children,
     variant = 'secondary',
     href,
-    class: className,
+    className,
     ...props
 }: CardProps) {
     const baseClasses = cn('ob-btn w-full rounded-lg p-3', {

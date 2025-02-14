@@ -223,7 +223,23 @@ export default {
 
             // If request route matches a supported route from the InterfacePlugin
             // automatically accept and handle it.
-            if (interfacePlugin.supportedRoutes.includes(url.pathname)) {
+            const matchRoute = (supportedRoute: string, pathname: string) => {
+                const supportedParts = supportedRoute.split('/')
+                const pathParts = pathname.split('/')
+
+                if (supportedParts.length !== pathParts.length) return false
+
+                return supportedParts.every((part, i) => {
+                    if (part.startsWith(':')) return true // Match any value for parameters
+                    return part === pathParts[i]
+                })
+            }
+
+            if (
+                interfacePlugin.supportedRoutes.some((route) =>
+                    matchRoute(route, url.pathname)
+                )
+            ) {
                 return await starbase.handle(request, ctx)
             }
 
