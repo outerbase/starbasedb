@@ -108,7 +108,7 @@ export class InterfacePlugin extends StarbasePlugin {
         this.registerRoute(app, { path: '/2', page: 'page2' }, async (c) => {
             // We can query the database before responding with any server data to render a page
             const result = (await this.dataSource?.rpc.executeQuery({
-                sql: `SELECT COUNT(*) as count FROM users LIMIT ?`,
+                sql: `SELECT COUNT(*) as count FROM user LIMIT ?`,
                 params: [25],
             })) as Record<string, any>[]
 

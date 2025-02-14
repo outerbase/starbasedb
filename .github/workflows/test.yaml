@@ -36,7 +36,7 @@ jobs:
           cache: 'pnpm'
 
       - name: Install dependencies
-        run: pnpm install
+        run: pnpm install --no-frozen-lockfile
 
       - name: Run tests
         run: pnpm vitest --coverage.enabled true --coverage.reportOnFailure --coverage.reportsDirectory ./coverage || true
