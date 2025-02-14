@@ -117,7 +117,8 @@ dist/assets
 dist/global.css
 dist/index.js
 dist/favicon*
-public
+public/*
+!public/.vite/
 
 # Nuxt.js build / generate output
 

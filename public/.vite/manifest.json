@@ -1,0 +1,46 @@
+{
+    "_components.Bua98qd2.js": {
+        "file": "assets/components.Bua98qd2.js",
+        "name": "components",
+        "imports": ["_vendor.BvOnseLb.js"]
+    },
+    "_global.!~{007}~.js": {
+        "file": "assets/global.C1cu2UQ0.css",
+        "src": "_global.!~{007}~.js"
+    },
+    "_vendor.BvOnseLb.js": {
+        "file": "assets/vendor.BvOnseLb.js",
+        "name": "vendor"
+    },
+    "plugins/interface/pages/chat/index.tsx": {
+        "file": "assets/chat.DCEHVWNE.js",
+        "name": "chat",
+        "src": "plugins/interface/pages/chat/index.tsx",
+        "isEntry": true,
+        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"]
+    },
+    "plugins/interface/pages/home/index.tsx": {
+        "file": "assets/home.DC80jEut.js",
+        "name": "home",
+        "src": "plugins/interface/pages/home/index.tsx",
+        "isEntry": true,
+        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
+        "css": ["assets/global.C1cu2UQ0.css"]
+    },
+    "plugins/interface/pages/page1/index.tsx": {
+        "file": "assets/page1.Ry1pg8F2.js",
+        "name": "page1",
+        "src": "plugins/interface/pages/page1/index.tsx",
+        "isEntry": true,
+        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
+        "css": ["assets/global.C1cu2UQ0.css"]
+    },
+    "plugins/interface/pages/page2/index.tsx": {
+        "file": "assets/page2.CSNZdVQU.js",
+        "name": "page2",
+        "src": "plugins/interface/pages/page2/index.tsx",
+        "isEntry": true,
+        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
+        "css": ["assets/global.C1cu2UQ0.css"]
+    }
+}

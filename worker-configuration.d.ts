@@ -10,8 +10,6 @@ interface Env {
     ENABLE_RLS: 0
     AUTH_ALGORITHM: 'RS256'
     AUTH_JWKS_ENDPOINT: ''
-    NEXTJS_ENV: string
-    WORKER_URL: string
     DATABASE_DURABLE_OBJECT: DurableObjectNamespace<
         import('./src/index').StarbaseDBDurableObject
     >

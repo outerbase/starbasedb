@@ -12,8 +12,15 @@ export const cn = (...inputs: ClassValue[]) => {
  * Setting `build.manifest` to `true` in the Vite config is required for this.
  */
 export async function getAssetImportTagsFromManifest(currentPage?: string) {
-    const rootManifest = await import('../../../public/.vite/manifest.json')
-    const manifest = rootManifest.default
+    let manifest
+    try {
+        const rootManifest = await import('../../../public/.vite/manifest.json')
+        manifest = rootManifest.default
+    } catch (error) {
+        // If manifest file doesn't exist, return null
+        return null
+    }
+
     if (!manifest) return null
 
     const importTags: Array<
