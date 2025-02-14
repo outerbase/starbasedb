@@ -1,15 +1,14 @@
 import { StrictMode, useState, useEffect } from 'hono/jsx'
 import { hydrateRoot } from 'hono/jsx/dom/client'
 
-// import '../../public/global.css'
-
-import { Button } from '../../components/button/Button'
-import { Label } from '../../components/label/Label'
-import { Input } from '../../components/input/Input'
-import { Avatar } from '../../components/avatar'
-import { Card } from '../../components/card'
-import { Select } from '../../components/select'
-import { Toggle } from '../../components/toggle'
+import { Button } from '@interface/components/button/Button'
+import { Label } from '@interface/components/label/Label'
+import { Input } from '@interface/components/input/Input'
+import { Avatar } from '@interface/components/avatar'
+import { Card } from '@interface/components/card'
+import { Select } from '@interface/components/select'
+import { Toggle } from '@interface/components/toggle'
+import ThemeSelector from '@interface/components/theme/ThemeSelector'
 
 const root = document.querySelector('#root[data-client="chat"]') as HTMLElement
 

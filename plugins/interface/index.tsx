@@ -7,9 +7,6 @@ import { getAssetImportTagsFromManifest } from './utils/index'
 import { jsxRenderer } from 'hono/jsx-renderer'
 import { Style } from 'hono/css'
 
-// import './public/global.css'
-// className={`bg-neutral-50 text-neutral-900 antialiased transition-colors selection:bg-blue-700 selection:text-white dark:bg-neutral-950 dark:text-neutral-100`}>
-
 interface RouteMapping {
     path: string
     page: string
@@ -27,10 +24,6 @@ export class InterfacePlugin extends StarbasePlugin {
         super('starbasedb:interface', {
             requiresAuth: false,
         })
-    }
-
-    public get supportedRoutes(): string[] {
-        return this._supportedRoutes.map((route) => route.path)
     }
 
     private registerRoute(
@@ -79,10 +72,23 @@ export class InterfacePlugin extends StarbasePlugin {
                                     content="width=device-width, initial-scale=1"
                                     name="viewport"
                                 />
-
                                 <title>Starbase + Hono</title>
                                 <link rel="icon" href="/favicon.svg" />
 
+                                <script
+                                    dangerouslySetInnerHTML={{
+                                        __html: `
+                                        // Check theme on page load
+                                        const theme = document.cookie
+                                            .split('; ')
+                                            .find(row => row.startsWith('theme='))
+                                            ?.split('=')[1];
+                                        if (theme === 'dark') {
+                                            document.documentElement.classList.add('dark');
+                                        }
+                                    `,
+                                    }}
+                                />
                                 <Style />
                                 {assetImportTags}
                             </head>
@@ -93,6 +99,14 @@ export class InterfacePlugin extends StarbasePlugin {
                 },
                 { docType: true }
             )
+        )
+
+        this.registerRoute(
+            app,
+            { path: '/template', page: 'template' },
+            (c) => {
+                return c.render(<div id="root" data-client="template"></div>)
+            }
         )
 
         this.registerRoute(app, { path: '/', page: 'page1' }, (c) => {
@@ -140,6 +154,33 @@ export class InterfacePlugin extends StarbasePlugin {
                     data-server-props={JSON.stringify({ id })}
                 ></div>
             )
+        })
+    }
+
+    public get supportedRoutes(): string[] {
+        return this._supportedRoutes.map((route) => route.path)
+    }
+
+    /**
+     * Checks if a given pathname matches any of the supported routes
+     * @param pathname The URL pathname to check
+     * @returns boolean indicating if the pathname matches a supported route
+     */
+    public matchesRoute(pathname: string): boolean {
+        return this.supportedRoutes.some((route) =>
+            this.matchRoute(route, pathname)
+        )
+    }
+
+    private matchRoute(supportedRoute: string, pathname: string): boolean {
+        const supportedParts = supportedRoute.split('/')
+        const pathParts = pathname.split('/')
+
+        if (supportedParts.length !== pathParts.length) return false
+
+        return supportedParts.every((part, i) => {
+            if (part.startsWith(':')) return true // Match any value for parameters
+            return part === pathParts[i]
         })
     }
 }

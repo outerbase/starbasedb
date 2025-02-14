@@ -55,6 +55,14 @@ export default defineConfig(({ mode }) => {
             },
             plugins: [tailwindcss()],
             publicDir: './plugins/interface/public',
+            resolve: {
+                alias: {
+                    '@interface': path.resolve(
+                        __dirname,
+                        './plugins/interface'
+                    ),
+                },
+            },
         }
     }
 

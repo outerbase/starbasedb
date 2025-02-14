@@ -1,21 +1,30 @@
 import { useEffect } from 'hono/jsx'
-import { getCookie, setCookie } from 'hono/cookie'
-import type { Context } from 'hono'
 
 const useTheme = (theme?: 'dark' | 'light') => {
     useEffect(() => {
+        // Get stored theme from cookie on mount
+        const storedTheme = document.cookie
+            .split('; ')
+            .find((row) => row.startsWith('theme='))
+            ?.split('=')[1] as 'dark' | 'light' | undefined
+
+        const themeToApply = theme || storedTheme
+
         // Store theme preference in cookie
-        if (theme) {
-            document.cookie = `theme=${theme};path=/;samesite=lax`
+        if (themeToApply) {
+            document.cookie = `theme=${themeToApply};path=/;samesite=lax`
         }
 
         // Apply theme class on client-side only
         if (typeof window !== 'undefined') {
             const html = document.querySelector('html')
 
-            if (theme === 'dark') {
+            if (themeToApply === 'dark') {
                 html?.classList.add('dark')
-            } else if (theme === 'light' && html?.classList.contains('dark')) {
+            } else if (
+                themeToApply === 'light' &&
+                html?.classList.contains('dark')
+            ) {
                 html?.classList.remove('dark')
             }
         }

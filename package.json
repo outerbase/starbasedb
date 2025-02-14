@@ -20,7 +20,8 @@
         }
     },
     "scripts": {
-        "deploy": "pnpm run build && wrangler deploy",
+        "deploy": "wrangler deploy",
+        "deploy-with-ui": "pnpm run build && wrangler deploy",
         "dev": "vite dev",
         "build": "vite build --mode client && vite build",
         "start": "wrangler dev",

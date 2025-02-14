@@ -23,7 +23,7 @@ export function Label({
     return (
         <label
             className={cn(
-                'text-base text-ob-base-200 relative block w-full items-center gap-1 text-sm transition-colors *:w-full',
+                'text-ob-base-200 relative block w-full items-center gap-1 text-sm transition-colors *:w-full',
                 className
             )}
             {...props}

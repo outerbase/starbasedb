@@ -178,7 +178,7 @@ export default {
             const cronPlugin = new CronPlugin()
             const cdcPlugin = new ChangeDataCapturePlugin({
                 stub,
-                broadcastAllEvents: true,
+                broadcastAllEvents: false,
                 events: [],
             })
 
@@ -221,25 +221,13 @@ export default {
                 return preAuthRequest
             }
 
-            // If request route matches a supported route from the InterfacePlugin
-            // automatically accept and handle it.
-            const matchRoute = (supportedRoute: string, pathname: string) => {
-                const supportedParts = supportedRoute.split('/')
-                const pathParts = pathname.split('/')
-
-                if (supportedParts.length !== pathParts.length) return false
-
-                return supportedParts.every((part, i) => {
-                    if (part.startsWith(':')) return true // Match any value for parameters
-                    return part === pathParts[i]
-                })
-            }
-
-            if (
-                interfacePlugin.supportedRoutes.some((route) =>
-                    matchRoute(route, url.pathname)
-                )
-            ) {
+            // When our InterfacePlugin has a supported path within it then we
+            // are making the assumption here that it is rendering a UI page for
+            // our users to visually load and we should return early before the
+            // next authentication checks happen. If a page is meant to have any
+            // sort of authentication, it can provide Basic Auth itself or expose
+            // itself in another plugin.
+            if (interfacePlugin.matchesRoute(url.pathname)) {
                 return await starbase.handle(request, ctx)
             }
 

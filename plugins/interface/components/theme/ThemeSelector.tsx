@@ -11,7 +11,16 @@ import { useState } from 'hono/jsx'
 const ThemeSelector = () =>
     // { onClick, theme }: ThemeSelectorProps
     {
-        const [theme, setTheme] = useState<'dark' | 'light'>('light')
+        const [theme, setTheme] = useState<'dark' | 'light'>(() => {
+            if (typeof window !== 'undefined') {
+                const stored = document.cookie
+                    .split('; ')
+                    .find((row) => row.startsWith('theme='))
+                    ?.split('=')[1] as 'light' | 'dark'
+                return stored || 'light'
+            }
+            return 'light'
+        })
 
         useTheme(theme)
 
