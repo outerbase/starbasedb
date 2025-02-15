@@ -5,7 +5,7 @@
         "imports": ["_vendor.BvOnseLb.js"]
     },
     "_global.!~{008}~.js": {
-        "file": "assets/global.BTh_2Mw6.css",
+        "file": "assets/global.BuEUFxXj.css",
         "src": "_global.!~{008}~.js"
     },
     "_vendor.BvOnseLb.js": {
@@ -20,28 +20,28 @@
         "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"]
     },
     "plugins/interface/pages/home/index.tsx": {
-        "file": "assets/home.BQILdUQ8.js",
+        "file": "assets/home.Bgj4-SAu.js",
         "name": "home",
         "src": "plugins/interface/pages/home/index.tsx",
         "isEntry": true,
         "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
-        "css": ["assets/global.BTh_2Mw6.css"]
+        "css": ["assets/global.BuEUFxXj.css"]
     },
     "plugins/interface/pages/page1/index.tsx": {
-        "file": "assets/page1.CaXqYoXy.js",
+        "file": "assets/page1.CdyEBqge.js",
         "name": "page1",
         "src": "plugins/interface/pages/page1/index.tsx",
         "isEntry": true,
         "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
-        "css": ["assets/global.BTh_2Mw6.css"]
+        "css": ["assets/global.BuEUFxXj.css"]
     },
     "plugins/interface/pages/page2/index.tsx": {
-        "file": "assets/page2.BMvixpAs.js",
+        "file": "assets/page2.BVDjxAx2.js",
         "name": "page2",
         "src": "plugins/interface/pages/page2/index.tsx",
         "isEntry": true,
         "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
-        "css": ["assets/global.BTh_2Mw6.css"]
+        "css": ["assets/global.BuEUFxXj.css"]
     },
     "plugins/interface/pages/template/index.tsx": {
         "file": "assets/template.Ck87uEDC.js",
