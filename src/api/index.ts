@@ -6,9 +6,9 @@ export async function handleApiRequest(request: Request): Promise<Response> {
     const url = new URL(request.url)
 
     // EXAMPLE:
-    // if (request.method === 'GET' && url.pathname === '/api/your/path/here') {
-    //     return new Response('Success', { status: 200 });
-    // }
+    if (request.method === 'GET' && url.pathname === '/api/your/path/here') {
+        return new Response('Success', { status: 200 })
+    }
 
     return new Response('Not found', { status: 404 })
 }

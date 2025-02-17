@@ -19,27 +19,33 @@ export async function importTableFromJsonRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        if (!request.body) {
-            return createResponse(undefined, 'Request body is empty', 400)
-        }
-
-        let jsonData: JsonData
         const contentType = request.headers.get('Content-Type') || ''
+        let jsonData: JsonData
 
         if (contentType.includes('application/json')) {
             // Handle JSON data in POST body
-            jsonData = (await request.json()) as JsonData
-        } else if (contentType.includes('multipart/form-data')) {
-            // Handle file upload
-            const formData = await request.formData()
-            const file = formData.get('file') as File | null
-
-            if (!file) {
-                return createResponse(undefined, 'No file uploaded', 400)
+            try {
+                jsonData = (await request.json()) as JsonData
+            } catch (error) {
+                console.error('JSON Parsing Error:', error)
+                return createResponse(undefined, 'Invalid JSON format.', 400)
             }
+        } else if (contentType.includes('multipart/form-data')) {
+            try {
+                // Handle file upload
+                const formData = await request.formData()
+                const file = formData.get('file') as File | null
 
-            const fileContent = await file.text()
-            jsonData = JSON.parse(fileContent) as JsonData
+                if (!file) {
+                    return createResponse(undefined, 'No file uploaded', 400)
+                }
+
+                const fileContent = await file.text()
+                jsonData = JSON.parse(fileContent) as JsonData
+            } catch (error: any) {
+                console.error('File Upload Processing Error:', error)
+                return createResponse(undefined, 'Invalid file upload', 400)
+            }
         } else {
             return createResponse(undefined, 'Unsupported Content-Type', 400)
         }
@@ -82,6 +88,10 @@ export async function importTableFromJsonRoute(
 
         const totalRecords = data.length
         const failedCount = failedStatements.length
+
+        if (failedCount === totalRecords) {
+            return createResponse(undefined, 'Failed to import JSON data', 500)
+        }
 
         const resultMessage = `Imported ${successCount} out of ${totalRecords} records successfully. ${failedCount} records failed.`
 

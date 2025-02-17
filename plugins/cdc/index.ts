@@ -26,9 +26,9 @@ export class ChangeDataCapturePlugin extends StarbasePlugin {
     // Stub of the Durable Object class for us to access the web socket
     private durableObjectStub
     // If all events should be broadcasted,
-    private broadcastAllEvents?: boolean
+    public broadcastAllEvents?: boolean
     // A list of events that the user is listening to
-    private listeningEvents?: ChangeEvent[] = []
+    public listeningEvents?: ChangeEvent[] = []
     // Configuration details about the request and user
     private config?: StarbaseDBConfiguration
     // Add this new property

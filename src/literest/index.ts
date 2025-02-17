@@ -252,6 +252,7 @@ export class LiteREST {
         )
         const schemaName = this.sanitizeIdentifier(pathParts[0])
         const id = pathParts.length === 3 ? pathParts[2] : undefined
+
         const body = ['POST', 'PUT', 'PATCH'].includes(liteRequest.method)
             ? await liteRequest.json()
             : undefined
@@ -367,8 +368,11 @@ export class LiteREST {
             const response = await this.executeOperation([
                 { sql: query, params },
             ])
-            const resultArray = response.result
-            return createResponse(resultArray, undefined, 200)
+            let resultData = response.result
+            if (!Array.isArray(resultData)) {
+                resultData = [resultData]
+            }
+            return createResponse(resultData, undefined, 200)
         } catch (error: any) {
             console.error('GET Operation Error:', error)
             return createResponse(
@@ -571,6 +575,24 @@ export class LiteREST {
 
         let data: any = {}
 
+        if (!id) {
+            console.error('DELETE Error: Missing primary key value for ID')
+            return createResponse(
+                undefined,
+                "Missing primary key value for 'id'",
+                400
+            )
+        }
+
+        if (!pkColumns.length) {
+            console.error('DELETE Error: No primary key found for table')
+            return createResponse(
+                undefined,
+                `No primary key found for table '${tableName}'`,
+                400
+            )
+        }
+
         // Currently the DELETE only works with single primary key tables.
         if (pkColumns.length) {
             const firstPK = pkColumns[0]
@@ -596,10 +618,11 @@ export class LiteREST {
         const query = `DELETE FROM ${
             schemaName ? `${schemaName}.` : ''
         }${tableName} WHERE ${pkConditions.join(' AND ')}`
+
         const queries = [{ sql: query, params: pkParams }]
 
         try {
-            await this.executeOperation(queries)
+            const result = await this.executeOperation(queries)
             return createResponse(
                 { message: 'Resource deleted successfully' },
                 undefined,

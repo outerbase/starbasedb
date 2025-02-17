@@ -77,10 +77,13 @@ async function afterQuery(opts: {
     let { result, isRaw, dataSource } = opts
     result = isRaw ? transformRawResults(result, 'from') : result
 
-    result = await dataSource?.registry?.afterQuery({
-        ...opts,
-        result,
-    })
+    if (dataSource?.registry?.afterQuery) {
+        try {
+            result = await dataSource.registry.afterQuery({ ...opts, result })
+        } catch (error) {
+            console.error('Error in dataSource.registry.afterQuery:', error)
+        }
+    }
 
     return isRaw ? transformRawResults(result, 'to') : result
 }
@@ -133,7 +136,7 @@ function transformRawResults(
 // sources we recommend you connect your database to Outerbase and provide the bases API key for queries
 // to be made. Otherwise, for supported data sources such as Postgres, MySQL, D1, StarbaseDB, Turso and Mongo
 // we can connect to the database directly and remove the additional hop to the Outerbase API.
-async function executeExternalQuery(opts: {
+export async function executeExternalQuery(opts: {
     sql: string
     params: any
     dataSource: DataSource
@@ -178,6 +181,12 @@ async function executeExternalQuery(opts: {
     })
 
     const results: any = await response.json()
+
+    if (!results?.response?.results?.items) {
+        console.error('API response is malformed:', results)
+        return []
+    }
+
     return results.response.results?.items
 }
 
@@ -243,6 +252,11 @@ export async function executeQuery(opts: {
             params: updatedParams,
             isRaw,
         })
+
+        if (!result) {
+            console.error('Returning empty array.')
+            return []
+        }
     } else {
         result = await executeExternalQuery({
             sql: updatedSQL,
@@ -262,13 +276,14 @@ export async function executeQuery(opts: {
         })
     }
 
-    return await afterQuery({
+    const finalResult = await afterQuery({
         sql: updatedSQL,
         result,
         isRaw,
         dataSource,
         config,
     })
+    return finalResult
 }
 
 export async function executeTransaction(opts: {

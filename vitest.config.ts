@@ -4,7 +4,7 @@ export default defineConfig({
     test: {
         coverage: {
             provider: 'istanbul',
-            reporter: ['text', 'html', 'json', 'lcov', 'json-summary'], // Ensure json-summary is included
+            reporter: ['text', 'html', 'json', 'json-summary', 'lcov'],
             include: ['src/**/*.ts'],
             exclude: ['**/node_modules/**'],
             reportOnFailure: true, // Ensures the report is generated even if tests fail

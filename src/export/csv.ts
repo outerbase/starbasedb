@@ -32,7 +32,9 @@ export async function exportTableToCsvRoute(
                         .map((value) => {
                             if (
                                 typeof value === 'string' &&
-                                value.includes(',')
+                                (value.includes(',') ||
+                                    value.includes('"') ||
+                                    value.includes('\n'))
                             ) {
                                 return `"${value.replace(/"/g, '""')}"`
                             }
