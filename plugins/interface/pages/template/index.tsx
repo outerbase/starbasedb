@@ -1,6 +1,8 @@
 import { StrictMode } from 'hono/jsx'
 import { hydrateRoot } from 'hono/jsx/dom/client'
+import { cn } from '../../utils/index'
 
+import '../../public/global.css'
 import { Button } from '@interface/components/button/Button'
 import { Label } from '@interface/components/label/Label'
 import { Input } from '@interface/components/input/Input'
@@ -8,7 +10,6 @@ import { Avatar } from '@interface/components/avatar'
 import { Card } from '@interface/components/card'
 import { Select } from '@interface/components/select'
 import { Toggle } from '@interface/components/toggle'
-import ThemeSelector from '@interface/components/theme/ThemeSelector'
 
 const root = document.querySelector(
     '#root[data-client="template"]'

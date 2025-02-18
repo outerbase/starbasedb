@@ -72,23 +72,9 @@ export class InterfacePlugin extends StarbasePlugin {
                                     content="width=device-width, initial-scale=1"
                                     name="viewport"
                                 />
-                                <title>Starbase + Hono</title>
+                                <title>StarbaseDB</title>
                                 <link rel="icon" href="/favicon.svg" />
 
-                                <script
-                                    dangerouslySetInnerHTML={{
-                                        __html: `
-                                        // Check theme on page load
-                                        const theme = document.cookie
-                                            .split('; ')
-                                            .find(row => row.startsWith('theme='))
-                                            ?.split('=')[1];
-                                        if (theme === 'dark') {
-                                            document.documentElement.classList.add('dark');
-                                        }
-                                    `,
-                                    }}
-                                />
                                 <Style />
                                 {assetImportTags}
                             </head>
@@ -101,6 +87,10 @@ export class InterfacePlugin extends StarbasePlugin {
             )
         )
 
+        // An example route and page definition to show you how to add new pages.
+        // page - declares how a user will access this page
+        // page - maps to a folder name in `./pages/${name}/index.tsx
+        // data-client - maps to the same name as the page above
         this.registerRoute(
             app,
             { path: '/template', page: 'template' },
@@ -108,53 +98,6 @@ export class InterfacePlugin extends StarbasePlugin {
                 return c.render(<div id="root" data-client="template"></div>)
             }
         )
-
-        this.registerRoute(app, { path: '/', page: 'page1' }, (c) => {
-            // `data-client` value must match the name of the folder the page component is contained within.
-            return c.render(<div id="root" data-client="page1"></div>)
-        })
-
-        this.registerRoute(app, { path: '/1', page: 'page1' }, (c) => {
-            // Multiple routes can reference the same component
-            return c.render(<div id="root" data-client="page1"></div>)
-        })
-
-        this.registerRoute(app, { path: '/2', page: 'page2' }, async (c) => {
-            // We can query the database before responding with any server data to render a page
-            const result = (await this.dataSource?.rpc.executeQuery({
-                sql: `SELECT COUNT(*) as count FROM user LIMIT ?`,
-                params: [25],
-            })) as Record<string, any>[]
-
-            const serverData = {
-                initialCount: result[0].count,
-                message: `You have ${result[0].count} users registered`,
-            }
-
-            // We can pass data from the server to our components by utilizing `data-server-props`
-            return c.render(
-                <div
-                    id="root"
-                    data-client="page2"
-                    data-server-props={JSON.stringify(serverData)}
-                ></div>
-            )
-        })
-
-        this.registerRoute(app, { path: '/home', page: 'home' }, (c) => {
-            return c.render(<div id="root" data-client="home"></div>)
-        })
-
-        this.registerRoute(app, { path: '/chat/:id', page: 'chat' }, (c) => {
-            const { id } = c.req.param()
-            return c.render(
-                <div
-                    id="root"
-                    data-client="chat"
-                    data-server-props={JSON.stringify({ id })}
-                ></div>
-            )
-        })
     }
 
     public get supportedRoutes(): string[] {

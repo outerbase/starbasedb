@@ -1,53 +1,19 @@
 {
-    "_components.Bua98qd2.js": {
-        "file": "assets/components.Bua98qd2.js",
+    "_components.Dd6m7Hsm.js": {
+        "file": "assets/components.Dd6m7Hsm.js",
         "name": "components",
-        "imports": ["_vendor.BvOnseLb.js"]
+        "imports": ["_vendor.DLA8GOwG.js"]
     },
-    "_global.!~{008}~.js": {
-        "file": "assets/global.BuEUFxXj.css",
-        "src": "_global.!~{008}~.js"
-    },
-    "_vendor.BvOnseLb.js": {
-        "file": "assets/vendor.BvOnseLb.js",
+    "_vendor.DLA8GOwG.js": {
+        "file": "assets/vendor.DLA8GOwG.js",
         "name": "vendor"
     },
-    "plugins/interface/pages/chat/index.tsx": {
-        "file": "assets/chat.DCEHVWNE.js",
-        "name": "chat",
-        "src": "plugins/interface/pages/chat/index.tsx",
-        "isEntry": true,
-        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"]
-    },
-    "plugins/interface/pages/home/index.tsx": {
-        "file": "assets/home.Bgj4-SAu.js",
-        "name": "home",
-        "src": "plugins/interface/pages/home/index.tsx",
-        "isEntry": true,
-        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
-        "css": ["assets/global.BuEUFxXj.css"]
-    },
-    "plugins/interface/pages/page1/index.tsx": {
-        "file": "assets/page1.CdyEBqge.js",
-        "name": "page1",
-        "src": "plugins/interface/pages/page1/index.tsx",
-        "isEntry": true,
-        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
-        "css": ["assets/global.BuEUFxXj.css"]
-    },
-    "plugins/interface/pages/page2/index.tsx": {
-        "file": "assets/page2.BVDjxAx2.js",
-        "name": "page2",
-        "src": "plugins/interface/pages/page2/index.tsx",
-        "isEntry": true,
-        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"],
-        "css": ["assets/global.BuEUFxXj.css"]
-    },
     "plugins/interface/pages/template/index.tsx": {
-        "file": "assets/template.Ck87uEDC.js",
+        "file": "assets/template.Cbhlkt6E.js",
         "name": "template",
         "src": "plugins/interface/pages/template/index.tsx",
         "isEntry": true,
-        "imports": ["_components.Bua98qd2.js", "_vendor.BvOnseLb.js"]
+        "imports": ["_components.Dd6m7Hsm.js", "_vendor.DLA8GOwG.js"],
+        "css": ["assets/template.BByNnpth.css"]
     }
 }

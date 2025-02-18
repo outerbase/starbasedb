@@ -6,11 +6,6 @@ export const cn = (...inputs: ClassValue[]) => {
     return twMerge(clsx(inputs))
 }
 
-/**
- * Helper function that reads the Vite manifest and returns the import tags for
- * the JS/CSS assets processed by Vite.
- * Setting `build.manifest` to `true` in the Vite config is required for this.
- */
 export async function getAssetImportTagsFromManifest(currentPage?: string) {
     let manifest
     try {

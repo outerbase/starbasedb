@@ -50,7 +50,7 @@ export default defineConfig(({ mode }) => {
                 },
                 outDir: './public',
                 copyPublicDir: true,
-                emptyOutDir: true,
+                emptyOutDir: false,
                 manifest: true,
             },
             plugins: [tailwindcss()],
