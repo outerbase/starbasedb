@@ -5,6 +5,8 @@ compatibility_date = "2024-09-25"
 account_id = ""
 compatibility_flags = ["nodejs_compat_v2"]
 
+assets = { directory = "./public/" }
+
 # Service Bindings
 ## DO NOT REMOVE: TEMPLATE SERVICES ##
 

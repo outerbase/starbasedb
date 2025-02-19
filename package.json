@@ -21,7 +21,9 @@
     },
     "scripts": {
         "deploy": "wrangler deploy",
-        "dev": "wrangler dev",
+        "deploy-with-ui": "pnpm run build && wrangler deploy",
+        "dev": "vite dev",
+        "build": "vite build --mode client && vite build",
         "start": "wrangler dev",
         "publish-npm-module": "npm publish --access public",
         "cf-typegen": "wrangler types",
@@ -31,11 +33,16 @@
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20241216.0",
+        "@hono/vite-build": "^1.1.0",
+        "@hono/vite-dev-server": "^0.17.0",
+        "@tailwindcss/vite": "^4.0.6",
         "@types/pg": "^8.11.10",
         "@vitest/coverage-istanbul": "2.1.8",
         "husky": "^9.1.7",
         "lint-staged": "^15.2.11",
+        "postcss": "^8",
         "prettier": "3.4.2",
+        "tailwindcss": "^4.0.0",
         "typescript": "^5.7.2",
         "vitest": "2.1.8",
         "wrangler": "^3.96.0"
@@ -43,13 +50,16 @@
     "dependencies": {
         "@libsql/client": "^0.14.0",
         "@outerbase/sdk": "2.0.0-rc.3",
+        "clsx": "^2.1.1",
         "cron-parser": "^4.9.0",
         "hono": "^4.6.14",
         "jose": "^5.9.6",
         "mongodb": "^6.11.0",
         "mysql2": "^3.11.4",
         "node-sql-parser": "^4.18.0",
-        "pg": "^8.13.1"
+        "pg": "^8.13.1",
+        "tailwind-merge": "^2.6.0",
+        "vite": "^5.4.11"
     },
     "lint-staged": {
         "*.{js,jsx,ts,tsx,json,css,md}": [

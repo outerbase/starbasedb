@@ -112,6 +112,13 @@ web_modules/
 
 .next
 out
+dist/.vite
+dist/assets
+dist/global.css
+dist/index.js
+dist/favicon*
+public/*
+!public/.vite/
 
 # Nuxt.js build / generate output
 

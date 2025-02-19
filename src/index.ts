@@ -11,6 +11,7 @@ import { ChangeDataCapturePlugin } from '../plugins/cdc'
 import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
+import { InterfacePlugin } from '../plugins/interface'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -181,13 +182,15 @@ export default {
                 events: [],
             })
 
-            cdcPlugin.onEvent(({ action, schema, table, data }) => {
+            cdcPlugin.onEvent(async ({ action, schema, table, data }) => {
                 // Include change data capture code here
             }, ctx)
 
-            cronPlugin.onEvent(({ name, cron_tab, payload }) => {
+            cronPlugin.onEvent(async ({ name, cron_tab, payload }) => {
                 // Include cron event code here
             }, ctx)
+
+            const interfacePlugin = new InterfacePlugin()
 
             const plugins = [
                 webSocketPlugin,
@@ -203,6 +206,7 @@ export default {
                 cdcPlugin,
                 cronPlugin,
                 new StatsPlugin(),
+                interfacePlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
@@ -215,6 +219,16 @@ export default {
 
             if (preAuthRequest) {
                 return preAuthRequest
+            }
+
+            // When our InterfacePlugin has a supported path within it then we
+            // are making the assumption here that it is rendering a UI page for
+            // our users to visually load and we should return early before the
+            // next authentication checks happen. If a page is meant to have any
+            // sort of authentication, it can provide Basic Auth itself or expose
+            // itself in another plugin.
+            if (interfacePlugin.matchesRoute(url.pathname)) {
+                return await starbase.handle(request, ctx)
             }
 
             async function authenticate(token: string) {

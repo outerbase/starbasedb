@@ -1,0 +1,19 @@
+{
+    "_components.Dd6m7Hsm.js": {
+        "file": "assets/components.Dd6m7Hsm.js",
+        "name": "components",
+        "imports": ["_vendor.DLA8GOwG.js"]
+    },
+    "_vendor.DLA8GOwG.js": {
+        "file": "assets/vendor.DLA8GOwG.js",
+        "name": "vendor"
+    },
+    "plugins/interface/pages/template/index.tsx": {
+        "file": "assets/template.Cbhlkt6E.js",
+        "name": "template",
+        "src": "plugins/interface/pages/template/index.tsx",
+        "isEntry": true,
+        "imports": ["_components.Dd6m7Hsm.js", "_vendor.DLA8GOwG.js"],
+        "css": ["assets/template.BByNnpth.css"]
+    }
+}
