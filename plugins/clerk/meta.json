@@ -1,0 +1,25 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "user": [
+                "user_id",
+                "email",
+                "first_name",
+                "last_name",
+                "created_at",
+                "updated_at",
+                "deleted_at"
+            ]
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {
+            "*": ["user_id"]
+        },
+        "secrets": {},
+        "variables": {}
+    }
+}
