@@ -22,7 +22,7 @@
     "scripts": {
         "deploy": "wrangler deploy",
         "deploy-with-ui": "pnpm run build && wrangler deploy",
-        "dev": "vite dev",
+        "dev": "pnpm run build && wrangler dev",
         "build": "vite build --mode client && vite build",
         "start": "wrangler dev",
         "publish-npm-module": "npm publish --access public",
