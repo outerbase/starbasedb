@@ -1,4 +1,5 @@
 import { corsHeaders } from './cors'
+import { StarbaseDBConfiguration } from './handler'
 
 export type QueryTransactionRequest = {
     transaction?: QueryRequest[]
@@ -21,4 +22,15 @@ export function createResponse(
             'Content-Type': 'application/json',
         },
     })
+}
+
+export function getFeatureFromConfig(
+    features: StarbaseDBConfiguration['features']
+) {
+    return function getFeature(
+        key: keyof NonNullable<StarbaseDBConfiguration['features']>,
+        defaultValue = true
+    ): boolean {
+        return features?.[key] ?? !!defaultValue
+    }
 }

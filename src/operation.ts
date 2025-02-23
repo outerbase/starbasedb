@@ -24,7 +24,7 @@ import { isQueryAllowed } from './allowlist'
 import { applyRLS } from './rls'
 import type { SqlConnection } from '@outerbase/sdk/dist/connections/sql-base'
 import { StarbasePlugin } from './plugin'
-
+import { getFeatureFromConfig } from './utils'
 export type OperationQueueItem = {
     queries: { sql: string; params?: any[] }[]
     isTransaction: boolean
@@ -204,10 +204,12 @@ export async function executeQuery(opts: {
         return []
     }
 
+    const getFeature = getFeatureFromConfig(config.features)
+
     // If the allowlist feature is enabled, we should verify the query is allowed before proceeding.
     await isQueryAllowed({
         sql: sql,
-        isEnabled: config?.features?.allowlist ?? false,
+        isEnabled: getFeature('allowlist', false),
         dataSource,
         config,
     })
@@ -215,7 +217,7 @@ export async function executeQuery(opts: {
     // If the row level security feature is enabled, we should apply our policies to this SQL statement.
     sql = await applyRLS({
         sql,
-        isEnabled: config?.features?.rls ?? true,
+        isEnabled: getFeature('rls', true),
         dataSource,
         config,
     })
