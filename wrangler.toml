@@ -51,6 +51,14 @@ REGION = "auto"
 # Toggle to enable default features 
 ENABLE_ALLOWLIST = 0
 ENABLE_RLS = 0
+ENABLE_CRON = 1
+ENABLE_CDC = 1
+ENABLE_INTERFACE = 1
+ENABLE_STUDIO = 1
+ENABLE_REST = 1
+ENABLE_WEBSOCKET = 1
+ENABLE_EXPORT = 1
+ENABLE_IMPORT = 1
 
 # External database source details
 # This enables Starbase to connect to an external data source
