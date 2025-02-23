@@ -49,13 +49,18 @@ vi.mock('./plugin', () => ({
     })),
 }))
 
-vi.mock('./utils', () => ({
-    createResponse: vi.fn((result, error, status) => ({
-        result,
-        error,
-        status,
-    })),
-}))
+vi.mock('./utils', async () => {
+    const { getFeatureFromConfig } = await import('./utils')
+
+    return {
+        createResponse: vi.fn((result, error, status) => ({
+            result,
+            error,
+            status,
+        })),
+        getFeatureFromConfig,
+    }
+})
 
 let instance: StarbaseDB
 let mockDataSource: DataSource
