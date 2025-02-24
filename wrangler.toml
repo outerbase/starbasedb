@@ -7,6 +7,10 @@ compatibility_flags = ["nodejs_compat_v2"]
 
 assets = { directory = "./public/" }
 
+rules = [
+  { type = "Text", globs = ["**/*.sql"], fallthrough = true }
+]
+
 # Service Bindings
 ## DO NOT REMOVE: TEMPLATE SERVICES ##
 
