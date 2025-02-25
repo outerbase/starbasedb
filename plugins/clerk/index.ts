@@ -1,5 +1,5 @@
 import { parse } from 'cookie'
-import { jwtVerify, importSPKI } from 'jose'
+import { jwtVerify, importSPKI, JWTPayload } from 'jose'
 import { Webhook } from 'svix'
 import { StarbaseApp } from '../../src/handler'
 import { StarbasePlugin } from '../../src/plugin'
@@ -68,6 +68,7 @@ export class ClerkPlugin extends StarbasePlugin {
         clerkSessionPublicKey?: string
         verifySessions?: boolean
         permittedOrigins?: string[]
+        dataSource: DataSource
     }) {
         super('starbasedb:clerk', {
             // The `requiresAuth` is set to false to allow for the webhooks sent by Clerk to be accessible
@@ -83,12 +84,11 @@ export class ClerkPlugin extends StarbasePlugin {
         this.clerkSessionPublicKey = opts.clerkSessionPublicKey
         this.verifySessions = opts.verifySessions ?? true
         this.permittedOrigins = opts.permittedOrigins ?? []
+        this.dataSource = opts.dataSource
     }
 
     override async register(app: StarbaseApp) {
-        app.use(async (c, next) => {
-            this.dataSource = c?.get('dataSource')
-
+        app.use(async (_, next) => {
             // Create user table if it doesn't exist
             await this.dataSource?.rpc.executeQuery({
                 sql: SQL_QUERIES.CREATE_USER_TABLE,
@@ -145,6 +145,8 @@ export class ClerkPlugin extends StarbasePlugin {
                         sql: SQL_QUERIES.DELETE_USER,
                         params: [id],
                     })
+
+                    // todo if user is deleted, delete all sessions for that user
                 } else if (
                     event.type === 'user.updated' ||
                     event.type === 'user.created'
@@ -190,28 +192,24 @@ export class ClerkPlugin extends StarbasePlugin {
     /**
      * Authenticates a request using the Clerk session public key.
      * heavily references https://clerk.com/docs/backend-requests/handling/manual-jwt
-     * @param request The request to authenticate.
-     * @param dataSource The data source to use for the authentication. Must be passed as a param as this can be called before the plugin is registered.
-     * @returns {boolean} True if authenticated, false if not, undefined if the public key is not present.
+     * @param cookie The cookie to authenticate.
+     * @param token The token to authenticate.
+     * @returns {JWTPayload | false} The decoded payload if authenticated, false if not.
      */
-    public async authenticate(request: Request, dataSource: DataSource): Promise<boolean | undefined> {
+    public async authenticate({ cookie, token: tokenCrossOrigin }: { cookie?: string | null, token?: string }) {
         if (!this.verifySessions || !this.clerkSessionPublicKey) {
-            throw new Error('Public key or session verification is not enabled.')
+            console.error('Public key or session verification is not enabled.')
+            return false
         }
 
         const COOKIE_NAME = "__session"
-        const cookie = parse(request.headers.get("Cookie") || "")
-        const tokenSameOrigin = cookie[COOKIE_NAME]
-        const tokenCrossOrigin = request.headers.get("Authorization")?.replace('Bearer ', '') ?? null
-
-        if (!tokenSameOrigin && !tokenCrossOrigin) {
-            return false
-        }
+        const tokenSameOrigin = cookie ? parse(cookie)[COOKIE_NAME] : undefined
+        if (!tokenSameOrigin && !tokenCrossOrigin) return false
 
         try {
             const publicKey = await importSPKI(this.clerkSessionPublicKey, 'RS256')
             const token = tokenSameOrigin || tokenCrossOrigin
-            const decoded = await jwtVerify(token!, publicKey)
+            const decoded = await jwtVerify<{ sid: string; sub: string }>(token!, publicKey)
 
             const currentTime = Math.floor(Date.now() / 1000)
             if (
@@ -229,23 +227,37 @@ export class ClerkPlugin extends StarbasePlugin {
                 return false
             }
 
-            const sessionId = decoded.payload.sid
-            const userId = decoded.payload.sub
-
-            const result: any = await dataSource?.rpc.executeQuery({
-                sql: SQL_QUERIES.GET_SESSION,
-                params: [sessionId, userId],
-            })
-
-            if (!result?.length) {
+            const sessionExists = await this.sessionExistsInDb(decoded.payload)
+            if (!sessionExists) {
                 console.error("Session not found")
                 return false
             }
 
-            return true
+            return decoded.payload
         } catch (error) {
             console.error('Authentication error:', error)
-            throw error
+            return false
+        }
+    }
+
+    /**
+     * Checks if a user session exists in the database.
+     * @param sessionId The session ID to check.
+     * @param userId The user ID to check.
+     * @param dataSource The data source to use for the check.
+     * @returns {boolean} True if the session exists, false if not.
+     */
+    public async sessionExistsInDb(payload: { sub: string, sid: string }): Promise<boolean> {        
+        try {
+            const result: any = await this.dataSource?.rpc.executeQuery({
+                sql: SQL_QUERIES.GET_SESSION,
+                params: [payload.sid, payload.sub],
+            })
+            
+            return result?.length > 0
+        } catch (error) {
+            console.error('db error while fetching session:', error)
+            return false
         }
     }
 }

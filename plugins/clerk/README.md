@@ -11,6 +11,7 @@ Add the ClerkPlugin plugin to your Starbase configuration:
 ```typescript
 import { ClerkPlugin } from './plugins/clerk'
 const clerkPlugin = new ClerkPlugin({
+    dataSource,
     clerkInstanceId: 'ins_**********',
     clerkSigningSecret: 'whsec_**********',
     clerkSessionPublicKey: '-----BEGIN PUBLIC KEY***'
@@ -25,31 +26,44 @@ If you want to use the Clerk plugin to verify sessions, change the function `aut
 
 ```diff
 ... existing code ...
+-                       if (!payload.sub) {
++                       if (!payload.sub || !await clerkPlugin.sessionExistsInDb(payload)) {
+                                throw new Error(
+                                'Invalid JWT payload, subject not found.'
+                            )
+                        }
+
+                        context = payload
 } else {
-+    try {
-+        const authenticated = await clerkPlugin.authenticate(request, dataSource)
-+        if (!authenticated) {
-+            throw new Error('Unauthorized request')
-+        }
-+    } catch (error) {
-        // If no JWT secret or JWKS endpoint is provided, then the request has no authorization.
-        throw new Error('Unauthorized request')
-    }
++   const authenticated = await clerkPlugin.authenticate({
++       cookie: request.headers.get("Cookie"),
++       token,
++   })
+    // If no JWT secret or JWKS endpoint is provided, then the request has no authorization.
+-   throw new Error('Unauthorized request')
++   if (!authenticated) throw new Error('Unauthorized request')
++   context = authenticated
 }
 ... existing code ...
 ```
 
 ## Configuration Options
 
-| Option                  | Type     | Default | Description                                                                                      |
-| ----------------------- | -------- | ------- | ------------------------------------------------------------------------------------------------ |
-| `clerkSigningSecret`    | string   | `null`  | Access your signing secret from (https://dashboard.clerk.com/last-active?path=webhooks)          |
-| `clerkInstanceId`       | string   | `null`  | (optional) Access your instance ID from  (https://dashboard.clerk.com/last-active?path=settings) |
-| `verifySessions`        | boolean  | `true`  | (optional) Verify sessions                                                                       |
-| `clerkSessionPublicKey` | string   | `null`  | (optional) Access your public key from (https://dashboard.clerk.com/last-active?path=api-keys)   |
-| `permittedOrigins`      | string[] | `[]`    | (optional) A list of allowed origins                                                             |
+| Option                  | Type       | Default | Description                                                                                                                             |
+| ----------------------- | ---------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `dataSource`            | DataSource | `null`  | dataSource is needed to create tables and execute queries.                                                                              |
+| `clerkSigningSecret`    | string     | `null`  | Access your signing secret from (https://dashboard.clerk.com/last-active?path=webhooks)                                                 |
+| `clerkInstanceId`       | string     | `null`  | (optional) Access your instance ID from  (https://dashboard.clerk.com/last-active?path=settings)                                        |
+| `clerkSessionPublicKey` | string     | `null`  | (optional) Access your public key from (https://dashboard.clerk.com/last-active?path=api-keys) if you want to verify using a public key |
+| `verifySessions`        | boolean    | `true`  | (optional) Verify sessions, this creates a user_session table to store session data                                                     |
+| `permittedOrigins`      | string[]   | `[]`    | (optional) A list of allowed origins                                                                                                    |
 
 ## How To Use
+
+### Available Methods
+
+- `authenticate` - Authenticates a request using the Clerk session public key, returns the payload if authenticated, false in any other case.
+- `sessionExistsInDb` - Checks if a user session exists in the database, returns true if it does, false in any other case.
 
 ### Webhook Setup
 
@@ -66,3 +80,8 @@ For our Starbase instance to receive webhook events when user information change
     - Visit the API Keys page for your Clerk instance: https://dashboard.clerk.com/last-active?path=api-keys
     - Click the copy icon next to `JWKS Public Key`
 5. Copy the public key into the Clerk plugin
+6. Alternatively, you can use a JWKS endpoint instead of a public key.
+    - Visit the API Keys page for your Clerk instance: https://dashboard.clerk.com/last-active?path=api-keys
+    - Click the copy icon next to `JWKS URL`
+    - Paste the URL under `AUTH_JWKS_ENDPOINT` in your `wrangler.toml`
+    - Tweak the `authenticate` function in `src/index.ts` to check whether the session exists in the database, as shown in the [Usage](#usage) section.
