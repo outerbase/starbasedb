@@ -230,6 +230,8 @@ window.onload = connectWebSocket
 <h3>SQL Dump</h3>
 You can request a `database_dump.sql` file that exports your database schema and data into a single file.
 
+For small databases (< 100MB), you can use the direct download endpoint:
+
 <pre>
 <code>
 curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
@@ -237,6 +239,66 @@ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
 --output database_dump.sql
 </code>
 </pre>
+
+For large databases, use the chunked dump endpoint which processes the dump in the background:
+
+1. Start the dump:
+ <pre>
+ <code>
+ curl --location --request POST 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/chunked' \
+ --header 'Authorization: Bearer ABC123'
+ </code>
+ </pre>
+
+Response:
+
+```json
+{
+    "message": "Database dump started",
+    "dumpId": "123e4567-e89b-12d3-a456-426614174000",
+    "status": "in_progress",
+    "downloadUrl": "https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/123e4567-e89b-12d3-a456-426614174000"
+}
+```
+
+2. Check dump status:
+ <pre>
+ <code>
+ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/123e4567-e89b-12d3-a456-426614174000/status' \
+ --header 'Authorization: Bearer ABC123'
+ </code>
+ </pre>
+
+Response:
+
+```json
+{
+    "status": "in_progress",
+    "progress": {
+        "currentTable": "users",
+        "processedTables": 2,
+        "totalTables": 5
+    }
+}
+```
+
+3. Download the completed dump:
+ <pre>
+ <code>
+ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/123e4567-e89b-12d3-a456-426614174000' \
+ --header 'Authorization: Bearer ABC123' \
+ --output database_dump.sql
+ </code>
+ </pre>
+
+The chunked dump endpoint:
+
+- Processes large databases in chunks to avoid memory issues
+- Stores the dump file in R2 storage
+- Takes "breathing intervals" to prevent database locking
+- Supports databases up to 10GB in size
+- Provides progress tracking
+- Returns a download URL when complete
 
 <h3>JSON Data Export</h3>
 <pre>
