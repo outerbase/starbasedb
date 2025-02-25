@@ -68,6 +68,7 @@ export default defineConfig(({ mode }) => {
 
     const entry = './src/index.ts'
     return {
+        assetsInclude: ['**/*.sql'],
         server: { port: 8787 },
         plugins: [
             devServer({ adapter: cloudflareAdapter, entry }),
