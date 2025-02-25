@@ -1,0 +1,7 @@
+CREATE TABLE IF NOT EXISTS user_session (
+    session_id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    status TEXT DEFAULT 'active',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)
