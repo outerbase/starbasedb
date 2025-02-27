@@ -1,4 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
+import { processDumpChunk } from './export/chunked-dump'
+import { StarbaseDBConfiguration } from './handler'
+import { DataSource } from './types'
 
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
@@ -9,7 +12,6 @@ export class StarbaseDBDurableObject extends DurableObject {
     public connections = new Map<string, WebSocket>()
     // Store the client auth token for requests back to our Worker
     private clientAuthToken: string
-
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
      * 	`DurableObjectStub::get` for a given identifier (no-op constructors can be omitted)
@@ -17,6 +19,7 @@ export class StarbaseDBDurableObject extends DurableObject {
      * @param ctx - The interface for interacting with Durable Object state
      * @param env - The interface to reference bindings declared in wrangler.toml
      */
+
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env)
         this.clientAuthToken = env.CLIENT_AUTHORIZATION_TOKEN
@@ -59,10 +62,8 @@ export class StarbaseDBDurableObject extends DurableObject {
             "operator" TEXT DEFAULT '='
         )`
 
-        this.executeQuery({ sql: cacheStatement })
-        this.executeQuery({ sql: allowlistStatement })
-        this.executeQuery({ sql: allowlistRejectedStatement })
-        this.executeQuery({ sql: rlsStatement })
+        // Initialize tables
+        this.initializeTables()
     }
 
     init() {
@@ -72,6 +73,11 @@ export class StarbaseDBDurableObject extends DurableObject {
             deleteAlarm: this.deleteAlarm.bind(this),
             getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
+            storage: {
+                get: this.storage.get.bind(this.storage),
+                put: this.storage.put.bind(this.storage),
+                delete: this.storage.delete.bind(this.storage),
+            },
         }
     }
 
@@ -323,5 +329,61 @@ export class StarbaseDBDurableObject extends DurableObject {
             console.error('Transaction Execution Error:', error)
             throw error
         }
+    }
+
+    private convertToStubArrayBuffer(value: ArrayBuffer): {
+        byteLength: number
+        slice: (begin: number, end?: number) => Promise<ArrayBuffer>
+        [Symbol.toStringTag]: string
+    } {
+        return {
+            byteLength: value.byteLength,
+            slice: async (begin: number, end?: number) =>
+                value.slice(begin, end),
+            [Symbol.toStringTag]: 'ArrayBuffer',
+        }
+    }
+
+    private async initializeTables() {
+        // Install default necessary `tmp_` tables for various features here.
+        const cacheStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_cache (
+            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "timestamp" REAL NOT NULL,
+            "ttl" INTEGER NOT NULL,
+            "query" TEXT UNIQUE NOT NULL,
+            "results" TEXT
+        );`
+
+        const allowlistStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_allowlist_queries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sql_statement TEXT NOT NULL,
+            source TEXT DEFAULT 'external'
+        )`
+        const allowlistRejectedStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_allowlist_rejections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            sql_statement TEXT NOT NULL,
+            source TEXT DEFAULT 'external',
+            created_at TEXT DEFAULT (datetime('now'))
+        )`
+
+        const rlsStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_rls_policies (
+            "id" INTEGER PRIMARY KEY AUTOINCREMENT,
+            "actions" TEXT NOT NULL CHECK(actions IN ('SELECT', 'UPDATE', 'INSERT', 'DELETE')),
+            "schema" TEXT,
+            "table" TEXT NOT NULL,
+            "column" TEXT NOT NULL,
+            "value" TEXT NOT NULL,
+            "value_type" TEXT NOT NULL DEFAULT 'string',
+            "operator" TEXT DEFAULT '='
+        )`
+
+        await this.executeQuery({ sql: cacheStatement })
+        await this.executeQuery({ sql: allowlistStatement })
+        await this.executeQuery({ sql: allowlistRejectedStatement })
+        await this.executeQuery({ sql: rlsStatement })
     }
 }

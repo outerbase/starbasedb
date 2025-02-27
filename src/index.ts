@@ -99,7 +99,7 @@ export default {
                     : env.DATABASE_DURABLE_OBJECT.get(id)
 
             // Create a new RPC Session on the Durable Object.
-            const rpc = await stub.init()
+            const rpc = (await stub.init()) as unknown as DataSource['rpc']
 
             // Get the source type from headers/query params.
             const source =
