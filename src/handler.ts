@@ -5,7 +5,12 @@ import { validator } from 'hono/validator'
 import { DataSource } from './types'
 import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
-import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
+import {
+    createResponse,
+    QueryRequest,
+    QueryTransactionRequest,
+    getFeatureFromConfig,
+} from './utils'
 import { dumpDatabaseRoute } from './export/dump'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
@@ -26,6 +31,10 @@ export interface StarbaseDBConfiguration {
         websocket?: boolean
         export?: boolean
         import?: boolean
+        studio?: boolean
+        cron?: boolean
+        cdc?: boolean
+        interface?: boolean
     }
 }
 
@@ -283,9 +292,9 @@ export class StarbaseDB {
      */
     private getFeature(
         key: keyof NonNullable<StarbaseDBConfiguration['features']>,
-        defaultValue = true
+        defaultValue?: boolean
     ): boolean {
-        return this.config.features?.[key] ?? !!defaultValue
+        return getFeatureFromConfig(this.config.features)(key, defaultValue)
     }
 
     async queryRoute(request: Request, isRaw: boolean): Promise<Response> {

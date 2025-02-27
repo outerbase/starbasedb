@@ -1,4 +1,4 @@
-import { createResponse } from './utils'
+import { createResponse, getFeatureFromConfig } from './utils'
 import { StarbaseDB, StarbaseDBConfiguration } from './handler'
 import { DataSource, RegionLocationHint } from './types'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
@@ -32,6 +32,14 @@ export interface Env {
 
     ENABLE_ALLOWLIST?: boolean
     ENABLE_RLS?: boolean
+    ENABLE_REST?: boolean
+    ENABLE_WEBSOCKET?: boolean
+    ENABLE_EXPORT?: boolean
+    ENABLE_IMPORT?: boolean
+    ENABLE_CRON?: boolean
+    ENABLE_CDC?: boolean
+    ENABLE_INTERFACE?: boolean
+    ENABLE_STUDIO?: boolean
 
     // External database source details
     OUTERBASE_API_KEY?: string
@@ -172,43 +180,63 @@ export default {
                 features: {
                     allowlist: env.ENABLE_ALLOWLIST,
                     rls: env.ENABLE_RLS,
+                    rest: env.ENABLE_REST,
+                    websocket: env.ENABLE_WEBSOCKET,
+                    export: env.ENABLE_EXPORT,
+                    import: env.ENABLE_IMPORT,
+                    cron: env.ENABLE_CRON,
+                    cdc: env.ENABLE_CDC,
+                    interface: env.ENABLE_INTERFACE,
+                    studio: env.ENABLE_STUDIO,
                 },
             }
 
-            const webSocketPlugin = new WebSocketPlugin()
-            const cronPlugin = new CronPlugin()
-            const cdcPlugin = new ChangeDataCapturePlugin({
+            const getFeature = getFeatureFromConfig(config.features)
+
+            /**
+             * Plugins
+             */
+            const webSocketPlugin = getFeature('websocket') ? new WebSocketPlugin() : undefined
+            const studioPlugin = getFeature('studio') ? new StudioPlugin({
+                username: env.STUDIO_USER,
+                password: env.STUDIO_PASS,
+                apiKey: env.ADMIN_AUTHORIZATION_TOKEN,
+            }) : undefined
+            const sqlMacrosPlugin = new SqlMacrosPlugin({
+                preventSelectStar: false,
+            })
+            const queryLogPlugin = new QueryLogPlugin({ ctx })
+            const cdcPlugin = getFeature('cdc') ? new ChangeDataCapturePlugin({
                 stub,
                 broadcastAllEvents: false,
                 events: [],
-            })
-
-            cdcPlugin.onEvent(async ({ action, schema, table, data }) => {
-                // Include change data capture code here
-            }, ctx)
-
-            cronPlugin.onEvent(async ({ name, cron_tab, payload }) => {
-                // Include cron event code here
-            }, ctx)
-
-            const interfacePlugin = new InterfacePlugin()
-
-            const plugins = [
+            }) : undefined
+            const cronPlugin = getFeature('cron') ? new CronPlugin() : undefined
+            const statsPlugin = new StatsPlugin()
+            const interfacePlugin = getFeature('interface') ? new InterfacePlugin() : undefined
+            
+            const plugins: StarbasePlugin[] = [
                 webSocketPlugin,
-                new StudioPlugin({
-                    username: env.STUDIO_USER,
-                    password: env.STUDIO_PASS,
-                    apiKey: env.ADMIN_AUTHORIZATION_TOKEN,
-                }),
-                new SqlMacrosPlugin({
-                    preventSelectStar: false,
-                }),
-                new QueryLogPlugin({ ctx }),
+                studioPlugin,
+                sqlMacrosPlugin,
+                queryLogPlugin,
                 cdcPlugin,
                 cronPlugin,
-                new StatsPlugin(),
+                statsPlugin,
                 interfacePlugin,
-            ] satisfies StarbasePlugin[]
+            ].filter(plugin => !!plugin)
+
+            if (getFeature('cdc')) {
+                cdcPlugin?.onEvent(async ({ action, schema, table, data }) => {
+                    // Include change data capture code here
+                }, ctx)
+            }
+
+            if (getFeature('cron')) {
+                cronPlugin?.onEvent(async ({ name, cron_tab, payload }) => {
+                    // Include cron event code here
+                }, ctx)
+            }
 
             const starbase = new StarbaseDB({
                 dataSource,
@@ -228,7 +256,10 @@ export default {
             // next authentication checks happen. If a page is meant to have any
             // sort of authentication, it can provide Basic Auth itself or expose
             // itself in another plugin.
-            if (interfacePlugin.matchesRoute(url.pathname)) {
+            if (
+                getFeature('interface') &&
+                interfacePlugin?.matchesRoute(url.pathname)
+            ) {
                 return await starbase.handle(request, ctx)
             }
 
