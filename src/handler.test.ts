@@ -79,6 +79,7 @@ beforeEach(() => {
         rpc: {
             executeQuery: mockExecuteQuery,
         } as any,
+        storage: {} as any,
     }
 
     instance = new StarbaseDB({

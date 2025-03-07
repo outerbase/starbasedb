@@ -2,7 +2,7 @@
 name = "starbasedb"
 main = "src/index.ts"
 compatibility_date = "2024-09-25"
-account_id = ""
+account_id = "your-account-id"
 compatibility_flags = ["nodejs_compat_v2"]
 
 assets = { directory = "./public/" }
@@ -35,10 +35,10 @@ new_sqlite_classes = ["StarbaseDBDurableObject"]
 
 [vars]
 # Use this in your Authorization header for full database access
-ADMIN_AUTHORIZATION_TOKEN = "ABC123"
+ADMIN_AUTHORIZATION_TOKEN = "your-admin-token"
 
 # Use this in your Authorization header for a user role with rules applied
-CLIENT_AUTHORIZATION_TOKEN = "DEF456"
+CLIENT_AUTHORIZATION_TOKEN = "your-client-token"
 
 # Deploy the Durable Object in a specific region, default is "auto" or location near first request
 REGION = "auto"
@@ -49,8 +49,8 @@ REGION = "auto"
 # STUDIO_PASS = "123456"
 
 # Toggle to enable default features 
-ENABLE_ALLOWLIST = 0
-ENABLE_RLS = 0
+ENABLE_ALLOWLIST = 1
+ENABLE_RLS = 1
 
 # External database source details
 # This enables Starbase to connect to an external data source
@@ -74,3 +74,31 @@ ENABLE_RLS = 0
 
 AUTH_ALGORITHM = "RS256"
 AUTH_JWKS_ENDPOINT = ""
+
+
+# R2 Bucket for storing database dumps
+[[r2_buckets]]
+binding = "BUCKET"
+bucket_name = "database-dumps"
+
+
+
+[vars]
+CHUNK_SIZE = "1000"
+EXPORT_TIMEOUT = "25000"
+
+[durable_objects]
+bindings = [
+  { name = "DATABASE_DURABLE_OBJECT", class_name = "StarbaseDBDurableObject" }
+]
+
+# Optional environment variables
+[vars]
+ENABLE_DATABASE_DUMPS = true  # Set to false
+ENABLE_EXPORT = true
+
+[vars]
+EXPORT_CHUNK_SIZE = "1000"
+EXPORT_TIMEOUT_MS = "25000"
+EXPORT_BREATHING_TIME_MS = "5000"
+EXPORT_MAX_RETRIES = "3"

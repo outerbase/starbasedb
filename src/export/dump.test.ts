@@ -1,13 +1,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { dumpDatabaseRoute } from './dump'
-import { executeOperation } from '.'
+import { exportDumpRoute } from './dump'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
-
-vi.mock('.', () => ({
-    executeOperation: vi.fn(),
-}))
 
 vi.mock('../utils', () => ({
     createResponse: vi.fn(
@@ -19,127 +14,153 @@ vi.mock('../utils', () => ({
     ),
 }))
 
-let mockDataSource: DataSource
-let mockConfig: StarbaseDBConfiguration
+describe('Export Dump Module', () => {
+    let mockDataSource: DataSource
+    let mockConfig: StarbaseDBConfiguration
 
-beforeEach(() => {
-    vi.clearAllMocks()
+    beforeEach(() => {
+        mockDataSource = {
+            source: 'internal',
+            rpc: {
+                executeQuery: vi.fn().mockImplementation((query) => {
+                    if (query.sql.includes('sqlite_master')) {
+                        return [{ name: 'users', sql: 'CREATE TABLE users...' }]
+                    }
+                    if (query.sql.includes('COUNT')) {
+                        return [{ count: 100 }]
+                    }
+                    return [{ id: 1, name: 'test' }]
+                }),
+            },
+            storage: {
+                get: vi.fn().mockImplementation((key: string) => {
+                    if (key.includes('state')) {
+                        return {
+                            id: 'dump_test',
+                            status: 'pending',
+                            currentOffset: 0,
+                            totalRows: 0,
+                            format: 'sql',
+                            tables: [],
+                            processedTables: [],
+                            currentTable: '',
+                        }
+                    }
+                    return null
+                }),
+                put: vi.fn(),
+                setAlarm: vi.fn(),
+            },
+        } as any
 
-    mockDataSource = {
-        source: 'external',
-        external: { dialect: 'sqlite' },
-        rpc: { executeQuery: vi.fn() },
-    } as any
+        mockConfig = {
+            role: 'admin',
+            features: {
+                allowlist: false,
+                rls: false,
+                export: true,
+            },
+            export: {
+                maxRetries: 3,
+                breathingTimeMs: 5000,
+            },
+            BUCKET: {
+                put: vi.fn().mockResolvedValue(true),
+                get: vi.fn().mockResolvedValue(null),
+            },
+        } as any
 
-    mockConfig = {
-        outerbaseApiKey: 'mock-api-key',
-        role: 'admin',
-        features: { allowlist: true, rls: true, rest: true },
-    }
-})
-
-describe('Database Dump Module', () => {
-    it('should return a database dump when tables exist', async () => {
-        vi.mocked(executeOperation)
-            .mockResolvedValueOnce([{ name: 'users' }, { name: 'orders' }])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
-            ])
-            .mockResolvedValueOnce([
-                { id: 1, name: 'Alice' },
-                { id: 2, name: 'Bob' },
-            ])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
-            ])
-            .mockResolvedValueOnce([
-                { id: 1, total: 99.99 },
-                { id: 2, total: 49.5 },
-            ])
-
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        expect(response.headers.get('Content-Type')).toBe(
-            'application/x-sqlite3'
-        )
-        expect(response.headers.get('Content-Disposition')).toBe(
-            'attachment; filename="database_dump.sql"'
-        )
-
-        const dumpText = await response.text()
-        expect(dumpText).toContain(
-            'CREATE TABLE users (id INTEGER, name TEXT);'
-        )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
-        expect(dumpText).toContain(
-            'CREATE TABLE orders (id INTEGER, total REAL);'
-        )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        vi.clearAllMocks()
     })
 
-    it('should handle empty databases (no tables)', async () => {
-        vi.mocked(executeOperation).mockResolvedValueOnce([])
-
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        expect(response.headers.get('Content-Type')).toBe(
-            'application/x-sqlite3'
+    it('should return 405 for non-POST requests', async () => {
+        const request = new Request('http://localhost', { method: 'GET' })
+        const response = await exportDumpRoute(
+            request,
+            mockDataSource,
+            mockConfig
         )
-        const dumpText = await response.text()
-        expect(dumpText).toBe('SQLite format 3\0')
+        expect(response.status).toBe(405)
     })
 
-    it('should handle databases with tables but no data', async () => {
-        vi.mocked(executeOperation)
-            .mockResolvedValueOnce([{ name: 'users' }])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
-            ])
-            .mockResolvedValueOnce([])
-
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        const dumpText = await response.text()
-        expect(dumpText).toContain(
-            'CREATE TABLE users (id INTEGER, name TEXT);'
+    it('should return 400 for invalid format', async () => {
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: JSON.stringify({ format: 'invalid' }),
+        })
+        const response = await exportDumpRoute(
+            request,
+            mockDataSource,
+            mockConfig
         )
-        expect(dumpText).not.toContain('INSERT INTO users VALUES')
+        expect(response.status).toBe(400)
     })
 
-    it('should escape single quotes properly in string values', async () => {
-        vi.mocked(executeOperation)
-            .mockResolvedValueOnce([{ name: 'users' }])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
-            ])
-            .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+    it('should return 404 if no tables found', async () => {
+        mockDataSource.rpc.executeQuery = vi
+            .fn()
+            .mockImplementation((query) => {
+                if (query.sql.includes('sqlite_master')) {
+                    return []
+                }
+                return [{ count: 0 }]
+            })
 
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        const dumpText = await response.text()
-        expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: JSON.stringify({ format: 'sql' }),
+        })
+        const response = await exportDumpRoute(
+            request,
+            mockDataSource,
+            mockConfig
         )
+        expect(response.status).toBe(404)
+        const data = (await response.json()) as { error: string }
+        expect(data.error).toBe('No tables found')
     })
 
-    it('should return a 500 response when an error occurs', async () => {
-        const consoleErrorMock = vi
-            .spyOn(console, 'error')
-            .mockImplementation(() => {})
-        vi.mocked(executeOperation).mockRejectedValue(
-            new Error('Database Error')
+    it('should successfully export database in chunks', async () => {
+        mockDataSource.rpc.executeQuery = vi
+            .fn()
+            .mockResolvedValueOnce([{ name: 'users' }, { name: 'posts' }])
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: JSON.stringify({ format: 'sql' }),
+        })
+
+        const response = await exportDumpRoute(
+            request,
+            mockDataSource,
+            mockConfig
         )
+        expect(response.status).toBe(202)
 
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const responseData = (await response.json()) as {
+            result: { status: string; dumpId: string }
+        }
+        expect(responseData.result.status).toBe('processing')
+        expect(responseData.result.dumpId).toBe('dump_test')
+    })
 
+    it('should handle errors gracefully', async () => {
+        mockDataSource.rpc.executeQuery = vi
+            .fn()
+            .mockRejectedValue(new Error('Database error'))
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: JSON.stringify({ format: 'sql' }),
+        })
+
+        const response = await exportDumpRoute(
+            request,
+            mockDataSource,
+            mockConfig
+        )
         expect(response.status).toBe(500)
-        const jsonResponse: { error: string } = await response.json()
-        expect(jsonResponse.error).toBe('Failed to create database dump')
+        const data = (await response.json()) as { error: string }
+        expect(data.error).toContain('Database error')
     })
 })

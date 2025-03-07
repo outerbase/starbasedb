@@ -1,6 +1,8 @@
 import { DataSource } from '../types'
 import { executeTransaction } from '../operation'
 import { StarbaseDBConfiguration } from '../handler'
+import { DumpOptions } from '../types'
+import { R2Bucket } from '@cloudflare/workers-types'
 
 export async function executeOperation(
     queries: { sql: string; params?: any[] }[],
@@ -68,3 +70,11 @@ export function createExportResponse(
 
     return new Response(blob, { headers })
 }
+
+export {
+    exportDumpRoute,
+    checkDumpStatusRoute,
+    downloadDumpRoute,
+    getDumpProgress,
+} from './dump'
+export { processDumpChunk } from './dump'

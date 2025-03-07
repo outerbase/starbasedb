@@ -1,5 +1,25 @@
-import { StarbaseDBDurableObject } from './do'
+/// <reference types="@cloudflare/workers-types" />
+import type {
+    DurableObject,
+    DurableObjectState,
+    DurableObjectNamespace,
+    R2Bucket,
+} from '@cloudflare/workers-types'
+
+// import { StarbaseDBDurableObject } from './do'
 import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
+
+// Use a different name to avoid conflicts
+export interface StarbaseDurableObjectStub<T> {
+    init: () => Promise<T>
+}
+
+// Define the unique symbol
+declare const __DURABLE_OBJECT_BRAND: unique symbol
+
+export interface DurableObjectBranded {
+    [__DURABLE_OBJECT_BRAND]: typeof __DURABLE_OBJECT_BRAND
+}
 
 export type QueryResult = Record<string, SqlStorageValue>
 
@@ -14,11 +34,21 @@ export type RemoteSource = {
 
 export type PostgresSource = {
     dialect: 'postgresql'
-} & RemoteSource
+    host: string
+    port: number
+    user: string
+    password: string
+    database: string
+}
 
 export type MySQLSource = {
     dialect: 'mysql'
-} & RemoteSource
+    host: string
+    port: number
+    user: string
+    password: string
+    database: string
+}
 
 export type CloudflareD1Source = {
     dialect: 'sqlite'
@@ -49,25 +79,90 @@ export type ExternalDatabaseSource =
     | StarbaseDBSource
     | TursoDBSource
 
-export type DataSource = {
-    rpc: Awaited<ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>>
+export type StarbaseDBDurableObject = DurableObjectBranded & {
+    executeQuery: (sql: string) => Promise<any[]>
+    property1: string
+    property2: number
+    // Add properties specific to StarbaseDBDurableObject here
+}
+
+export interface DataSource {
     source: 'internal' | 'external'
+    rpc: {
+        executeQuery: (opts: { sql: string; params?: any[] }) => Promise<any>
+    }
+    storage: {
+        get: (key: string) => Promise<any>
+        put: (key: string, value: any) => Promise<void>
+        setAlarm: (time: number, options?: { data?: any }) => Promise<void>
+    }
     external?: ExternalDatabaseSource
-    context?: Record<string, unknown>
-    cache?: boolean
-    cacheTTL?: number
-    registry?: StarbasePluginRegistry
+    context?: Record<string, any>
+    registry?: any
 }
 
 export enum RegionLocationHint {
     AUTO = 'auto',
-    WNAM = 'wnam', // Western North America
-    ENAM = 'enam', // Eastern North America
-    SAM = 'sam', // South America
-    WEUR = 'weur', // Western Europe
-    EEUR = 'eeur', // Eastern Europe
-    APAC = 'apac', // Asia Pacific
-    OC = 'oc', // Oceania
-    AFR = 'afr', // Africa
-    ME = 'me', // Middle East
+    WNAM = 'wnam',
+    ENAM = 'enam',
+    SAM = 'sam',
+    WEUR = 'weur',
+    EEUR = 'eeur',
+    APAC = 'apac',
+    OC = 'oc',
+    AFR = 'afr',
+    ME = 'me',
+}
+
+export interface DumpOptions {
+    format: 'sql' | 'csv' | 'json'
+    callbackUrl?: string
+    chunkSize?: number
+    dumpId: string
+}
+
+export interface TableInfo {
+    name: string
+    sql: string
+}
+
+export interface DumpState {
+    id: string
+    status: 'pending' | 'processing' | 'completed' | 'failed'
+    currentOffset: number
+    totalRows: number
+    format: 'sql' | 'csv' | 'json'
+    error?: string
+    callbackUrl?: string
+    currentTable: string
+    tables: string[]
+    processedTables: string[]
+}
+
+export interface Env {
+    ADMIN_AUTHORIZATION_TOKEN: string
+    CLIENT_AUTHORIZATION_TOKEN: string
+    DATABASE_DURABLE_OBJECT: DurableObjectNamespace
+    REGION: string
+    BUCKET: R2Bucket
+}
+
+export interface StarbaseDBConfiguration {
+    role: 'admin' | 'client'
+    outerbaseApiKey: string
+    features: {
+        rls: boolean
+        allowlist: boolean
+        rest: boolean
+        export: boolean
+        import: boolean
+    }
+    BUCKET: any
+    dialect?: string
+    export?: {
+        maxRetries?: number
+        breathingTimeMs?: number
+        chunkSize?: number
+        timeoutMs?: number
+    }
 }
