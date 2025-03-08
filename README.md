@@ -264,85 +264,6 @@ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/import/dump' \
 --form 'sqlFile=@"./Desktop/sqldump.sql"'
 </code>
 </pre>
-
-<h3>Database Dumps</h3>
-<p>You can create and retrieve SQL dumps of your entire database using the following endpoints:</p>
-
-<h4>Configuration</h4>
-<p>Add the following to your wrangler.toml file to enable database dumps:</p>
-
-<pre>
-<code>
-[[r2_buckets]]
-binding = "BUCKET"
-bucket_name = "your-database-dumps"
-</code>
-</pre>
-
-<p>The feature requires an R2 bucket to store dump files. Make sure you have:</p>
-<ul>
-  <li>Created an R2 bucket in your Cloudflare account</li>
-  <li>Added the R2 bucket binding to your wrangler.toml file</li>
-  <li>Set appropriate CORS policies if accessing the dump endpoint from a browser</li>
-</ul>
-
-<h4>Start a Database Dump</h4>
-<pre>
-<code>
-curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
---header 'Authorization: Bearer YOUR-TOKEN' \
---header 'Content-Type: application/json' \
---data '{
-    "format": "sql",
-    "callbackUrl": "https://your-callback-url.com/notify"
-}'
-</code>
-</pre>
-
-<p>This will return a dump ID that you can use to check the status.
-
-### Check Dump Status
-
-```bash
-curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/status/{dump-id}' \
---header 'Authorization: Bearer YOUR-TOKEN'
-```
-
-### Download Completed Dump
-
-```bash
-curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/download/{dump-id}' \
---header 'Authorization: Bearer YOUR-TOKEN' \
---output database_dump.sql
-```
-
-## Testing Guidelines
-
-1. **Small Database Test**: Verify that dumps complete within 30 seconds and return directly
-2. **Large Database Test**: Verify that dumps continue processing after the initial request times out
-3. **Breathing Intervals**: Verify that the system takes breaks to prevent locking the database
-4. **Callback Notification**: Verify that the callback URL is notified when the dump completes
-5. **Error Handling**: Verify that errors are properly reported and don't leave dumps in an inconsistent state
-6. **Format Support**: Verify that SQL, CSV, and JSON formats work correctly</p>
-
-<br />
-<h2>Contributing</h2>
-<p>We welcome contributions! Please refer to our <a href="./CONTRIBUTING.md">Contribution Guide</a> for more details.</p>
-
-<br />
-<h2>License</h2>
-<p>This project is licensed under the AGPL-3.0 license. See the <a href="./LICENSE">LICENSE</a> file for more info.</p>
-
-<br />
-<h2>Contributors</h2>
-<p>
-  <img align="left" src="https://contributors-img.web.app/image?repo=brayden/starbasedb" alt="Contributors"/>
-</p>
-
-## Usage Instructions
-
-Replace `YOUR-ID-HERE` with your actual Cloudflare Workers subdomain and `YOUR-TOKEN` with your actual authentication token in the examples below.
-
 ### Start a Database Dump
 
 ```bash
@@ -576,3 +497,17 @@ wrangler r2 list your-database-dumps-bucket
 - CPU usage: Peaks at 25% during processing
 - Network: ~10MB/s during dumps
 - R2 operations: ~1 operation per chunk
+
+<br />
+<h2>Contributing</h2>
+<p>We welcome contributions! Please refer to our <a href="./CONTRIBUTING.md">Contribution Guide</a> for more details.</p>
+
+<br />
+<h2>License</h2>
+<p>This project is licensed under the AGPL-3.0 license. See the <a href="./LICENSE">LICENSE</a> file for more info.</p>
+
+<br />
+<h2>Contributors</h2>
+<p>
+  <img align="left" src="https://contributors-img.web.app/image?repo=brayden/starbasedb" alt="Contributors"/>
+</p>
