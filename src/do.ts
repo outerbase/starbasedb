@@ -14,6 +14,10 @@ import type { R2Bucket } from '@cloudflare/workers-types'
 import { DataSource } from './types'
 import { processDumpChunk } from './export/index'
 
+// Add these constants at the top of the file
+const CHUNK_SIZE = 1000
+const BREATHING_INTERVAL = 5000
+
 interface Env {
     CLIENT_AUTHORIZATION_TOKEN: string
     R2_BUCKET: R2Bucket
@@ -136,46 +140,46 @@ export class StarbaseDBDurableObject implements DurableObject {
         return this.storage.deleteAlarm(options)
     }
 
-    async alarm(data: any): Promise<void> {
-        console.log('Alarm triggered:', data)
-
-        if (data.action === 'start' || data.action === 'continue') {
-            const { dumpId } = data
-
-            // Create a data source for the alarm context
-            const storageAdapter = {
-                get: this.storage.get.bind(this.storage),
-                put: this.storage.put.bind(this.storage),
-                setAlarm: (time: number, options?: { data?: any }) =>
-                    this.storage.setAlarm(
-                        time,
-                        options as DurableObjectSetAlarmOptions
-                    ),
-            }
-
-            const dataSource: DataSource = {
-                source: 'internal',
-                rpc: {
-                    executeQuery: async (opts) => this.executeQuery(opts),
+    async alarm() {
+        try {
+            // Check for any in-progress dumps that need to continue
+            await DatabaseDumper.continueProcessing(
+                {
+                    source: 'internal',
+                    rpc: {
+                        executeQuery: async (query) => this.executeQuery(query),
+                    },
+                    storage: {
+                        get: this.storage.get.bind(this.storage),
+                        put: this.storage.put.bind(this.storage),
+                        setAlarm: (time: number, options?: { data?: any }) =>
+                            this.storage.setAlarm(
+                                time,
+                                options as DurableObjectSetAlarmOptions
+                            ),
+                    },
                 },
-                storage: storageAdapter,
-            }
-
-            // Process the next chunk
-            const config = {
-                role: 'admin' as const,
-                outerbaseApiKey: '',
-                features: {
-                    allowlist: false,
-                    rls: false,
-                    rest: false,
-                    export: false,
-                    import: false,
-                },
-                BUCKET: this.r2Bucket as any,
-            }
-
-            await processDumpChunk(dumpId, dataSource, config)
+                {
+                    BUCKET: this.r2Bucket as any,
+                    role: 'admin' as const,
+                    outerbaseApiKey: '',
+                    features: {
+                        allowlist: false,
+                        rls: false,
+                        rest: false,
+                        export: true,
+                        import: false,
+                    },
+                    export: {
+                        chunkSize: CHUNK_SIZE,
+                        breathingTimeMs: BREATHING_INTERVAL,
+                        timeoutMs: 25000,
+                        maxRetries: 3,
+                    },
+                }
+            )
+        } catch (error) {
+            console.error('Error in alarm handler:', error)
         }
     }
 

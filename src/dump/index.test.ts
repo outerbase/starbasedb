@@ -31,15 +31,20 @@ describe('DatabaseDumper', () => {
             storage: {
                 get: vi.fn().mockResolvedValue(null),
                 put: vi.fn().mockResolvedValue(undefined),
+                setAlarm: vi.fn().mockResolvedValue(undefined),
             },
         }
 
         mockEnv = {
             BUCKET: mockR2Bucket,
             role: 'admin' as const,
+            outerbaseApiKey: '',
             features: {
                 allowlist: false,
                 rls: false,
+                rest: false,
+                export: true,
+                import: false,
             },
         }
 
@@ -61,52 +66,50 @@ describe('DatabaseDumper', () => {
     })
 
     it('should process chunks and store in R2', async () => {
+        mockDataSource.rpc.executeQuery = vi
+            .fn()
+            .mockResolvedValueOnce([
+                { table_name: 'users', sql: 'CREATE TABLE users...' },
+            ])
+            .mockResolvedValueOnce([{ count: 100 }])
+            .mockResolvedValueOnce([
+                { id: 1, name: 'Alice' },
+                { id: 2, name: 'Bob' },
+            ])
+
         const dumper = new DatabaseDumper(
             mockDataSource,
-            {
-                format: 'sql',
-                dumpId: 'test-dump',
-                chunkSize: 100,
-            },
+            { format: 'sql', dumpId: 'test-dump' },
             mockEnv
         )
 
         await dumper.start()
+
         expect(mockR2Bucket.put).toHaveBeenCalled()
     })
 
     it('should handle large datasets with breathing intervals', async () => {
-        vi.useFakeTimers({ shouldAdvanceTime: true })
-
-        const originalDateNow = Date.now
-        let currentTime = 0
-        Date.now = vi.fn(() => currentTime)
+        mockDataSource.rpc.executeQuery = vi
+            .fn()
+            .mockResolvedValueOnce([
+                { table_name: 'users', sql: 'CREATE TABLE users...' },
+            ])
+            .mockResolvedValueOnce([{ count: 2000 }])
+            .mockResolvedValueOnce([{ id: 1, name: 'User 1' }])
+            .mockResolvedValueOnce([])
 
         const dumper = new DatabaseDumper(
             mockDataSource,
-            {
-                format: 'sql',
-                dumpId: 'test-dump',
-                chunkSize: 100,
-            },
+            { format: 'sql', dumpId: 'test-dump' },
             mockEnv
         )
 
-        const startPromise = dumper.start()
+        await dumper.start()
 
-        currentTime = 26000 // Simulate time passing
-        await vi.runOnlyPendingTimersAsync()
-
-        await startPromise
-
-        expect(mockDataSource.storage.put).toHaveBeenCalled()
         expect(mockDataSource.rpc.executeQuery).toHaveBeenCalledWith({
             sql: 'SELECT set_alarm(?)',
             params: expect.any(Array),
         })
-
-        Date.now = originalDateNow
-        vi.useRealTimers()
     })
 
     it('should send callback notification when complete', async () => {

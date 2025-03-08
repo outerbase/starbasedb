@@ -462,28 +462,6 @@ Test scenarios:
 npm run test:dump errors
 ```
 
-### 6. Load Testing
-
-Verify concurrent dump requests:
-
-```bash
-npm run test:dump load
-```
-
-## Monitoring and Debugging
-
-Access dump logs:
-
-```bash
-wrangler tail --format=pretty
-```
-
-Monitor R2 storage:
-
-```bash
-wrangler r2 list your-database-dumps-bucket
-```
-
 ## Security Considerations
 
 1. R2 bucket permissions are least-privilege
