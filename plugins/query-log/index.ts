@@ -20,6 +20,10 @@ export class QueryLogPlugin extends StarbasePlugin {
     executionContext?: ExecutionContext
     // Add TTL configuration (default 1 day)
     private readonly ttl: number = 1
+    // Enables the omission of queries who contain the prefix
+    omitEnabled?: boolean = false
+    // Prefix that if a query contains it won't be logged
+    omitPrefix: string = '--OMIT'
 
     state = {
         startTime: new Date(),
@@ -28,9 +32,18 @@ export class QueryLogPlugin extends StarbasePlugin {
         query: '',
     }
 
-    constructor(opts?: { ctx?: ExecutionContext }) {
+    constructor(opts?: {
+        ctx?: ExecutionContext
+        enableOmit?: boolean
+        omitPrefix?: string
+    }) {
         super('starbasedb:query-log')
         this.executionContext = opts?.ctx
+        this.omitEnabled = opts?.enableOmit
+
+        if (opts?.omitPrefix) {
+            this.omitPrefix = opts?.omitPrefix
+        }
     }
 
     override async register(app: StarbaseApp) {
@@ -74,8 +87,18 @@ export class QueryLogPlugin extends StarbasePlugin {
         this.state.totalTime =
             this.state.endTime.getTime() - this.state.startTime.getTime()
 
+        // Queries can be omitted from
         if (opts.dataSource) {
-            this.addQuery(opts?.dataSource)
+            if (
+                (this.omitEnabled &&
+                    !opts.sql
+                        .toUpperCase()
+                        .trim()
+                        .startsWith(this.omitPrefix)) ||
+                !this.omitEnabled
+            ) {
+                this.addQuery(opts?.dataSource)
+            }
         }
 
         // Do a purge action for older than TTL items
