@@ -56,11 +56,11 @@ ENABLE_RLS = 0
 # This enables Starbase to connect to an external data source
 # OUTERBASE_API_KEY = ""
 EXTERNAL_DB_TYPE = "postgresql"
-EXTERNAL_DB_HOST = "outerbase-demo.cvbkobjfaydi.us-east-1.rds.amazonaws.com"
-EXTERNAL_DB_PORT = 5432
-EXTERNAL_DB_USER = "postgres"
-EXTERNAL_DB_PASS = "Brayden^22"
-EXTERNAL_DB_DATABASE = "postgres"
+# EXTERNAL_DB_HOST = ""
+# EXTERNAL_DB_PORT = 0
+# EXTERNAL_DB_USER = ""
+# EXTERNAL_DB_PASS = ""
+# EXTERNAL_DB_DATABASE = ""
 # EXTERNAL_DB_DEFAULT_SCHEMA = "public"
 
 # EXTERNAL_DB_MONGODB_URI = ""
