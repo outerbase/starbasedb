@@ -12,7 +12,6 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
-import { ClerkPlugin } from '../plugins/clerk'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -54,6 +53,8 @@ export interface Env {
 
     AUTH_ALGORITHM?: string
     AUTH_JWKS_ENDPOINT?: string
+
+    HYPERDRIVE: Hyperdrive
 
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
@@ -111,20 +112,30 @@ export default {
                 source: source
                     ? source.toLowerCase().trim() === 'external'
                         ? 'external'
-                        : 'internal'
+                        : source.toLowerCase().trim() === 'hyperdrive'
+                          ? 'hyperdrive'
+                          : 'internal'
                     : 'internal',
                 cache: request.headers.get('X-Starbase-Cache') === 'true',
                 context: {
                     ...context,
                 },
+                executionContext: ctx,
             }
 
-            if (
-                env.EXTERNAL_DB_TYPE === 'postgresql' ||
-                env.EXTERNAL_DB_TYPE === 'mysql'
-            ) {
+            if (env.EXTERNAL_DB_TYPE === 'postgresql') {
                 dataSource.external = {
-                    dialect: env.EXTERNAL_DB_TYPE,
+                    dialect: 'postgresql',
+                    host: env.EXTERNAL_DB_HOST!,
+                    port: env.EXTERNAL_DB_PORT!,
+                    user: env.EXTERNAL_DB_USER!,
+                    password: env.EXTERNAL_DB_PASS!,
+                    database: env.EXTERNAL_DB_DATABASE!,
+                    defaultSchema: env.EXTERNAL_DB_DEFAULT_SCHEMA,
+                }
+            } else if (env.EXTERNAL_DB_TYPE === 'mysql') {
+                dataSource.external = {
+                    dialect: 'mysql',
                     host: env.EXTERNAL_DB_HOST!,
                     port: env.EXTERNAL_DB_PORT!,
                     user: env.EXTERNAL_DB_USER!,
@@ -163,6 +174,13 @@ export default {
                         token: env.EXTERNAL_DB_TURSO_TOKEN!,
                         defaultSchema: env.EXTERNAL_DB_DEFAULT_SCHEMA,
                     }
+                }
+            }
+
+            if (env.HYPERDRIVE.connectionString) {
+                dataSource.external = {
+                    dialect: 'postgresql',
+                    connectionString: env.HYPERDRIVE.connectionString,
                 }
             }
 

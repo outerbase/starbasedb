@@ -1,5 +1,5 @@
 import { StarbaseDBDurableObject } from './do'
-import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
+import { StarbasePluginRegistry } from './plugin'
 
 export type QueryResult = Record<string, SqlStorageValue>
 
@@ -11,6 +11,11 @@ export type RemoteSource = {
     database: string
     defaultSchema?: string
 }
+
+export type HyperdriveSource = {
+    dialect: 'postgresql'
+    connectionString: string
+} & Pick<RemoteSource, 'defaultSchema'>
 
 export type PostgresSource = {
     dialect: 'postgresql'
@@ -48,15 +53,17 @@ export type ExternalDatabaseSource =
     | CloudflareD1Source
     | StarbaseDBSource
     | TursoDBSource
+    | HyperdriveSource
 
 export type DataSource = {
     rpc: Awaited<ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>>
-    source: 'internal' | 'external'
+    source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>
     cache?: boolean
     cacheTTL?: number
     registry?: StarbasePluginRegistry
+    executionContext?: ExecutionContext
 }
 
 export enum RegionLocationHint {

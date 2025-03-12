@@ -2,6 +2,7 @@
 import { Client as PgClient } from 'pg'
 import { createConnection as createMySqlConnection } from 'mysql2'
 import { createClient as createTursoConnection } from '@libsql/client/web'
+import postgres from 'postgres'
 
 // Import how we interact with the databases through the Outerbase SDK
 import {
@@ -23,7 +24,6 @@ import { afterQueryCache, beforeQueryCache } from './cache'
 import { isQueryAllowed } from './allowlist'
 import { applyRLS } from './rls'
 import type { SqlConnection } from '@outerbase/sdk/dist/connections/sql-base'
-import { StarbasePlugin } from './plugin'
 
 export type OperationQueueItem = {
     queries: { sql: string; params?: any[] }[]
@@ -256,6 +256,38 @@ export async function executeQuery(opts: {
         if (!result) {
             console.error('Returning empty array.')
             return []
+        }
+    } else if (dataSource.source === 'hyperdrive') {
+        if (
+            !dataSource.external ||
+            !('connectionString' in dataSource.external)
+        ) {
+            throw new Error('Hyperdrive connection string not found')
+        }
+
+        // Construct a Postgres pool for Hyperdrive connection.
+        // Currently Hyperdrive only supports Postgres and in the near future should also
+        // gain support for MySQL which we will then need to make driver updates per the
+        // docs as they are released.
+        const sql = postgres(dataSource.external.connectionString, {
+            max: 5,
+            fetch_types: false,
+        })
+
+        try {
+            result = await sql.unsafe(updatedSQL, updatedParams as any[])
+
+            if (opts.dataSource?.executionContext) {
+                // Optimistically we hope a ExecutionContext is available to us
+                // to properly end our SQL function.
+                opts.dataSource?.executionContext?.waitUntil(sql.end())
+            } else {
+                // As a fallback we'll just end it.
+                await sql.end()
+            }
+        } catch (e) {
+            console.error('Hyperdrive query error:', e)
+            throw e
         }
     } else {
         result = await executeExternalQuery({
