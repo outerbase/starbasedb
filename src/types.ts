@@ -98,7 +98,11 @@ export type StarbaseDBDurableObject = {
 }
 
 export type DataSource = {
-    rpc: any // Simplify the type to avoid Response type mismatch
+    rpc:
+        | Response
+        | Awaited<
+              ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>
+          >
     source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>
