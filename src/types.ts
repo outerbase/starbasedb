@@ -87,7 +87,7 @@ export type StarbaseDBDurableObject = {
 }
 
 export type DataSource = {
-    rpc: any
+    rpc: any // Simplified to avoid type constraints
     source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>

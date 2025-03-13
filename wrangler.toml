@@ -88,3 +88,8 @@ AUTH_JWKS_ENDPOINT = ""
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "database-dumps"
+
+# Commented Hyperdrive config for future use
+# [[hyperdrive]]
+# binding = "HYPERDRIVE"
+# id = ""
