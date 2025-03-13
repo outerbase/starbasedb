@@ -32,8 +32,14 @@ export class LiteREST {
     ): Promise<string[]> {
         let query = `PRAGMA table_info(${tableName});`
 
-        if (this.dataSource.source === 'external') {
-            if (this.dataSource.external?.dialect === 'postgresql') {
+        if (
+            this.dataSource.source === 'external' ||
+            this.dataSource.source === 'hyperdrive'
+        ) {
+            if (
+                this.dataSource.external?.dialect === 'postgresql' ||
+                this.dataSource.source === 'hyperdrive'
+            ) {
                 query = `
                     SELECT kcu.column_name AS name 
                     FROM information_schema.table_constraints tc 

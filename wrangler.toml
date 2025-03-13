@@ -74,3 +74,7 @@ ENABLE_RLS = 0
 
 AUTH_ALGORITHM = "RS256"
 AUTH_JWKS_ENDPOINT = ""
+
+# [[hyperdrive]]
+# binding = "HYPERDRIVE"
+# id = ""

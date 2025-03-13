@@ -100,6 +100,19 @@ export class StarbaseDB {
             })
         })
 
+        this.app.get('/status/database', async (c) => {
+            return createResponse(
+                {
+                    dialects: {
+                        external: this.dataSource.external?.dialect,
+                        hyperdrive: 'postgresql',
+                    },
+                },
+                undefined,
+                200
+            )
+        })
+
         if (this.getFeature('rest')) {
             this.app.all('/rest/*', async (c) => {
                 return this.liteREST.handleRequest(c.req.raw)
