@@ -88,7 +88,11 @@ export type ExternalDatabaseSource =
     | HyperdriveSource
 
 export type DataSource = {
-    rpc: Awaited<ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>>
+    rpc:
+        | Response
+        | Awaited<
+              ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>
+          >
     source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>

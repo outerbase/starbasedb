@@ -19,10 +19,18 @@ interface Env {
     AUTH_ALGORITHM: string
     AUTH_JWKS_ENDPOINT: string
     DATABASE_DURABLE_OBJECT: DurableObjectNamespace
+    BUCKET: R2Bucket
 }
 
 export interface StarbaseDBConfiguration {
     outerbaseApiKey: string
     role: 'client' | 'admin'
-    features: { allowlist: boolean; rls: boolean; rest: boolean }
+    features: {
+        allowlist: boolean
+        rls: boolean
+        rest: boolean
+        export: boolean
+        import: boolean
+    }
+    BUCKET: R2Bucket
 }
