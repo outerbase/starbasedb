@@ -9,8 +9,8 @@ import type {
 
 import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
 
-// Use a different name to avoid conflicts
-export interface StarbaseDurableObjectStub<T> {
+// Define the DurableObjectStub type
+type DurableObjectStub<T> = {
     init: () => Promise<T>
 }
 
@@ -95,11 +95,10 @@ export type StarbaseDBDurableObject = {
         deleteAlarm: (options?: any) => Promise<void>
         getStatistics: () => Promise<any>
     }>
-    [__DURABLE_OBJECT_BRAND]: typeof __DURABLE_OBJECT_BRAND
 }
 
 export type DataSource = {
-    rpc: any // Keep simple version to avoid circular dependencies
+    rpc: any // Simplify the type to avoid Response type mismatch
     source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>
@@ -107,6 +106,11 @@ export type DataSource = {
     cacheTTL?: number
     registry?: StarbasePluginRegistry
     executionContext?: ExecutionContext
+    storage?: {
+        get: (key: string) => Promise<any>
+        put: (key: string, value: any) => Promise<void>
+        setAlarm: (time: number, options?: any) => Promise<void>
+    }
 }
 
 export enum RegionLocationHint {

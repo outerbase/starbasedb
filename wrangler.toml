@@ -5,6 +5,9 @@ compatibility_date = "2024-09-25"
 account_id = "your-account-id"
 compatibility_flags = ["nodejs_compat_v2"]
 
+[build]
+command = "npm run build"
+
 assets = { directory = "./public/" }
 
 rules = [
@@ -36,9 +39,9 @@ new_sqlite_classes = ["StarbaseDBDurableObject"]
 
 [vars]
 # Use this in your Authorization header for full database access
-ADMIN_AUTHORIZATION_TOKEN = "your-admin-token"
+ADMIN_AUTHORIZATION_TOKEN = ""
 # Use this in your Authorization header for a user role with rules applied
-CLIENT_AUTHORIZATION_TOKEN = "your-client-token"
+CLIENT_AUTHORIZATION_TOKEN = ""
 # Deploy the Durable Object in a specific region, default is "auto"
 REGION = "auto"
 # Database dump configuration
@@ -48,8 +51,8 @@ EXPORT_CHUNK_SIZE = "1000"
 EXPORT_TIMEOUT_MS = "25000"
 EXPORT_BREATHING_TIME_MS = "5000"
 EXPORT_MAX_RETRIES = "3"
-ENABLE_DATABASE_DUMPS = true
-ENABLE_EXPORT = true
+ENABLE_DATABASE_DUMPS = "true"
+ENABLE_EXPORT = "true"
 
 # Uncomment the section below to create a user for logging into your database UI.
 # You can access the Studio UI at: https://your_endpoint/studio
@@ -57,8 +60,9 @@ ENABLE_EXPORT = true
 # STUDIO_PASS = "123456"
 
 # Toggle to enable default features 
-ENABLE_ALLOWLIST = 1
-ENABLE_RLS = 1
+ENABLE_ALLOWLIST = "1"
+ENABLE_RLS = "1"
+ENABLE_REST = "1"
 
 # External database source details
 # This enables Starbase to connect to an external data source
