@@ -87,7 +87,6 @@ ENABLE_REST = "1"
 AUTH_ALGORITHM = "RS256"
 AUTH_JWKS_ENDPOINT = ""
 
-
 # R2 Bucket for storing database dumps
 [[r2_buckets]]
 binding = "BUCKET"

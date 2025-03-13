@@ -124,12 +124,19 @@ export default {
                 executionContext: ctx,
             }
 
-            if (
-                env.EXTERNAL_DB_TYPE === 'postgresql' ||
-                env.EXTERNAL_DB_TYPE === 'mysql'
-            ) {
+            if (env.EXTERNAL_DB_TYPE === 'postgresql') {
                 dataSource.external = {
-                    dialect: env.EXTERNAL_DB_TYPE,
+                    dialect: 'postgresql',
+                    host: env.EXTERNAL_DB_HOST!,
+                    port: env.EXTERNAL_DB_PORT!,
+                    user: env.EXTERNAL_DB_USER!,
+                    password: env.EXTERNAL_DB_PASS!,
+                    database: env.EXTERNAL_DB_DATABASE!,
+                    defaultSchema: env.EXTERNAL_DB_DEFAULT_SCHEMA,
+                }
+            } else if (env.EXTERNAL_DB_TYPE === 'mysql') {
+                dataSource.external = {
+                    dialect: 'mysql',
                     host: env.EXTERNAL_DB_HOST!,
                     port: env.EXTERNAL_DB_PORT!,
                     user: env.EXTERNAL_DB_USER!,

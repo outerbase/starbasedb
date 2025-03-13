@@ -9,7 +9,7 @@ import type {
 
 import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
 
-// Define types for DurableObject
+// Define the DurableObjectStub type
 type DurableObjectStub<T> = {
     init: () => Promise<T>
 }
@@ -32,6 +32,11 @@ export type RemoteSource = {
     defaultSchema?: string
 }
 
+export type HyperdriveSource = {
+    dialect: 'postgresql'
+    connectionString: string
+} & Pick<RemoteSource, 'defaultSchema'>
+
 export type PostgresSource = {
     dialect: 'postgresql'
     host: string
@@ -48,6 +53,7 @@ export type MySQLSource = {
     user: string
     password: string
     database: string
+    defaultSchema?: string
 }
 
 export type CloudflareD1Source = {
@@ -78,8 +84,9 @@ export type ExternalDatabaseSource =
     | CloudflareD1Source
     | StarbaseDBSource
     | TursoDBSource
+    | HyperdriveSource
 
-export interface StarbaseDBDurableObject {
+export type StarbaseDBDurableObject = {
     executeQuery: (opts: {
         sql: string
         params?: unknown[]
