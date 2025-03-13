@@ -2,7 +2,7 @@
 name = "starbasedb"
 main = "src/index.ts"
 compatibility_date = "2024-09-25"
-account_id = "your-account-id"
+account_id = "PASTE_YOUR_ACCOUNT_ID_HERE"
 compatibility_flags = ["nodejs_compat_v2"]
 
 assets = { directory = "./public/" }
@@ -36,9 +36,9 @@ new_sqlite_classes = ["StarbaseDBDurableObject"]
 
 [vars]
 # Use this in your Authorization header for full database access
-ADMIN_AUTHORIZATION_TOKEN = "your-admin-token"
+ADMIN_AUTHORIZATION_TOKEN = "GENERATE_A_SECURE_RANDOM_STRING"
 # Use this in your Authorization header for a user role with rules applied
-CLIENT_AUTHORIZATION_TOKEN = "your-client-token"
+CLIENT_AUTHORIZATION_TOKEN = "GENERATE_A_DIFFERENT_SECURE_RANDOM_STRING"
 # Deploy the Durable Object in a specific region, default is "auto"
 REGION = "auto"
 # Database dump configuration
