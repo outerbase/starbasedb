@@ -4,9 +4,9 @@ import type {
     DurableObjectState,
     DurableObjectNamespace,
     R2Bucket,
+    ExecutionContext,
 } from '@cloudflare/workers-types'
 
-// import { StarbaseDBDurableObject } from './do'
 import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
 
 // Use a different name to avoid conflicts
@@ -79,26 +79,22 @@ export type ExternalDatabaseSource =
     | StarbaseDBSource
     | TursoDBSource
 
-export type StarbaseDBDurableObject = DurableObjectBranded & {
+export type StarbaseDBDurableObject = {
     executeQuery: (sql: string) => Promise<any[]>
     property1: string
     property2: number
-    // Add properties specific to StarbaseDBDurableObject here
+    [__DURABLE_OBJECT_BRAND]: typeof __DURABLE_OBJECT_BRAND
 }
 
-export interface DataSource {
-    source: 'internal' | 'external'
-    rpc: {
-        executeQuery: (opts: { sql: string; params?: any[] }) => Promise<any>
-    }
-    storage: {
-        get: (key: string) => Promise<any>
-        put: (key: string, value: any) => Promise<void>
-        setAlarm: (time: number, options?: { data?: any }) => Promise<void>
-    }
+export type DataSource = {
+    rpc: any // TODO: Type this properly if needed
+    source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
-    context?: Record<string, any>
-    registry?: any
+    context?: Record<string, unknown>
+    cache?: boolean
+    cacheTTL?: number
+    registry?: StarbasePluginRegistry
+    executionContext?: ExecutionContext
 }
 
 export enum RegionLocationHint {

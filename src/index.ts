@@ -111,42 +111,19 @@ export default {
                 url.searchParams.get('source') // TODO: Should this come from here, or per-websocket message?
 
             const dataSource: DataSource = {
-                rpc: {
-                    executeQuery: async (query) => {
-                        const response = await stub.fetch('http://query', {
-                            method: 'POST',
-                            body: JSON.stringify(query),
-                        })
-                        return response.json()
-                    },
-                },
-                storage: {
-                    get: async (key: string) => {
-                        const response = await stub.fetch(
-                            `http://storage/${key}`
-                        )
-                        return response.json()
-                    },
-                    put: async (key: string, value: any) => {
-                        await stub.fetch(`http://storage/${key}`, {
-                            method: 'PUT',
-                            body: JSON.stringify(value),
-                        })
-                    },
-                    setAlarm: async (
-                        time: number,
-                        options?: { data?: any }
-                    ) => {
-                        await stub.fetch(`http://alarm`, {
-                            method: 'POST',
-                            body: JSON.stringify({ time, options }),
-                        })
-                    },
-                },
-                source:
-                    source?.toLowerCase().trim() === 'external'
+                rpc,
+                source: source
+                    ? source.toLowerCase().trim() === 'external'
                         ? 'external'
-                        : 'internal',
+                        : source.toLowerCase().trim() === 'hyperdrive'
+                          ? 'hyperdrive'
+                          : 'internal'
+                    : 'internal',
+                cache: request.headers.get('X-Starbase-Cache') === 'true',
+                context: {
+                    ...context,
+                },
+                executionContext: ctx,
             }
 
             if (

@@ -23,9 +23,10 @@ enabled = true
 # Bind a Durable Object. Durable objects are a scale-to-zero compute primitive based on the actor model.
 # Durable Objects can live for as long as needed. Use these when you need a long-running "server", such as in realtime apps.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#durable-objects
-[[durable_objects.bindings]]
-name = "DATABASE_DURABLE_OBJECT"
-class_name = "StarbaseDBDurableObject"
+[durable_objects]
+bindings = [
+  { name = "DATABASE_DURABLE_OBJECT", class_name = "StarbaseDBDurableObject" }
+]
 
 # Durable Object migrations.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#migrations
@@ -36,12 +37,19 @@ new_sqlite_classes = ["StarbaseDBDurableObject"]
 [vars]
 # Use this in your Authorization header for full database access
 ADMIN_AUTHORIZATION_TOKEN = "your-admin-token"
-
 # Use this in your Authorization header for a user role with rules applied
 CLIENT_AUTHORIZATION_TOKEN = "your-client-token"
-
-# Deploy the Durable Object in a specific region, default is "auto" or location near first request
+# Deploy the Durable Object in a specific region, default is "auto"
 REGION = "auto"
+# Database dump configuration
+CHUNK_SIZE = "1000"
+EXPORT_TIMEOUT = "25000"
+EXPORT_CHUNK_SIZE = "1000"
+EXPORT_TIMEOUT_MS = "25000"
+EXPORT_BREATHING_TIME_MS = "5000"
+EXPORT_MAX_RETRIES = "3"
+ENABLE_DATABASE_DUMPS = true
+ENABLE_EXPORT = true
 
 # Uncomment the section below to create a user for logging into your database UI.
 # You can access the Studio UI at: https://your_endpoint/studio
@@ -80,25 +88,3 @@ AUTH_JWKS_ENDPOINT = ""
 [[r2_buckets]]
 binding = "BUCKET"
 bucket_name = "database-dumps"
-
-
-
-[vars]
-CHUNK_SIZE = "1000"
-EXPORT_TIMEOUT = "25000"
-
-[durable_objects]
-bindings = [
-  { name = "DATABASE_DURABLE_OBJECT", class_name = "StarbaseDBDurableObject" }
-]
-
-# Optional environment variables
-[vars]
-ENABLE_DATABASE_DUMPS = true  # Set to false
-ENABLE_EXPORT = true
-
-[vars]
-EXPORT_CHUNK_SIZE = "1000"
-EXPORT_TIMEOUT_MS = "25000"
-EXPORT_BREATHING_TIME_MS = "5000"
-EXPORT_MAX_RETRIES = "3"
