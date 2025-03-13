@@ -99,7 +99,7 @@ export type StarbaseDBDurableObject = {
 }
 
 export type DataSource = {
-    rpc: any // Simplified to avoid circular dependencies
+    rpc: any // Keep simple version to avoid circular dependencies
     source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>

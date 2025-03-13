@@ -14,8 +14,6 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
-import { ClerkPlugin } from '../plugins/clerk'
-import type { ExecutionContext } from '@cloudflare/workers-types'
 
 export { StarbaseDBDurableObject } from './do'
 
