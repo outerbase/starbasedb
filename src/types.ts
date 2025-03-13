@@ -80,14 +80,26 @@ export type ExternalDatabaseSource =
     | TursoDBSource
 
 export type StarbaseDBDurableObject = {
-    executeQuery: (sql: string) => Promise<any[]>
-    property1: string
-    property2: number
+    executeQuery: (opts: {
+        sql: string
+        params?: unknown[]
+        isRaw?: boolean
+    }) => Promise<any[]>
+    init: () => Promise<{
+        executeQuery: (opts: {
+            sql: string
+            params?: unknown[]
+        }) => Promise<any>
+        getAlarm: () => Promise<number | null>
+        setAlarm: (time: number, options?: any) => Promise<void>
+        deleteAlarm: (options?: any) => Promise<void>
+        getStatistics: () => Promise<any>
+    }>
     [__DURABLE_OBJECT_BRAND]: typeof __DURABLE_OBJECT_BRAND
 }
 
 export type DataSource = {
-    rpc: any // Simplified to avoid type constraints
+    rpc: any // Simplified to avoid circular dependencies
     source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>
