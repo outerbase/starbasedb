@@ -57,6 +57,8 @@ export interface Env {
     AUTH_ALGORITHM?: string
     AUTH_JWKS_ENDPOINT?: string
 
+    HYPERDRIVE: Hyperdrive
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -183,6 +185,13 @@ export default {
                         token: env.EXTERNAL_DB_TURSO_TOKEN!,
                         defaultSchema: env.EXTERNAL_DB_DEFAULT_SCHEMA,
                     }
+                }
+            }
+
+            if (env.HYPERDRIVE.connectionString) {
+                dataSource.external = {
+                    dialect: 'postgresql',
+                    connectionString: env.HYPERDRIVE.connectionString,
                 }
             }
 
