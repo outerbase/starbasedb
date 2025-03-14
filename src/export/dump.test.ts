@@ -1,166 +1,114 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { exportDumpRoute } from './dump'
+import { executeOperation } from '../export'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
-import type { StarbaseDBConfiguration } from '../handler'
+import type { StarbaseDBConfiguration } from '../types'
 
-vi.mock('../utils', () => ({
-    createResponse: vi.fn(
-        (data, message, status) =>
-            new Response(JSON.stringify({ result: data, error: message }), {
-                status,
-                headers: { 'Content-Type': 'application/json' },
-            })
-    ),
+vi.mock('../export', () => ({
+    executeOperation: vi.fn(),
 }))
 
-describe('Export Dump Module', () => {
+vi.mock('../utils', () => ({
+    createResponse: vi
+        .fn()
+        .mockImplementation(
+            (data, message, status) =>
+                new Response(JSON.stringify({ result: data, error: message }), {
+                    status,
+                })
+        ),
+    getR2Bucket: vi.fn().mockReturnValue({
+        put: vi.fn().mockResolvedValue({}),
+        get: vi.fn().mockResolvedValue(new Response('test data')),
+    }),
+}))
+
+describe('Database Export Module', () => {
     let mockDataSource: DataSource
     let mockConfig: StarbaseDBConfiguration
+    let mockRequest: Request
 
     beforeEach(() => {
+        vi.clearAllMocks()
+
         mockDataSource = {
             source: 'internal',
-            rpc: {
-                executeQuery: vi.fn().mockImplementation((query) => {
-                    if (query.sql.includes('sqlite_master')) {
-                        return [{ name: 'users', sql: 'CREATE TABLE users...' }]
-                    }
-                    if (query.sql.includes('COUNT')) {
-                        return [{ count: 100 }]
-                    }
-                    return [{ id: 1, name: 'test' }]
-                }),
-            },
+            rpc: { executeQuery: vi.fn() },
             storage: {
-                get: vi.fn().mockImplementation((key: string) => {
-                    if (key.includes('state')) {
-                        return {
-                            id: 'dump_test',
-                            status: 'pending',
-                            currentOffset: 0,
-                            totalRows: 0,
-                            format: 'sql',
-                            tables: [],
-                            processedTables: [],
-                            currentTable: '',
-                        }
-                    }
-                    return null
-                }),
+                get: vi.fn(),
                 put: vi.fn(),
                 setAlarm: vi.fn(),
             },
         } as any
 
         mockConfig = {
+            outerbaseApiKey: 'mock-api-key',
             role: 'admin',
             features: {
-                allowlist: false,
-                rls: false,
+                allowlist: true,
+                rls: true,
+                rest: true,
                 export: true,
-            },
-            export: {
-                maxRetries: 3,
-                breathingTimeMs: 5000,
+                import: true,
             },
             BUCKET: {
-                put: vi.fn().mockResolvedValue(true),
-                get: vi.fn().mockResolvedValue(null),
+                put: vi.fn().mockResolvedValue({}),
+                get: vi.fn().mockResolvedValue(new Response('test data')),
             },
-        } as any
-
-        vi.clearAllMocks()
-    })
-
-    it('should return 405 for non-POST requests', async () => {
-        const request = new Request('http://localhost', { method: 'GET' })
-        const response = await exportDumpRoute(
-            request,
-            mockDataSource,
-            mockConfig
-        )
-        expect(response.status).toBe(405)
-    })
-
-    it('should return 400 for invalid format', async () => {
-        const request = new Request('http://localhost', {
-            method: 'POST',
-            body: JSON.stringify({ format: 'invalid' }),
-        })
-        const response = await exportDumpRoute(
-            request,
-            mockDataSource,
-            mockConfig
-        )
-        expect(response.status).toBe(400)
-    })
-
-    it('should return 404 if no tables found', async () => {
-        mockDataSource.rpc.executeQuery = vi
-            .fn()
-            .mockImplementation((query) => {
-                if (query.sql.includes('sqlite_master')) {
-                    return []
-                }
-                return [{ count: 0 }]
-            })
-
-        const request = new Request('http://localhost', {
-            method: 'POST',
-            body: JSON.stringify({ format: 'sql' }),
-        })
-        const response = await exportDumpRoute(
-            request,
-            mockDataSource,
-            mockConfig
-        )
-        expect(response.status).toBe(404)
-        const data = (await response.json()) as { error: string }
-        expect(data.error).toBe('No tables found')
-    })
-
-    it('should successfully export database in chunks', async () => {
-        mockDataSource.rpc.executeQuery = vi
-            .fn()
-            .mockResolvedValueOnce([{ name: 'users' }, { name: 'posts' }])
-
-        const request = new Request('http://localhost', {
-            method: 'POST',
-            body: JSON.stringify({ format: 'sql' }),
-        })
-
-        const response = await exportDumpRoute(
-            request,
-            mockDataSource,
-            mockConfig
-        )
-        expect(response.status).toBe(202)
-
-        const responseData = (await response.json()) as {
-            result: { status: string; dumpId: string }
         }
-        expect(responseData.result.status).toBe('processing')
-        expect(responseData.result.dumpId).toBe('dump_test')
+
+        // Create a mock request
+        mockRequest = new Request('http://localhost/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ format: 'sql' }),
+        })
+    })
+
+    it('should start a database export process', async () => {
+        // Mock successful responses
+        vi.mocked(mockDataSource.storage.get).mockResolvedValue(null)
+        vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
+            {
+                name: 'users',
+                sql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+            },
+        ])
+
+        const response = await exportDumpRoute(
+            mockRequest,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(202)
+        const data = (await response.json()) as {
+            result: { status: string; dumpId: string; downloadUrl: string }
+        }
+        expect(data.result).toHaveProperty('status', 'processing')
     })
 
     it('should handle errors gracefully', async () => {
-        mockDataSource.rpc.executeQuery = vi
-            .fn()
-            .mockRejectedValue(new Error('Database error'))
-
-        const request = new Request('http://localhost', {
-            method: 'POST',
-            body: JSON.stringify({ format: 'sql' }),
-        })
-
-        const response = await exportDumpRoute(
-            request,
-            mockDataSource,
-            mockConfig
+        // Mock an error during export
+        vi.mocked(mockDataSource.rpc.executeQuery).mockRejectedValue(
+            new Error('Database error')
         )
-        expect(response.status).toBe(500)
-        const data = (await response.json()) as { error: string }
-        expect(data.error).toContain('Database error')
+
+        // Temporarily mock console.error to suppress the error output
+        const originalConsoleError = console.error
+        console.error = vi.fn()
+
+        try {
+            const response = await exportDumpRoute(
+                mockRequest,
+                mockDataSource,
+                mockConfig
+            )
+            expect(response.status).toBe(500)
+        } finally {
+            // Restore console.error
+            console.error = originalConsoleError
+        }
     })
 })

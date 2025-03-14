@@ -183,7 +183,10 @@ export class StarbaseDB {
                 this.isInternalSource,
                 async (c) => {
                     const id = c.req.param('id')
-                    const state = await this.dataSource.storage.get(
+                    if (!this.dataSource.storage) {
+                        return c.json({ error: 'Storage not available' }, 500)
+                    }
+                    const state = await this.dataSource.storage?.get(
                         `dumpState_${id}`
                     )
 
@@ -200,7 +203,7 @@ export class StarbaseDB {
                 this.isInternalSource,
                 async (c) => {
                     const id = c.req.param('id')
-                    const state = await this.dataSource.storage.get(
+                    const state = await this.dataSource.storage?.get(
                         `dumpState_${id}`
                     )
 

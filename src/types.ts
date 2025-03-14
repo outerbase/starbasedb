@@ -88,7 +88,24 @@ export type ExternalDatabaseSource =
     | HyperdriveSource
 
 export type DataSource = {
-    rpc: Awaited<ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>>
+    rpc: {
+        executeQuery: (query: {
+            sql: string
+            params?: unknown[]
+            isRaw?: boolean
+        }) => Promise<Record<string, SqlStorageValue>[]>
+        getAlarm?: () => Promise<number | null>
+        setAlarm?: (
+            scheduledTime: number | Date,
+            options?: any
+        ) => Promise<void>
+        deleteAlarm?: (options?: any) => Promise<void>
+        getStatistics?: () => Promise<{
+            databaseSize: number
+            activeConnections: number
+            recentQueries: number
+        }>
+    }
     source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>
@@ -96,7 +113,7 @@ export type DataSource = {
     cacheTTL?: number
     registry?: StarbasePluginRegistry
     executionContext?: ExecutionContext
-    storage?: {
+    storage: {
         get: (key: string) => Promise<any>
         put: (key: string, value: any) => Promise<void>
         setAlarm: (time: number, options?: any) => Promise<void>

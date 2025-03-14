@@ -101,7 +101,8 @@ export default {
                     : env.DATABASE_DURABLE_OBJECT.get(id)
 
             // Create a new RPC Session on the Durable Object.
-            const rpc = await stub.fetch('http://init')
+            const rpcResponse = await stub.fetch('http://init')
+            const rpc = (await rpcResponse.json()) as DataSource['rpc']
 
             // Get the source type from headers/query params.
             const source =
@@ -117,6 +118,13 @@ export default {
                           ? 'hyperdrive'
                           : 'internal'
                     : 'internal',
+                storage: {
+                    get: async (key) => (stub as any).storage.get(key),
+                    put: async (key, value) =>
+                        (stub as any).storage.put(key, value),
+                    setAlarm: async (time, options) =>
+                        (stub as any).storage.setAlarm(time, options),
+                },
                 cache: request.headers.get('X-Starbase-Cache') === 'true',
                 context: {
                     ...context,

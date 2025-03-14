@@ -48,10 +48,11 @@ export async function exportDumpRoute(
         }
 
         // Check if there are tables to export
-        const tables = await dataSource.rpc.executeQuery({
-            sql: "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
-            params: [],
+        const tablesResult = await dataSource.rpc.executeQuery({
+            sql: "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
         })
+
+        const tables = tablesResult as unknown as TableInfo[]
 
         if (!tables || tables.length === 0) {
             return createResponse(null, 'No tables found', 404)
@@ -114,11 +115,16 @@ async function startDumpProcess(
     config: StarbaseDBConfiguration
 ) {
     try {
-        const tables = (await dataSource.rpc.executeQuery({
+        const tablesResult = await dataSource.rpc.executeQuery({
             sql: "SELECT name, sql FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
-        })) as TableInfo[]
+        })
+
+        const tables = tablesResult as unknown as TableInfo[]
 
         if (!tables || tables.length === 0) {
+            if (!dataSource.storage) {
+                throw new Error('Storage not available')
+            }
             const state = (await dataSource.storage.get(
                 `dump:${dumpId}:state`
             )) as DumpState
@@ -128,6 +134,9 @@ async function startDumpProcess(
             return
         }
 
+        if (!dataSource.storage) {
+            throw new Error('Storage not available')
+        }
         const state = (await dataSource.storage.get(
             `dump:${dumpId}:state`
         )) as DumpState
@@ -142,9 +151,10 @@ async function startDumpProcess(
         // Get total rows count for progress tracking
         let totalRows = 0
         for (const table of state.tables) {
-            const result = (await dataSource.rpc.executeQuery({
+            const countResult = await dataSource.rpc.executeQuery({
                 sql: `SELECT COUNT(*) as count FROM ${table}`,
-            })) as CountResult[]
+            })
+            const result = countResult as unknown as CountResult[]
             totalRows += result[0].count
         }
 
@@ -152,6 +162,9 @@ async function startDumpProcess(
         await dataSource.storage.put(`dump:${dumpId}:state`, state)
         await scheduleNextChunk(dumpId, dataSource, config)
     } catch (error) {
+        if (!dataSource.storage) {
+            throw error
+        }
         const state = (await dataSource.storage.get(
             `dump:${dumpId}:state`
         )) as DumpState
