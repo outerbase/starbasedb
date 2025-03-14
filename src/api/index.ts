@@ -2,7 +2,13 @@
 // You can access these endpoints at the following URL:
 // https://starbasedb.YOUR-IDENTIFIER.workers.dev/api/your/path/here
 
-export async function handleApiRequest(request: Request): Promise<Response> {
+import { StarbaseContext } from '../handler'
+import { DataSource } from '../types'
+
+export async function handleApiRequest(
+    request: Request,
+    dataSource: DataSource
+): Promise<Response> {
     const url = new URL(request.url)
 
     // EXAMPLE:
