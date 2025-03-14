@@ -7,7 +7,8 @@ import type {
     ExecutionContext,
 } from '@cloudflare/workers-types'
 
-import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
+import { StarbaseDBDurableObject } from './do'
+import { StarbasePluginRegistry } from './plugin'
 
 // Define the DurableObjectStub type
 type DurableObjectStub<T> = {
@@ -85,24 +86,6 @@ export type ExternalDatabaseSource =
     | StarbaseDBSource
     | TursoDBSource
     | HyperdriveSource
-
-export type StarbaseDBDurableObject = {
-    executeQuery: (opts: {
-        sql: string
-        params?: unknown[]
-        isRaw?: boolean
-    }) => Promise<any[]>
-    init: () => Promise<{
-        executeQuery: (opts: {
-            sql: string
-            params?: unknown[]
-        }) => Promise<any>
-        getAlarm: () => Promise<number | null>
-        setAlarm: (time: number, options?: any) => Promise<void>
-        deleteAlarm: (options?: any) => Promise<void>
-        getStatistics: () => Promise<any>
-    }>
-}
 
 export type DataSource = {
     rpc: Awaited<ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>>
