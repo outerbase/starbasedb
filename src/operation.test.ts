@@ -109,7 +109,14 @@ beforeEach(() => {
     mockConfig = {
         outerbaseApiKey: 'mock-api-key',
         role: 'admin',
-        features: { allowlist: true, rls: true, rest: true },
+        features: {
+            allowlist: true,
+            rls: true,
+            rest: true,
+            export: true,
+            import: true,
+        },
+        BUCKET: null,
     }
 
     mockDataSource = {
@@ -278,14 +285,23 @@ describe('executeQuery', () => {
     })
 
     it('should return an empty array if the data source is missing', async () => {
-        const result = await executeQuery({
-            sql: 'SELECT * FROM users',
-            params: undefined,
-            isRaw: false,
-            dataSource: null as any,
-            config: mockConfig,
-        })
-        expect(result).toEqual([])
+        // Temporarily mock console.error to suppress the error output
+        const originalConsoleError = console.error
+        console.error = vi.fn()
+
+        try {
+            const result = await executeQuery({
+                sql: 'SELECT * FROM users',
+                params: undefined,
+                isRaw: false,
+                dataSource: undefined as any,
+                config: mockConfig,
+            })
+            expect(result).toEqual([])
+        } finally {
+            // Restore console.error
+            console.error = originalConsoleError
+        }
     })
 })
 

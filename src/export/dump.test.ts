@@ -1,145 +1,114 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { dumpDatabaseRoute } from './dump'
-import { executeOperation } from '.'
+import { exportDumpRoute } from './dump'
+import { executeOperation } from '../export'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
-import type { StarbaseDBConfiguration } from '../handler'
+import type { StarbaseDBConfiguration } from '../types'
 
-vi.mock('.', () => ({
+vi.mock('../export', () => ({
     executeOperation: vi.fn(),
 }))
 
 vi.mock('../utils', () => ({
-    createResponse: vi.fn(
-        (data, message, status) =>
-            new Response(JSON.stringify({ result: data, error: message }), {
-                status,
-                headers: { 'Content-Type': 'application/json' },
-            })
-    ),
+    createResponse: vi
+        .fn()
+        .mockImplementation(
+            (data, message, status) =>
+                new Response(JSON.stringify({ result: data, error: message }), {
+                    status,
+                })
+        ),
+    getR2Bucket: vi.fn().mockReturnValue({
+        put: vi.fn().mockResolvedValue({}),
+        get: vi.fn().mockResolvedValue(new Response('test data')),
+    }),
 }))
 
-let mockDataSource: DataSource
-let mockConfig: StarbaseDBConfiguration
+describe('Database Export Module', () => {
+    let mockDataSource: DataSource
+    let mockConfig: StarbaseDBConfiguration
+    let mockRequest: Request
 
-beforeEach(() => {
-    vi.clearAllMocks()
+    beforeEach(() => {
+        vi.clearAllMocks()
 
-    mockDataSource = {
-        source: 'external',
-        external: { dialect: 'sqlite' },
-        rpc: { executeQuery: vi.fn() },
-    } as any
+        mockDataSource = {
+            source: 'internal',
+            rpc: { executeQuery: vi.fn() },
+            storage: {
+                get: vi.fn(),
+                put: vi.fn(),
+                setAlarm: vi.fn(),
+            },
+        } as any
 
-    mockConfig = {
-        outerbaseApiKey: 'mock-api-key',
-        role: 'admin',
-        features: { allowlist: true, rls: true, rest: true },
-    }
-})
+        mockConfig = {
+            outerbaseApiKey: 'mock-api-key',
+            role: 'admin',
+            features: {
+                allowlist: true,
+                rls: true,
+                rest: true,
+                export: true,
+                import: true,
+            },
+            BUCKET: {
+                put: vi.fn().mockResolvedValue({}),
+                get: vi.fn().mockResolvedValue(new Response('test data')),
+            },
+        }
 
-describe('Database Dump Module', () => {
-    it('should return a database dump when tables exist', async () => {
-        vi.mocked(executeOperation)
-            .mockResolvedValueOnce([{ name: 'users' }, { name: 'orders' }])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
-            ])
-            .mockResolvedValueOnce([
-                { id: 1, name: 'Alice' },
-                { id: 2, name: 'Bob' },
-            ])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
-            ])
-            .mockResolvedValueOnce([
-                { id: 1, total: 99.99 },
-                { id: 2, total: 49.5 },
-            ])
-
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        expect(response.headers.get('Content-Type')).toBe(
-            'application/x-sqlite3'
-        )
-        expect(response.headers.get('Content-Disposition')).toBe(
-            'attachment; filename="database_dump.sql"'
-        )
-
-        const dumpText = await response.text()
-        expect(dumpText).toContain(
-            'CREATE TABLE users (id INTEGER, name TEXT);'
-        )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
-        expect(dumpText).toContain(
-            'CREATE TABLE orders (id INTEGER, total REAL);'
-        )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        // Create a mock request
+        mockRequest = new Request('http://localhost/export', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ format: 'sql' }),
+        })
     })
 
-    it('should handle empty databases (no tables)', async () => {
-        vi.mocked(executeOperation).mockResolvedValueOnce([])
+    it('should start a database export process', async () => {
+        // Mock successful responses
+        vi.mocked(mockDataSource.storage.get).mockResolvedValue(null)
+        vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
+            {
+                name: 'users',
+                sql: 'CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT)',
+            },
+        ])
 
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        expect(response.headers.get('Content-Type')).toBe(
-            'application/x-sqlite3'
+        const response = await exportDumpRoute(
+            mockRequest,
+            mockDataSource,
+            mockConfig
         )
-        const dumpText = await response.text()
-        expect(dumpText).toBe('SQLite format 3\0')
+
+        expect(response.status).toBe(202)
+        const data = (await response.json()) as {
+            result: { status: string; dumpId: string; downloadUrl: string }
+        }
+        expect(data.result).toHaveProperty('status', 'processing')
     })
 
-    it('should handle databases with tables but no data', async () => {
-        vi.mocked(executeOperation)
-            .mockResolvedValueOnce([{ name: 'users' }])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
-            ])
-            .mockResolvedValueOnce([])
-
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        const dumpText = await response.text()
-        expect(dumpText).toContain(
-            'CREATE TABLE users (id INTEGER, name TEXT);'
-        )
-        expect(dumpText).not.toContain('INSERT INTO users VALUES')
-    })
-
-    it('should escape single quotes properly in string values', async () => {
-        vi.mocked(executeOperation)
-            .mockResolvedValueOnce([{ name: 'users' }])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
-            ])
-            .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
-
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        const dumpText = await response.text()
-        expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
-        )
-    })
-
-    it('should return a 500 response when an error occurs', async () => {
-        const consoleErrorMock = vi
-            .spyOn(console, 'error')
-            .mockImplementation(() => {})
-        vi.mocked(executeOperation).mockRejectedValue(
-            new Error('Database Error')
+    it('should handle errors gracefully', async () => {
+        // Mock an error during export
+        vi.mocked(mockDataSource.rpc.executeQuery).mockRejectedValue(
+            new Error('Database error')
         )
 
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        // Temporarily mock console.error to suppress the error output
+        const originalConsoleError = console.error
+        console.error = vi.fn()
 
-        expect(response.status).toBe(500)
-        const jsonResponse: { error: string } = await response.json()
-        expect(jsonResponse.error).toBe('Failed to create database dump')
+        try {
+            const response = await exportDumpRoute(
+                mockRequest,
+                mockDataSource,
+                mockConfig
+            )
+            expect(response.status).toBe(500)
+        } finally {
+            // Restore console.error
+            console.error = originalConsoleError
+        }
     })
 })

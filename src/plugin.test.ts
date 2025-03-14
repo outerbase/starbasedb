@@ -24,6 +24,12 @@ class MockPlugin extends StarbasePlugin {
 
 class TestPlugin extends StarbasePlugin {}
 
+class BrokenPlugin extends StarbasePlugin {
+    async register(): Promise<void> {
+        throw new Error('Broken plugin')
+    }
+}
+
 describe('StarbasePlugin', () => {
     it('should throw an error when register() is called without implementation', async () => {
         const plugin = new TestPlugin('TestPlugin')
@@ -117,21 +123,34 @@ describe('StarbasePluginRegistry', () => {
     })
 
     it('should handle UnimplementedError during registration', async () => {
-        class BrokenPlugin extends StarbasePlugin {
-            async register(app: StarbaseApp): Promise<void> {
-                throw new Error('Some other error')
+        // Temporarily mock console.error to suppress the error output
+        const originalConsoleError = console.error
+        console.error = vi.fn()
+
+        try {
+            // Create a plugin that will throw an error during initialization
+            class BrokenPlugin2 extends StarbasePlugin {
+                constructor() {
+                    super('BrokenPlugin2')
+                }
+
+                async register(): Promise<void> {
+                    throw new Error('Broken plugin')
+                }
             }
+
+            // Create registry with the broken plugin
+            const registry = new StarbasePluginRegistry({
+                app: {} as StarbaseApp,
+                plugins: [new BrokenPlugin2()],
+            })
+
+            // We need to expect this to throw since the implementation doesn't catch errors
+            await expect(registry.init()).rejects.toThrow('Broken plugin')
+        } finally {
+            // Restore console.error
+            console.error = originalConsoleError
         }
-
-        const brokenPlugin = new BrokenPlugin('BrokenPlugin')
-        const brokenRegistry = new StarbasePluginRegistry({
-            app: mockApp,
-            plugins: [brokenPlugin],
-        })
-
-        await expect(brokenRegistry.init()).rejects.toThrowError(
-            'Some other error'
-        )
     })
 
     it('should call beforeQuery on all plugins', async () => {
