@@ -1,4 +1,5 @@
 import { defineConfig } from 'vitest/config'
+import path from 'path'
 
 export default defineConfig({
     assetsInclude: ['**/*.sql'],
@@ -15,6 +16,13 @@ export default defineConfig({
                 functions: 75,
                 statements: 75,
             },
+        },
+        include: ['./plugins/data_sync/**/*.test.ts'],
+        environment: 'node',
+    },
+    resolve: {
+        alias: {
+            '@': path.resolve(__dirname, './src'),
         },
     },
 })

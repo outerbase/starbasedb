@@ -1,0 +1,54 @@
+name = "starbasedb-data-sync-demo"
+main = "demo/test.ts"
+compatibility_date = "2024-01-01"
+
+# StarbaseDB configuration
+[vars]
+STARBASE_ADMIN_EMAIL = "demo@example.com"
+
+# PostgreSQL test database configuration
+EXTERNAL_DB_TYPE = "postgresql"
+EXTERNAL_DB_HOST = "localhost"
+EXTERNAL_DB_PORT = "5432"
+EXTERNAL_DB_USER = "postgres"
+EXTERNAL_DB_PASS = "postgres"
+EXTERNAL_DB_DATABASE = "starbase_demo"
+EXTERNAL_DB_DEFAULT_SCHEMA = "public"
+
+# Data Sync Plugin configuration
+[plugins.data_sync]
+sync_interval = 5  # 5 minutes for demo purposes
+tables = ["users", "products", "orders"]
+batch_size = 100   # Smaller batch size for demo
+track_column = "created_at"
+enabled = true
+
+# Durable Object configuration
+[[durable_objects.bindings]]
+name = "STARBASE"
+class_name = "StarbaseDB"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["StarbaseDB"]
+
+# For local testing with Docker
+[env.test]
+vars = { ENVIRONMENT = "test" }
+
+# For testing with different database types
+[env.mysql]
+vars = { 
+  EXTERNAL_DB_TYPE = "mysql",
+  EXTERNAL_DB_HOST = "localhost",
+  EXTERNAL_DB_PORT = "3306",
+  EXTERNAL_DB_USER = "root",
+  EXTERNAL_DB_PASS = "mysql",
+  EXTERNAL_DB_DATABASE = "starbase_demo"
+}
+
+[env.mongodb]
+vars = { 
+  EXTERNAL_DB_TYPE = "mongodb",
+  EXTERNAL_DB_MONGODB_URI = "mongodb://localhost:27017/starbase_demo"
+} 

@@ -37,7 +37,10 @@
         "test:dump:breathing": "vitest run src/dump/index.test.ts --test-pattern='breathing'",
         "test:dump:format": "vitest run src/dump/index.test.ts --test-pattern='format'",
         "test:dump:errors": "vitest run src/dump/index.test.ts --test-pattern='errors'",
-        "test:dump:load": "vitest run src/dump/index.test.ts --test-pattern='load'"
+        "test:dump:load": "vitest run src/dump/index.test.ts --test-pattern='load'",
+        "test:data-sync": "vitest run plugins/data_sync/index.test.ts",
+        "test:data-sync:watch": "vitest \"plugins/data_sync/**/*.test.ts\"",
+        "test:data-sync:coverage": "vitest run --coverage plugins/data_sync/**/*.test.ts"
     },
     "devDependencies": {
         "@cloudflare/workers-types": "^4.20241216.0",
@@ -53,7 +56,11 @@
         "tailwindcss": "^4.0.0",
         "typescript": "^5.7.2",
         "vitest": "^2.1.8",
-        "wrangler": "^3.96.0"
+        "wrangler": "^3.96.0",
+        "@types/better-sqlite3": "^7.6.9",
+        "better-sqlite3": "^9.4.3",
+        "testcontainers": "^10.7.1",
+        "ts-node": "^10.9.2"
     },
     "dependencies": {
         "@libsql/client": "^0.14.0",

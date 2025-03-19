@@ -1,0 +1,33 @@
+{
+    "name": "Data Sync",
+    "description": "Synchronize data from external databases to StarbaseDB's internal SQLite database",
+    "version": "1.0.0",
+    "author": "StarbaseDB",
+    "configSchema": {
+        "sync_interval": {
+            "type": "number",
+            "description": "Interval in minutes between synchronization runs",
+            "default": 15
+        },
+        "tables": {
+            "type": "array",
+            "description": "List of tables to synchronize (empty means all tables)",
+            "default": []
+        },
+        "batch_size": {
+            "type": "number",
+            "description": "Number of records to fetch in each batch",
+            "default": 1000
+        },
+        "track_column": {
+            "type": "string",
+            "description": "Column to track for incremental updates (created_at, updated_at, or id)",
+            "default": "created_at"
+        },
+        "enabled": {
+            "type": "boolean",
+            "description": "Enable or disable synchronization",
+            "default": true
+        }
+    }
+}
