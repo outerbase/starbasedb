@@ -34,7 +34,14 @@ beforeEach(() => {
     mockConfig = {
         outerbaseApiKey: 'mock-api-key',
         role: 'admin',
-        features: { allowlist: true, rls: true, rest: true },
+        features: {
+            allowlist: true,
+            rls: true,
+            rest: true,
+            export: true,
+            import: true,
+        },
+        BUCKET: null,
     }
 })
 

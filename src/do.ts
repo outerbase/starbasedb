@@ -1,14 +1,48 @@
-import { DurableObject } from 'cloudflare:workers'
+/// <reference types="@cloudflare/workers-types" />
 
-export class StarbaseDBDurableObject extends DurableObject {
-    // Durable storage for the SQL database
-    public sql: SqlStorage
-    // Durable storage for the instance
-    public storage: DurableObjectStorage
-    // Map of WebSocket connections to their corresponding session IDs
+import { handleWebSocketMessage } from './utils'
+import { DatabaseDumper } from './dump/index'
+import { DumpOptions, DumpState } from './types'
+import type {
+    DurableObject,
+    DurableObjectState,
+    WebSocket as CloudflareWebSocket,
+    Request as CloudflareRequest,
+    Response as CloudflareResponse,
+} from '@cloudflare/workers-types'
+import type { R2Bucket } from '@cloudflare/workers-types'
+import { DataSource } from './types'
+import { processDumpChunk } from './export/index'
+
+// Add these constants at the top of the file
+const CHUNK_SIZE = 1000
+const BREATHING_INTERVAL = 5000
+
+interface Env {
+    CLIENT_AUTHORIZATION_TOKEN: string
+    R2_BUCKET: R2Bucket
+}
+
+interface ExportRequestBody {
+    callbackUrl: string
+}
+
+type DurableWebSocket = WebSocket & { accept(): void }
+
+type WebSocketMessageEvent = {
+    data: string | ArrayBuffer
+    type: string
+    target: WebSocket
+}
+
+export class StarbaseDBDurableObject implements DurableObject {
+    private eventCallbacks: Array<(event: any) => void> = []
+    private ctx: DurableObjectState
+    private r2Bucket: R2Bucket
     public connections = new Map<string, WebSocket>()
-    // Store the client auth token for requests back to our Worker
     private clientAuthToken: string
+    public sql: SqlStorage
+    public storage: DurableObjectStorage
 
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
@@ -17,11 +51,13 @@ export class StarbaseDBDurableObject extends DurableObject {
      * @param ctx - The interface for interacting with Durable Object state
      * @param env - The interface to reference bindings declared in wrangler.toml
      */
-    constructor(ctx: DurableObjectState, env: Env) {
-        super(ctx, env)
+    constructor(state: DurableObjectState, env: any) {
+        this.eventCallbacks = []
+        this.ctx = state
         this.clientAuthToken = env.CLIENT_AUTHORIZATION_TOKEN
-        this.sql = ctx.storage.sql
-        this.storage = ctx.storage
+        this.sql = state.storage.sql
+        this.storage = state.storage
+        this.r2Bucket = env.R2_BUCKET
 
         // Install default necessary `tmp_` tables for various features here.
         const cacheStatement = `
@@ -106,45 +142,44 @@ export class StarbaseDBDurableObject extends DurableObject {
 
     async alarm() {
         try {
-            // Fetch all the tasks that are marked to emit an event for this cycle.
-            const task = (await this.executeQuery({
-                sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
-                isRaw: false,
-            })) as Record<string, SqlStorageValue>[]
-
-            if (!task.length) {
-                return
-            }
-
-            try {
-                const firstTask = task[0]
-                await fetch(`${firstTask.callback_host}/cron/callback`, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${this.clientAuthToken}`,
-                        'Content-Type': 'application/json',
+            // Check for any in-progress dumps that need to continue
+            await DatabaseDumper.continueProcessing(
+                {
+                    source: 'internal',
+                    rpc: {
+                        executeQuery: async (query) => this.executeQuery(query),
                     },
-                    body: JSON.stringify(task ?? []),
-                })
-            } catch (error) {
-                console.error('Failed to call the alarm/cron callback:', error)
-
-                // If the callback fails, we should try to reschedule to prevent the chain from breaking
-                try {
-                    await this.setAlarm(Date.now() + 60000)
-                } catch (retryError) {
-                    console.error('Failed to set recovery alarm:', retryError)
+                    storage: {
+                        get: this.storage.get.bind(this.storage),
+                        put: this.storage.put.bind(this.storage),
+                        setAlarm: (time: number, options?: { data?: any }) =>
+                            this.storage.setAlarm(
+                                time,
+                                options as DurableObjectSetAlarmOptions
+                            ),
+                    },
+                },
+                {
+                    BUCKET: this.r2Bucket as any,
+                    role: 'admin' as const,
+                    outerbaseApiKey: '',
+                    features: {
+                        allowlist: false,
+                        rls: false,
+                        rest: false,
+                        export: true,
+                        import: false,
+                    },
+                    export: {
+                        chunkSize: CHUNK_SIZE,
+                        breathingTimeMs: BREATHING_INTERVAL,
+                        timeoutMs: 25000,
+                        maxRetries: 3,
+                    },
                 }
-            }
-        } catch (e) {
-            console.error('There was an error processing an alarm: ', e)
-
-            // Try to recover by scheduling a retry in 1 minute
-            try {
-                await this.setAlarm(Date.now() + 60000)
-            } catch (retryError) {
-                console.error('Failed to set recovery alarm:', retryError)
-            }
+            )
+        } catch (error) {
+            console.error('Error in alarm handler:', error)
         }
     }
 
@@ -172,15 +207,41 @@ export class StarbaseDBDurableObject extends DurableObject {
         }
     }
 
-    async fetch(request: Request) {
+    async fetch(request: CloudflareRequest): Promise<CloudflareResponse> {
         const url = new URL(request.url)
+
+        if (url.pathname === '/ws') {
+            const webSocketPair = new WebSocketPair()
+            const [client, server] = Object.values(webSocketPair)
+
+            if (server.accept) {
+                server.accept()
+            } else {
+                console.error('WebSocket accept method is not defined.')
+            }
+
+            server.addEventListener('message', (async (msg: Event) => {
+                const wsMsg = msg as unknown as { data: string | ArrayBuffer }
+                await this.webSocketMessage(
+                    server as unknown as CloudflareWebSocket,
+                    wsMsg.data
+                )
+            }) as EventListener)
+
+            return new Response(null, {
+                status: 101,
+                webSocket: client as unknown as WebSocket,
+            }) as unknown as CloudflareResponse
+        }
 
         if (url.pathname === '/socket') {
             if (request.headers.get('upgrade') === 'websocket') {
                 const sessionId = url.searchParams.get('sessionId') ?? undefined
                 return this.clientConnected(sessionId)
             }
-            return new Response('Expected WebSocket', { status: 400 })
+            return new Response('Expected WebSocket', {
+                status: 400,
+            }) as unknown as CloudflareResponse
         }
 
         if (url.pathname === '/socket/broadcast') {
@@ -203,10 +264,22 @@ export class StarbaseDBDurableObject extends DurableObject {
                 }
             }
 
-            return new Response('Broadcast sent', { status: 200 })
+            return new Response('Broadcast sent', {
+                status: 200,
+            }) as unknown as CloudflareResponse
         }
 
-        return new Response('Unknown operation', { status: 400 })
+        if (url.pathname === '/export') {
+            const { callbackUrl } = (await request.json()) as ExportRequestBody
+            await this.exportDatabase(callbackUrl)
+            return new Response('Export started', {
+                status: 202,
+            }) as unknown as CloudflareResponse
+        }
+
+        return new Response('Unknown operation', {
+            status: 400,
+        }) as unknown as CloudflareResponse
     }
 
     public async clientConnected(sessionId?: string) {
@@ -218,41 +291,46 @@ export class StarbaseDBDurableObject extends DurableObject {
         this.connections.set(wsSessionId, server)
 
         // Accept and configure the WebSocket
-        server.accept()
+        if (server.accept) {
+            server.accept()
+        } else {
+            console.error('WebSocket accept method is not defined.')
+        }
 
         // Add message and error handling
-        server.addEventListener('message', async (msg) => {
-            await this.webSocketMessage(server, msg.data)
-        })
+        server.addEventListener('message', (async (msg: Event) => {
+            const wsMsg = msg as unknown as { data: string | ArrayBuffer }
+            await this.webSocketMessage(
+                server as unknown as CloudflareWebSocket,
+                wsMsg.data
+            )
+        }) as EventListener)
 
         server.addEventListener('error', (err) => {
             console.error(`WebSocket error for ${wsSessionId}:`, err)
             this.connections.delete(wsSessionId)
         })
 
-        return new Response(null, { status: 101, webSocket: client })
+        return new Response(null, {
+            status: 101,
+            webSocket: client as unknown as WebSocket,
+        }) as unknown as CloudflareResponse
     }
 
-    async webSocketMessage(ws: WebSocket, message: any) {
-        const { sql, params, action } = JSON.parse(message)
-
-        if (action === 'query') {
-            const queries = [{ sql, params }]
-            const result = await this.executeTransaction(queries, false)
-            ws.send(JSON.stringify(result))
-        }
+    webSocketMessage(
+        ws: CloudflareWebSocket,
+        message: string | ArrayBuffer
+    ): void | Promise<void> {
+        return handleWebSocketMessage(ws as any, message)
     }
 
-    async webSocketClose(
-        ws: WebSocket,
+    webSocketClose(
+        ws: any,
         code: number,
         reason: string,
         wasClean: boolean
-    ) {
-        // If the client closes the connection, the runtime will invoke the webSocketClose() handler.
-        ws.close(code, 'StarbaseDB is closing WebSocket connection')
-
-        // Remove the WebSocket connection from the map
+    ): void {
+        ws.close(code, reason)
         const tags = this.ctx.getTags(ws)
         if (tags.length) {
             const wsSessionId = tags[0]
@@ -288,21 +366,14 @@ export class StarbaseDBDurableObject extends DurableObject {
         sql: string
         params?: unknown[]
         isRaw?: boolean
-    }) {
+    }): Promise<Record<string, SqlStorageValue>[]> {
         const cursor = await this.executeRawQuery(opts)
 
         if (opts.isRaw) {
-            return {
-                columns: cursor.columnNames,
-                rows: Array.from(cursor.raw()),
-                meta: {
-                    rows_read: cursor.rowsRead,
-                    rows_written: cursor.rowsWritten,
-                },
-            }
+            return cursor.toArray() // Ensure this returns an array
         }
 
-        return cursor.toArray()
+        return cursor.toArray() // Always return an array of records
     }
 
     public async executeTransaction(
@@ -323,5 +394,113 @@ export class StarbaseDBDurableObject extends DurableObject {
             console.error('Transaction Execution Error:', error)
             throw error
         }
+    }
+
+    async exportDatabase(callbackUrl: string): Promise<void> {
+        const dumpFileName = `dump_${new Date().toISOString()}.sql`
+        let currentChunkIndex = 0
+        const chunkSize = 100 // Number of rows per chunk
+        let isExporting = true
+
+        while (isExporting) {
+            const chunk = await this.fetchChunk(currentChunkIndex, chunkSize)
+            if (chunk.length === 0) {
+                isExporting = false
+                break
+            }
+
+            const dumpContent = this.generateDumpContent(chunk)
+            await this.r2Bucket.put(dumpFileName, dumpContent, {
+                httpMetadata: { contentType: 'text/plain' },
+            })
+
+            currentChunkIndex += chunkSize
+
+            await this.scheduleBreathingInterval()
+        }
+
+        await this.notifyCompletion(callbackUrl, dumpFileName)
+    }
+
+    private async fetchChunk(startIndex: number, size: number): Promise<any[]> {
+        const sql = `SELECT * FROM your_table LIMIT ${size} OFFSET ${startIndex}`
+        const result = await this.executeQuery({ sql })
+        return result
+    }
+
+    private generateDumpContent(rows: any[]): string {
+        return rows
+            .map((row) => {
+                const values = Object.values(row).map((value) =>
+                    typeof value === 'string'
+                        ? `'${value.replace(/'/g, "''")}'`
+                        : value
+                )
+                return `INSERT INTO your_table VALUES (${values.join(', ')});\n`
+            })
+            .join('')
+    }
+
+    private async scheduleBreathingInterval(): Promise<void> {
+        await this.setAlarm(Date.now() + 5000) // Pause for 5 seconds
+        await this.setAlarm(Date.now() + 5000) // Allow other tasks to process
+    }
+
+    private async notifyCompletion(
+        callbackUrl: string,
+        dumpFileName: string
+    ): Promise<void> {
+        await fetch(callbackUrl, {
+            method: 'POST',
+            body: JSON.stringify({
+                message: 'Dump completed',
+                fileName: dumpFileName,
+            }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+    }
+
+    public async startDatabaseDump(
+        id: string,
+        options: DumpOptions
+    ): Promise<void> {
+        const storageAdapter = {
+            get: this.storage.get.bind(this.storage),
+            put: this.storage.put.bind(this.storage),
+            setAlarm: (time: number, options?: { data?: any }) =>
+                this.storage.setAlarm(
+                    time,
+                    options as DurableObjectSetAlarmOptions
+                ),
+        }
+
+        const dumper = new DatabaseDumper(
+            {
+                source: 'internal',
+                rpc: {
+                    executeQuery: async (query) => this.executeQuery(query),
+                },
+                storage: storageAdapter,
+            },
+            {
+                format: options.format,
+                callbackUrl: options.callbackUrl,
+                chunkSize: options.chunkSize,
+                dumpId: id,
+            },
+            {
+                BUCKET: this.r2Bucket as any,
+                role: 'admin' as const,
+                outerbaseApiKey: '',
+                features: {
+                    allowlist: false,
+                    rls: false,
+                    rest: false,
+                    export: false,
+                    import: false,
+                },
+            }
+        )
+        await dumper.start()
     }
 }
