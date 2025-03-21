@@ -177,7 +177,7 @@ export default {
                 }
             }
 
-            if (env.HYPERDRIVE.connectionString) {
+            if (env.HYPERDRIVE?.connectionString) {
                 dataSource.external = {
                     dialect: 'postgresql',
                     connectionString: env.HYPERDRIVE.connectionString,
