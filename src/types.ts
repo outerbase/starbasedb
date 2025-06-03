@@ -1,5 +1,26 @@
+/// <reference types="@cloudflare/workers-types" />
+import type {
+    DurableObject,
+    DurableObjectState,
+    DurableObjectNamespace,
+    R2Bucket,
+    ExecutionContext,
+} from '@cloudflare/workers-types'
+
 import { StarbaseDBDurableObject } from './do'
 import { StarbasePluginRegistry } from './plugin'
+
+// Define the DurableObjectStub type
+type DurableObjectStub<T> = {
+    init: () => Promise<T>
+}
+
+// Define the unique symbol
+declare const __DURABLE_OBJECT_BRAND: unique symbol
+
+export interface DurableObjectBranded {
+    [__DURABLE_OBJECT_BRAND]: typeof __DURABLE_OBJECT_BRAND
+}
 
 export type QueryResult = Record<string, SqlStorageValue>
 
@@ -19,11 +40,22 @@ export type HyperdriveSource = {
 
 export type PostgresSource = {
     dialect: 'postgresql'
-} & RemoteSource
+    host: string
+    port: number
+    user: string
+    password: string
+    database: string
+}
 
 export type MySQLSource = {
     dialect: 'mysql'
-} & RemoteSource
+    host: string
+    port: number
+    user: string
+    password: string
+    database: string
+    defaultSchema?: string
+}
 
 export type CloudflareD1Source = {
     dialect: 'sqlite'
@@ -56,7 +88,24 @@ export type ExternalDatabaseSource =
     | HyperdriveSource
 
 export type DataSource = {
-    rpc: Awaited<ReturnType<DurableObjectStub<StarbaseDBDurableObject>['init']>>
+    rpc: {
+        executeQuery: (query: {
+            sql: string
+            params?: unknown[]
+            isRaw?: boolean
+        }) => Promise<Record<string, SqlStorageValue>[]>
+        getAlarm?: () => Promise<number | null>
+        setAlarm?: (
+            scheduledTime: number | Date,
+            options?: any
+        ) => Promise<void>
+        deleteAlarm?: (options?: any) => Promise<void>
+        getStatistics?: () => Promise<{
+            databaseSize: number
+            activeConnections: number
+            recentQueries: number
+        }>
+    }
     source: 'internal' | 'external' | 'hyperdrive'
     external?: ExternalDatabaseSource
     context?: Record<string, unknown>
@@ -64,17 +113,75 @@ export type DataSource = {
     cacheTTL?: number
     registry?: StarbasePluginRegistry
     executionContext?: ExecutionContext
+    storage: {
+        get: (key: string) => Promise<any>
+        put: (key: string, value: any) => Promise<void>
+        setAlarm: (time: number, options?: any) => Promise<void>
+    }
 }
 
 export enum RegionLocationHint {
     AUTO = 'auto',
-    WNAM = 'wnam', // Western North America
-    ENAM = 'enam', // Eastern North America
-    SAM = 'sam', // South America
-    WEUR = 'weur', // Western Europe
-    EEUR = 'eeur', // Eastern Europe
-    APAC = 'apac', // Asia Pacific
-    OC = 'oc', // Oceania
-    AFR = 'afr', // Africa
-    ME = 'me', // Middle East
+    WNAM = 'wnam',
+    ENAM = 'enam',
+    SAM = 'sam',
+    WEUR = 'weur',
+    EEUR = 'eeur',
+    APAC = 'apac',
+    OC = 'oc',
+    AFR = 'afr',
+    ME = 'me',
+}
+
+export interface DumpOptions {
+    format: 'sql' | 'csv' | 'json'
+    callbackUrl?: string
+    chunkSize?: number
+    dumpId: string
+}
+
+export interface TableInfo {
+    name: string
+    sql: string
+}
+
+export interface DumpState {
+    id: string
+    status: 'pending' | 'processing' | 'completed' | 'failed'
+    currentOffset: number
+    totalRows: number
+    format: 'sql' | 'csv' | 'json'
+    error?: string
+    callbackUrl?: string
+    currentTable: string
+    tables: string[]
+    processedTables: string[]
+}
+
+export interface Env {
+    ADMIN_AUTHORIZATION_TOKEN: string
+    CLIENT_AUTHORIZATION_TOKEN: string
+    DATABASE_DURABLE_OBJECT: DurableObjectNamespace
+    REGION: string
+    BUCKET: R2Bucket
+}
+
+export interface StarbaseDBConfiguration {
+    role: 'admin' | 'client'
+    outerbaseApiKey: string
+    features: {
+        rls: boolean
+        allowlist: boolean
+        rest: boolean
+        export: boolean
+        import: boolean
+    }
+    BUCKET: any
+    dialect?: string
+    export?: {
+        maxRetries?: number
+        breathingTimeMs?: number
+        chunkSize?: number
+        timeoutMs?: number
+    }
 }

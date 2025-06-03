@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 import { createResponse } from './utils'
 import { StarbaseDB, StarbaseDBConfiguration } from './handler'
 import { DataSource, RegionLocationHint } from './types'
@@ -20,10 +22,9 @@ const DURABLE_OBJECT_ID = 'sql-durable-object'
 export interface Env {
     ADMIN_AUTHORIZATION_TOKEN: string
     CLIENT_AUTHORIZATION_TOKEN: string
-    DATABASE_DURABLE_OBJECT: DurableObjectNamespace<
-        import('./do').StarbaseDBDurableObject
-    >
+    DATABASE_DURABLE_OBJECT: DurableObjectNamespace
     REGION: string
+    BUCKET: R2Bucket
 
     // Studio credentials
     STUDIO_USER?: string
@@ -31,6 +32,8 @@ export interface Env {
 
     ENABLE_ALLOWLIST?: boolean
     ENABLE_RLS?: boolean
+    ENABLE_REST?: boolean
+    ENABLE_EXPORT?: boolean
 
     // External database source details
     OUTERBASE_API_KEY?: string
@@ -100,7 +103,8 @@ export default {
                     : env.DATABASE_DURABLE_OBJECT.get(id)
 
             // Create a new RPC Session on the Durable Object.
-            const rpc = await stub.init()
+            const rpcResponse = await stub.fetch('http://init')
+            const rpc = (await rpcResponse.json()) as DataSource['rpc']
 
             // Get the source type from headers/query params.
             const source =
@@ -116,6 +120,13 @@ export default {
                           ? 'hyperdrive'
                           : 'internal'
                     : 'internal',
+                storage: {
+                    get: async (key) => (stub as any).storage.get(key),
+                    put: async (key, value) =>
+                        (stub as any).storage.put(key, value),
+                    setAlarm: async (time, options) =>
+                        (stub as any).storage.setAlarm(time, options),
+                },
                 cache: request.headers.get('X-Starbase-Cache') === 'true',
                 context: {
                     ...context,
@@ -185,11 +196,15 @@ export default {
             }
 
             const config: StarbaseDBConfiguration = {
-                outerbaseApiKey: env.OUTERBASE_API_KEY,
+                BUCKET: env.BUCKET,
+                outerbaseApiKey: env.OUTERBASE_API_KEY ?? '',
                 role,
                 features: {
-                    allowlist: env.ENABLE_ALLOWLIST,
-                    rls: env.ENABLE_RLS,
+                    allowlist: env.ENABLE_ALLOWLIST === true,
+                    rls: env.ENABLE_RLS === true,
+                    rest: env.ENABLE_REST === true,
+                    export: env.ENABLE_EXPORT === true,
+                    import: env.ENABLE_EXPORT === true,
                 },
             }
 
@@ -320,13 +335,13 @@ export default {
             // Return the final response to our user
             return await starbase.handle(request, ctx)
         } catch (error) {
-            // Return error response to client
+            console.error('Error in fetch handler:', error)
             return createResponse(
                 undefined,
                 error instanceof Error
                     ? error.message
                     : 'An unexpected error occurred',
-                400
+                500
             )
         }
     },

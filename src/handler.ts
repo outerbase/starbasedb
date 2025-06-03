@@ -1,3 +1,5 @@
+/// <reference types="@cloudflare/workers-types" />
+
 import { Context, Hono } from 'hono'
 import { createMiddleware } from 'hono/factory'
 import { validator } from 'hono/validator'
@@ -6,7 +8,6 @@ import { DataSource } from './types'
 import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
-import { dumpDatabaseRoute } from './export/dump'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
@@ -15,19 +16,18 @@ import { importTableFromCsvRoute } from './import/csv'
 import { corsPreflight } from './cors'
 import { handleApiRequest } from './api'
 import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
+import {
+    exportDumpRoute,
+    checkDumpStatusRoute,
+    downloadDumpRoute,
+    getDumpProgress,
+} from './export'
 
-export interface StarbaseDBConfiguration {
-    outerbaseApiKey?: string
-    role: 'admin' | 'client'
-    features?: {
-        allowlist?: boolean
-        rls?: boolean
-        rest?: boolean
-        websocket?: boolean
-        export?: boolean
-        import?: boolean
-    }
-}
+import type {
+    ExecutionContext,
+    DurableObjectNamespace,
+} from '@cloudflare/workers-types'
+import { StarbaseDBConfiguration } from './types'
 
 type HonoContext = {
     Variables: {
@@ -40,6 +40,7 @@ type HonoContext = {
     }
 }
 
+export type { StarbaseDBConfiguration }
 export class StarbaseDB {
     private dataSource: DataSource
     private config: StarbaseDBConfiguration
@@ -47,17 +48,20 @@ export class StarbaseDB {
     private plugins: StarbasePlugin[]
     private initialized: boolean = false
     private app: StarbaseApp
+    private databaseDO?: DurableObjectNamespace
 
     constructor(options: {
         dataSource: DataSource
         config: StarbaseDBConfiguration
         plugins?: StarbasePlugin[]
+        databaseDO?: DurableObjectNamespace
     }) {
         this.dataSource = options.dataSource
         this.config = options.config
         this.liteREST = new LiteREST(this.dataSource, this.config)
         this.plugins = options.plugins || []
         this.app = new Hono<HonoContext>()
+        this.databaseDO = options.databaseDO
 
         if (
             this.dataSource.source === 'external' &&
@@ -120,8 +124,8 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
-            this.app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
+            this.app.get('/export/dump', this.isInternalSource, async (c) => {
+                return exportDumpRoute(c.req.raw, this.dataSource, this.config)
             })
 
             this.app.get(
@@ -150,6 +154,104 @@ export class StarbaseDB {
                         this.config
                     )
                 }
+            )
+
+            this.app.post('/export/dump', this.isInternalSource, async (c) => {
+                const body = await c.req.json()
+                const format = body.format || 'sql'
+                const callbackUrl = body.callbackUrl
+                const chunkSize = body.chunkSize || 1000
+
+                const dumpId = `dump_${new Date().toISOString().replace(/[:.]/g, '')}`
+
+                // Create a stub for the DO
+                const doId = this.databaseDO?.idFromName(dumpId)
+                if (!doId) {
+                    return c.json(
+                        { error: 'Failed to create database dump' },
+                        500
+                    )
+                }
+
+                const doStub = this.databaseDO?.get(doId)
+                await doStub?.fetch('/start-dump', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        format,
+                        callbackUrl,
+                        chunkSize,
+                        dumpId,
+                    }),
+                })
+
+                return c.json({
+                    status: 'processing',
+                    dumpId,
+                    message: 'Database dump started',
+                })
+            })
+
+            this.app.get(
+                '/export/dump/status/:id',
+                this.isInternalSource,
+                async (c) => {
+                    const id = c.req.param('id')
+                    if (!this.dataSource.storage) {
+                        return c.json({ error: 'Storage not available' }, 500)
+                    }
+                    const state = await this.dataSource.storage?.get(
+                        `dumpState_${id}`
+                    )
+
+                    if (!state) {
+                        return c.json({ error: 'Dump not found' }, 404)
+                    }
+
+                    return c.json(state)
+                }
+            )
+
+            this.app.get(
+                '/export/dump/download/:id',
+                this.isInternalSource,
+                async (c) => {
+                    const id = c.req.param('id')
+                    const state = await this.dataSource.storage?.get(
+                        `dumpState_${id}`
+                    )
+
+                    if (!state || state.status !== 'completed') {
+                        return c.json(
+                            { error: 'Dump not found or not completed' },
+                            404
+                        )
+                    }
+
+                    const object = await this.config.BUCKET.get(
+                        `${id}.${state.format}`
+                    )
+
+                    if (!object) {
+                        return c.json({ error: 'Dump file not found' }, 404)
+                    }
+
+                    return new Response(object.body, {
+                        headers: {
+                            'Content-Type': this.getContentType(state.format),
+                            'Content-Disposition': `attachment; filename="database_dump.${state.format}"`,
+                        },
+                    })
+                }
+            )
+
+            this.app.post('/export/dump', async (c) =>
+                exportDumpRoute(c.req.raw, this.dataSource, this.config)
+            )
+            this.app.get('/export/status', async (c) =>
+                getDumpProgress(c.req.raw, this.dataSource)
+            )
+            this.app.get('/export/download/:id', async (c) =>
+                downloadDumpRoute(c.req.raw, this.dataSource)
             )
         }
 
@@ -381,17 +483,29 @@ export class StarbaseDB {
     }
 
     /**
-     *
+     * Clean up expired cache entries
      */
     private async expireCache() {
         try {
-            const cleanupSQL = `DELETE FROM tmp_cache WHERE timestamp + (ttl * 1000) < ?`
-            this.dataSource.rpc.executeQuery({
-                sql: cleanupSQL,
+            await this.dataSource.rpc.executeQuery({
+                sql: `DELETE FROM tmp_cache WHERE timestamp + (ttl * 1000) < ?`,
                 params: [Date.now()],
             })
         } catch (err) {
             console.error('Error cleaning up expired cache entries:', err)
+        }
+    }
+
+    private getContentType(format: string): string {
+        switch (format) {
+            case 'sql':
+                return 'application/sql'
+            case 'csv':
+                return 'text/csv'
+            case 'json':
+                return 'application/json'
+            default:
+                return 'text/plain'
         }
     }
 }
