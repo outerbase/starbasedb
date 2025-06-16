@@ -189,7 +189,9 @@ export class StarbaseDB {
             )
         }
 
-        this.app.all('/api/*', async (c) => handleApiRequest(c.req.raw))
+        this.app.all('/api/*', async (c) =>
+            handleApiRequest(c.req.raw, this.dataSource)
+        )
 
         // Set up error handlers
         this.app.notFound(() => {
