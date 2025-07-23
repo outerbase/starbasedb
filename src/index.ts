@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { DataReplicationPlugin } from '../plugins/data-replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -210,6 +211,31 @@ export default {
             }, ctx)
 
             const interfacePlugin = new InterfacePlugin()
+            const dataReplicationPlugin = new DataReplicationPlugin()
+
+            // Set up data replication event handling
+            dataReplicationPlugin.onEvent(
+                async ({
+                    config_name,
+                    status,
+                    records_processed,
+                    error_message,
+                    sync_duration_ms,
+                }) => {
+                    console.log(`Data replication ${config_name}: ${status}`)
+                    console.log(
+                        `Processed ${records_processed} records in ${sync_duration_ms}ms`
+                    )
+
+                    if (status === 'error' && error_message) {
+                        console.error(
+                            `Replication error for ${config_name}:`,
+                            error_message
+                        )
+                    }
+                },
+                ctx
+            )
 
             const plugins = [
                 webSocketPlugin,
@@ -226,6 +252,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                dataReplicationPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
