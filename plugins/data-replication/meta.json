@@ -1,0 +1,37 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_replication_configs": [
+                "id",
+                "name",
+                "source_config",
+                "target_table",
+                "source_table",
+                "sync_interval_minutes",
+                "tracking_column",
+                "last_sync_value",
+                "last_sync_timestamp",
+                "is_active",
+                "created_at",
+                "updated_at"
+            ],
+            "tmp_replication_logs": [
+                "id",
+                "config_name",
+                "status",
+                "records_processed",
+                "error_message",
+                "sync_duration_ms",
+                "created_at"
+            ]
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
