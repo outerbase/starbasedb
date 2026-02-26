@@ -49,6 +49,7 @@ describe('Database Dump Module', () => {
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
             ])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
@@ -56,6 +57,7 @@ describe('Database Dump Module', () => {
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
             ])
+            .mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -71,13 +73,13 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
     it('should handle empty databases (no tables)', async () => {
@@ -118,13 +120,14 @@ describe('Database Dump Module', () => {
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
             .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+            .mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            'INSERT INTO "users" VALUES (1, \'Alice\'\'s adventure\');'
         )
     })
 
@@ -141,5 +144,7 @@ describe('Database Dump Module', () => {
         expect(response.status).toBe(500)
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to create database dump')
+
+        consoleErrorMock.mockRestore()
     })
 })
