@@ -7,6 +7,11 @@ import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
 import { dumpDatabaseRoute } from './export/dump'
+import {
+    downloadDumpJobRoute,
+    getDumpJobStatusRoute,
+    startDumpJobRoute,
+} from './export/dump-jobs'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
@@ -123,6 +128,38 @@ export class StarbaseDB {
             this.app.get('/export/dump', this.isInternalSource, async () => {
                 return dumpDatabaseRoute(this.dataSource, this.config)
             })
+
+            this.app.post('/export/dump', this.isInternalSource, async (c) => {
+                return startDumpJobRoute(c.req.raw, this.dataSource, this.config)
+            })
+
+            this.app.get(
+                '/export/dump/jobs/:jobId',
+                this.isInternalSource,
+                this.hasJobId,
+                async (c) => {
+                    const jobId = c.req.valid('param').jobId
+                    return getDumpJobStatusRoute(
+                        jobId,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
+
+            this.app.get(
+                '/export/dump/jobs/:jobId/download',
+                this.isInternalSource,
+                this.hasJobId,
+                async (c) => {
+                    const jobId = c.req.valid('param').jobId
+                    return downloadDumpJobRoute(
+                        jobId,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
 
             this.app.get(
                 '/export/json/:tableName',
@@ -285,6 +322,21 @@ export class StarbaseDB {
             }
 
             return { tableName }
+        })
+    }
+
+    /**
+     * Validator middleware to check if the request path has a valid :jobId parameter.
+     */
+    private get hasJobId() {
+        return validator('param', (params) => {
+            const jobId = params['jobId']?.trim()
+
+            if (!jobId) {
+                return createResponse(undefined, 'Job id is required', 400)
+            }
+
+            return { jobId }
         })
     }
 
