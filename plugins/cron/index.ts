@@ -187,6 +187,18 @@ export class CronPlugin extends StarbasePlugin {
         await this.scheduleNextAlarm()
     }
 
+    public async removeEvent(name: string): Promise<void> {
+        if (!this.dataSource)
+            throw new Error('CronPlugin not properly initialized')
+
+        await this.dataSource.rpc.executeQuery({
+            sql: SQL_QUERIES.DELETE_TASK,
+            params: [name],
+        })
+
+        await this.scheduleNextAlarm()
+    }
+
     public onEvent(
         callback: (payload: CronEventPayload) => void | Promise<void>,
         ctx?: ExecutionContext
