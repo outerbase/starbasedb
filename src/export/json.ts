@@ -1,4 +1,8 @@
-import { getTableData, createExportResponse } from './index'
+import {
+    tableExists,
+    forEachPage,
+    createStreamingExportResponse,
+} from '.'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
@@ -9,9 +13,9 @@ export async function exportTableToJsonRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        const exists = await tableExists(tableName, dataSource, config)
 
-        if (data === null) {
+        if (!exists) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,11 +23,41 @@ export async function exportTableToJsonRoute(
             )
         }
 
-        // Convert the result to JSON
-        const jsonData = JSON.stringify(data, null, 4)
+        const encoder = new TextEncoder()
+        let isFirstRow = true
 
-        return createExportResponse(
-            jsonData,
+        const stream = new ReadableStream({
+            async start(controller) {
+                try {
+                    controller.enqueue(encoder.encode('[\n'))
+
+                    await forEachPage(
+                        tableName,
+                        dataSource,
+                        config,
+                        async (rows) => {
+                            let chunk = ''
+                            for (const row of rows) {
+                                if (!isFirstRow) {
+                                    chunk += ',\n'
+                                }
+                                chunk += JSON.stringify(row, null, 4)
+                                isFirstRow = false
+                            }
+                            controller.enqueue(encoder.encode(chunk))
+                        }
+                    )
+
+                    controller.enqueue(encoder.encode('\n]\n'))
+                    controller.close()
+                } catch (err) {
+                    controller.error(err)
+                }
+            },
+        })
+
+        return createStreamingExportResponse(
+            stream,
             `${tableName}_export.json`,
             'application/json'
         )

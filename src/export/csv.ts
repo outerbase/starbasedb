@@ -1,7 +1,20 @@
-import { getTableData, createExportResponse } from './index'
+import {
+    tableExists,
+    forEachPage,
+    createStreamingExportResponse,
+} from '.'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
+
+function escapeCsvValue(value: unknown): string {
+    if (value === null || value === undefined) return ''
+    const str = String(value)
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`
+    }
+    return str
+}
 
 export async function exportTableToCsvRoute(
     tableName: string,
@@ -9,9 +22,9 @@ export async function exportTableToCsvRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        const exists = await tableExists(tableName, dataSource, config)
 
-        if (data === null) {
+        if (!exists) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,33 +32,46 @@ export async function exportTableToCsvRoute(
             )
         }
 
-        // Convert the result to CSV
-        let csvContent = ''
-        if (data.length > 0) {
-            // Add headers
-            csvContent += Object.keys(data[0]).join(',') + '\n'
+        const encoder = new TextEncoder()
+        let headerWritten = false
 
-            // Add data rows
-            data.forEach((row: any) => {
-                csvContent +=
-                    Object.values(row)
-                        .map((value) => {
-                            if (
-                                typeof value === 'string' &&
-                                (value.includes(',') ||
-                                    value.includes('"') ||
-                                    value.includes('\n'))
-                            ) {
-                                return `"${value.replace(/"/g, '""')}"`
+        const stream = new ReadableStream({
+            async start(controller) {
+                try {
+                    await forEachPage(
+                        tableName,
+                        dataSource,
+                        config,
+                        async (rows, isFirstPage) => {
+                            let chunk = ''
+
+                            // Write CSV header from the first page
+                            if (isFirstPage && !headerWritten && rows.length > 0) {
+                                chunk += Object.keys(rows[0])
+                                    .map(escapeCsvValue)
+                                    .join(',') + '\n'
+                                headerWritten = true
                             }
-                            return value
-                        })
-                        .join(',') + '\n'
-            })
-        }
 
-        return createExportResponse(
-            csvContent,
+                            for (const row of rows) {
+                                chunk += Object.values(row)
+                                    .map(escapeCsvValue)
+                                    .join(',') + '\n'
+                            }
+
+                            controller.enqueue(encoder.encode(chunk))
+                        }
+                    )
+
+                    controller.close()
+                } catch (err) {
+                    controller.error(err)
+                }
+            },
+        })
+
+        return createStreamingExportResponse(
+            stream,
             `${tableName}_export.csv`,
             'text/csv'
         )
