@@ -68,3 +68,85 @@ export function createExportResponse(
 
     return new Response(blob, { headers })
 }
+
+/**
+ * The default page size used for paginated streaming queries.
+ * Balances memory usage against the number of round-trips to the database.
+ */
+const DEFAULT_PAGE_SIZE = 1000
+
+/**
+ * Check whether a table exists in the database.
+ */
+export async function tableExists(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): Promise<boolean> {
+    const result = await executeOperation(
+        [
+            {
+                sql: `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
+                params: [tableName],
+            },
+        ],
+        dataSource,
+        config
+    )
+    return !!(result && result.length > 0)
+}
+
+/**
+ * Create a streaming export Response with appropriate headers.
+ */
+export function createStreamingExportResponse(
+    stream: ReadableStream,
+    fileName: string,
+    contentType: string
+): Response {
+    const headers = new Headers({
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+        'Transfer-Encoding': 'chunked',
+    })
+
+    return new Response(stream, { headers })
+}
+
+/**
+ * Fetch rows from a table in pages using LIMIT/OFFSET and invoke a callback
+ * for each page. This avoids loading the entire table into memory at once.
+ */
+export async function forEachPage(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration,
+    callback: (rows: any[], isFirstPage: boolean) => Promise<void>,
+    pageSize: number = DEFAULT_PAGE_SIZE
+): Promise<void> {
+    let offset = 0
+    let isFirstPage = true
+
+    while (true) {
+        const rows = await executeOperation(
+            [
+                {
+                    sql: `SELECT * FROM ${tableName} LIMIT ? OFFSET ?;`,
+                    params: [pageSize, offset],
+                },
+            ],
+            dataSource,
+            config
+        )
+
+        if (!rows || rows.length === 0) break
+
+        await callback(rows, isFirstPage)
+
+        isFirstPage = false
+        offset += rows.length
+
+        // If we got fewer rows than the page size we've reached the end.
+        if (rows.length < pageSize) break
+    }
+}

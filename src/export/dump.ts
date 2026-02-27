@@ -1,4 +1,8 @@
-import { executeOperation } from '.'
+import {
+    executeOperation,
+    forEachPage,
+    createStreamingExportResponse,
+} from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
@@ -8,62 +12,87 @@ export async function dumpDatabaseRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        // Get all table names
+        // Get all table names up front (small result set).
         const tablesResult = await executeOperation(
             [{ sql: "SELECT name FROM sqlite_master WHERE type='table';" }],
             dataSource,
             config
         )
 
-        const tables = tablesResult.map((row: any) => row.name)
-        let dumpContent = 'SQLite format 3\0' // SQLite file header
+        const tables: string[] = tablesResult.map((row: any) => row.name)
+        const encoder = new TextEncoder()
 
-        // Iterate through all tables
-        for (const table of tables) {
-            // Get table schema
-            const schemaResult = await executeOperation(
-                [
-                    {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
-                    },
-                ],
-                dataSource,
-                config
-            )
+        const stream = new ReadableStream({
+            async start(controller) {
+                try {
+                    controller.enqueue(
+                        encoder.encode('-- StarbaseDB SQL Dump\n')
+                    )
+                    controller.enqueue(
+                        encoder.encode(
+                            `-- Generated at: ${new Date().toISOString()}\n\n`
+                        )
+                    )
 
-            if (schemaResult.length) {
-                const schema = schemaResult[0].sql
-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
-            }
+                    for (const table of tables) {
+                        // Schema (tiny query – no pagination needed)
+                        const schemaResult = await executeOperation(
+                            [
+                                {
+                                    sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
+                                    params: [table],
+                                },
+                            ],
+                            dataSource,
+                            config
+                        )
 
-            // Get table data
-            const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
-                dataSource,
-                config
-            )
+                        if (schemaResult.length) {
+                            const schema = schemaResult[0].sql
+                            controller.enqueue(
+                                encoder.encode(
+                                    `-- Table: ${table}\n${schema};\n\n`
+                                )
+                            )
+                        }
 
-            for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
-                        ? `'${value.replace(/'/g, "''")}'`
-                        : value
-                )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
-            }
+                        // Stream row data page-by-page
+                        await forEachPage(
+                            table,
+                            dataSource,
+                            config,
+                            async (rows) => {
+                                let chunk = ''
+                                for (const row of rows) {
+                                    const values = Object.values(row).map(
+                                        (value) =>
+                                            value === null
+                                                ? 'NULL'
+                                                : typeof value === 'string'
+                                                  ? `'${value.replace(/'/g, "''")}'`
+                                                  : value
+                                    )
+                                    chunk += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+                                }
+                                controller.enqueue(encoder.encode(chunk))
+                            }
+                        )
 
-            dumpContent += '\n'
-        }
+                        controller.enqueue(encoder.encode('\n'))
+                    }
 
-        // Create a Blob from the dump content
-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
-
-        const headers = new Headers({
-            'Content-Type': 'application/x-sqlite3',
-            'Content-Disposition': 'attachment; filename="database_dump.sql"',
+                    controller.close()
+                } catch (err) {
+                    controller.error(err)
+                }
+            },
         })
 
-        return new Response(blob, { headers })
+        return createStreamingExportResponse(
+            stream,
+            'database_dump.sql',
+            'application/sql'
+        )
     } catch (error: any) {
         console.error('Database Dump Error:', error)
         return createResponse(undefined, 'Failed to create database dump', 500)
