@@ -124,6 +124,101 @@ export class StarbaseDB {
                 return dumpDatabaseRoute(this.dataSource, this.config)
             })
 
+            // Async dump for large databases (requires DATABASE_DUMPS R2 binding)
+            this.app.post('/export/dump', this.isInternalSource, async (c) => {
+                const body = await c.req.json().catch(() => ({}))
+                const callbackUrl: string | undefined =
+                    typeof body?.callbackUrl === 'string'
+                        ? body.callbackUrl
+                        : undefined
+
+                try {
+                    const result = await this.dataSource.rpc.startAsyncDump({
+                        callbackUrl,
+                    })
+                    const statusUrl = `/export/dump/${result.dumpId}`
+                    return createResponse(
+                        {
+                            dumpId: result.dumpId,
+                            status: 'started',
+                            statusUrl,
+                            message:
+                                'Database dump initiated. Poll the statusUrl for progress.',
+                        },
+                        undefined,
+                        202
+                    )
+                } catch (error: any) {
+                    return createResponse(
+                        undefined,
+                        error?.message ?? 'Failed to start database dump',
+                        error?.message?.includes('not configured') ? 501 : 500
+                    )
+                }
+            })
+
+            // Status + completion check for async dumps
+            this.app.get(
+                '/export/dump/:dumpId',
+                this.isInternalSource,
+                async (c) => {
+                    const { dumpId } = c.req.param()
+                    const status =
+                        await this.dataSource.rpc.getAsyncDumpStatus(dumpId)
+
+                    if (!status) {
+                        return createResponse(
+                            undefined,
+                            `Dump '${dumpId}' not found`,
+                            404
+                        )
+                    }
+
+                    return createResponse(
+                        status,
+                        undefined,
+                        status.status === 'failed' ? 500 : 200
+                    )
+                }
+            )
+
+            // Download a completed dump
+            this.app.get(
+                '/export/dump/:dumpId/download',
+                this.isInternalSource,
+                async (c) => {
+                    const { dumpId } = c.req.param()
+                    const download =
+                        await this.dataSource.rpc.streamDumpDownload(dumpId)
+
+                    if (!download) {
+                        const status =
+                            await this.dataSource.rpc.getAsyncDumpStatus(dumpId)
+                        if (!status) {
+                            return createResponse(
+                                undefined,
+                                `Dump '${dumpId}' not found`,
+                                404
+                            )
+                        }
+                        return createResponse(
+                            undefined,
+                            status.status === 'running'
+                                ? 'Dump is still in progress. Try again later.'
+                                : `Dump is not available for download (status: ${status.status})`,
+                            409
+                        )
+                    }
+
+                    return new Response(download.body, {
+                        headers: {
+                            'Content-Type': 'application/x-sqlite3',
+                            'Content-Disposition': `attachment; filename="${download.key}"`,
+                        },
+                    })
+                }
+            )
+
             this.app.get(
                 '/export/json/:tableName',
                 this.isInternalSource,

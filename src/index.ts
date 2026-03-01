@@ -56,6 +56,10 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    // Optional R2 bucket for async database dumps (required for large databases)
+    // Add to wrangler.toml: [[r2_buckets]] binding = "DATABASE_DUMPS" bucket_name = "your-bucket"
+    DATABASE_DUMPS?: R2Bucket
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 

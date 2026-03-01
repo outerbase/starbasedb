@@ -1,4 +1,10 @@
 import { DurableObject } from 'cloudflare:workers'
+import {
+    initiateDump,
+    processDumpChunk,
+    getDumpStatus,
+    DumpStatus,
+} from './export/dump-async'
 
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
@@ -72,6 +78,9 @@ export class StarbaseDBDurableObject extends DurableObject {
             deleteAlarm: this.deleteAlarm.bind(this),
             getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
+            startAsyncDump: this.startAsyncDump.bind(this),
+            getAsyncDumpStatus: this.getAsyncDumpStatus.bind(this),
+            streamDumpDownload: this.streamDumpDownload.bind(this),
         }
     }
 
@@ -104,8 +113,72 @@ export class StarbaseDBDurableObject extends DurableObject {
         return this.storage.deleteAlarm(options)
     }
 
+    /** Initiates an asynchronous database dump stored in R2. */
+    public async startAsyncDump(params: {
+        callbackUrl?: string
+    }): Promise<{ dumpId: string }> {
+        if (!this.env.DATABASE_DUMPS) {
+            throw new Error(
+                'DATABASE_DUMPS R2 binding is not configured. ' +
+                    'Add an R2 bucket binding named DATABASE_DUMPS to your wrangler.toml.'
+            )
+        }
+        const result = await initiateDump(
+            this.sql,
+            this.env.DATABASE_DUMPS,
+            this.storage,
+            params.callbackUrl
+        )
+        // Schedule the first processing alarm immediately
+        await this.setAlarm(Date.now() + 100)
+        return result
+    }
+
+    /** Returns the status of an ongoing or completed dump. */
+    public async getAsyncDumpStatus(
+        dumpId: string
+    ): Promise<DumpStatus | null> {
+        return getDumpStatus(this.storage, dumpId)
+    }
+
+    /** Streams a completed dump file from R2. Returns null if not found/complete. */
+    public async streamDumpDownload(
+        dumpId: string
+    ): Promise<{ body: ReadableStream; key: string } | null> {
+        if (!this.env.DATABASE_DUMPS) return null
+        const status = await getDumpStatus(this.storage, dumpId)
+        if (!status || status.status !== 'complete') return null
+
+        // Retrieve the upload key from dump state
+        const state = await this.storage.get<{ uploadKey: string }>(
+            `dump:${dumpId}`
+        )
+        if (!state) return null
+
+        const object = await this.env.DATABASE_DUMPS.get(state.uploadKey)
+        if (!object) return null
+
+        return { body: object.body, key: state.uploadKey }
+    }
+
     async alarm() {
         try {
+            // Handle in-progress database dump continuation
+            const activeDumpId = await this.storage.get<string>('activeDumpId')
+            if (activeDumpId && this.env.DATABASE_DUMPS) {
+                const isDone = await processDumpChunk(
+                    this.sql,
+                    this.env.DATABASE_DUMPS,
+                    this.storage,
+                    activeDumpId
+                )
+                if (!isDone) {
+                    // More work to do — reschedule immediately
+                    await this.setAlarm(Date.now() + 100)
+                    return
+                }
+            }
+
             // Fetch all the tasks that are marked to emit an event for this cycle.
             const task = (await this.executeQuery({
                 sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
@@ -153,8 +226,8 @@ export class StarbaseDBDurableObject extends DurableObject {
         activeConnections: number
         recentQueries: number
     }> {
-        const sql = `SELECT COUNT(*) as count 
-            FROM tmp_query_log 
+        const sql = `SELECT COUNT(*) as count
+            FROM tmp_query_log
             WHERE created_at >= datetime('now', '-24 hours')`
         const result = (await this.executeQuery({
             sql,

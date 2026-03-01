@@ -27,6 +27,12 @@ enabled = true
 name = "DATABASE_DURABLE_OBJECT"
 class_name = "StarbaseDBDurableObject"
 
+# Optional: R2 bucket for large database dumps (required for POST /export/dump)
+# Uncomment and configure to enable async dump support for databases > 30 seconds to export.
+# [[r2_buckets]]
+# binding = "DATABASE_DUMPS"
+# bucket_name = "your-database-dumps-bucket"
+
 # Durable Object migrations.
 # Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#migrations
 [[migrations]]
@@ -48,7 +54,7 @@ REGION = "auto"
 # STUDIO_USER = "admin"
 # STUDIO_PASS = "123456"
 
-# Toggle to enable default features 
+# Toggle to enable default features
 ENABLE_ALLOWLIST = 0
 ENABLE_RLS = 0
 
