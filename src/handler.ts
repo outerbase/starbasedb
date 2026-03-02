@@ -7,6 +7,13 @@ import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
 import { dumpDatabaseRoute } from './export/dump'
+import {
+    dumpDatabaseChunkedRoute,
+    exportStatusRoute,
+    exportDownloadRoute,
+    processExportChunk,
+    ExportState,
+} from './export/chunked-dump'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
@@ -47,17 +54,20 @@ export class StarbaseDB {
     private plugins: StarbasePlugin[]
     private initialized: boolean = false
     private app: StarbaseApp
+    private r2Bucket?: R2Bucket
 
     constructor(options: {
         dataSource: DataSource
         config: StarbaseDBConfiguration
         plugins?: StarbasePlugin[]
+        r2Bucket?: R2Bucket
     }) {
         this.dataSource = options.dataSource
         this.config = options.config
         this.liteREST = new LiteREST(this.dataSource, this.config)
         this.plugins = options.plugins || []
         this.app = new Hono<HonoContext>()
+        this.r2Bucket = options.r2Bucket
 
         if (
             this.dataSource.source === 'external' &&
@@ -120,9 +130,130 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
-            this.app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
+            // Legacy sync dump (kept for backwards compatibility when R2 is not configured)
+            this.app.get('/export/dump', this.isInternalSource, async (c) => {
+                return dumpDatabaseChunkedRoute(
+                    this.dataSource,
+                    this.config,
+                    this.r2Bucket,
+                    c.req.raw,
+                    async (exportState: ExportState) => {
+                        await this.dataSource.rpc.saveExportState(exportState)
+                        // Schedule alarm 2 seconds from now to allow breathing room
+                        await this.dataSource.rpc.setAlarm(Date.now() + 2000)
+                    },
+                    async () => {
+                        return await this.dataSource.rpc.getActiveExportState()
+                    },
+                    async (state: ExportState) => {
+                        await this.dataSource.rpc.saveExportState(state)
+                    }
+                )
             })
+
+            // POST /export/dump — Start an async export with optional callbackUrl
+            this.app.post('/export/dump', this.isInternalSource, async (c) => {
+                return dumpDatabaseChunkedRoute(
+                    this.dataSource,
+                    this.config,
+                    this.r2Bucket,
+                    c.req.raw,
+                    async (exportState: ExportState) => {
+                        await this.dataSource.rpc.saveExportState(exportState)
+                        await this.dataSource.rpc.setAlarm(Date.now() + 2000)
+                    },
+                    async () => {
+                        return await this.dataSource.rpc.getActiveExportState()
+                    },
+                    async (state: ExportState) => {
+                        await this.dataSource.rpc.saveExportState(state)
+                    }
+                )
+            })
+
+            // GET /export/status/:exportId — Check export progress
+            this.app.get(
+                '/export/status/:exportId',
+                this.isInternalSource,
+                async (c) => {
+                    const exportId = c.req.param('exportId')
+                    return exportStatusRoute(exportId, async (id: string) => {
+                        return await this.dataSource.rpc.getExportState(id)
+                    })
+                }
+            )
+
+            // GET /export/download/:exportId — Download completed export
+            this.app.get(
+                '/export/download/:exportId',
+                this.isInternalSource,
+                async (c) => {
+                    const exportId = c.req.param('exportId')
+                    if (!this.r2Bucket) {
+                        return createResponse(
+                            undefined,
+                            'R2 bucket not configured. Cannot download async exports.',
+                            400
+                        )
+                    }
+                    return exportDownloadRoute(
+                        exportId,
+                        this.r2Bucket,
+                        async (id: string) => {
+                            return await this.dataSource.rpc.getExportState(id)
+                        }
+                    )
+                }
+            )
+
+            // Internal route: continue export from DO alarm
+            this.app.post(
+                '/internal/export/continue',
+                this.isInternalSource,
+                async (c) => {
+                    if (!this.r2Bucket) {
+                        return createResponse(
+                            undefined,
+                            'R2 bucket not configured',
+                            400
+                        )
+                    }
+
+                    const activeState =
+                        await this.dataSource.rpc.getActiveExportState()
+
+                    if (!activeState || activeState.status !== 'processing') {
+                        return createResponse(
+                            { message: 'No active export to continue' },
+                            undefined,
+                            200
+                        )
+                    }
+
+                    const updatedState = await processExportChunk(
+                        activeState,
+                        this.dataSource,
+                        this.config,
+                        this.r2Bucket
+                    )
+                    await this.dataSource.rpc.saveExportState(updatedState)
+
+                    if (updatedState.status === 'processing') {
+                        // Still more work — schedule another alarm
+                        await this.dataSource.rpc.setAlarm(Date.now() + 2000)
+                    }
+
+                    return createResponse(
+                        {
+                            exportId: updatedState.exportId,
+                            status: updatedState.status,
+                            totalRowsExported: updatedState.totalRowsExported,
+                        },
+                        undefined,
+                        200
+                    )
+                }
+            )
 
             this.app.get(
                 '/export/json/:tableName',

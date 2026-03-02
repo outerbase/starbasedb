@@ -56,6 +56,9 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    // R2 Bucket for database export storage (optional)
+    EXPORT_BUCKET?: R2Bucket
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -232,6 +235,7 @@ export default {
                 dataSource,
                 config,
                 plugins,
+                r2Bucket: env.EXPORT_BUCKET,
             })
 
             const preAuthRequest = await starbase.handlePreAuth(request, ctx)
