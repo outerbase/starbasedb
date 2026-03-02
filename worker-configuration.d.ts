@@ -13,4 +13,5 @@ interface Env {
     DATABASE_DURABLE_OBJECT: DurableObjectNamespace<
         import('./src/index').StarbaseDBDurableObject
     >
+    EXPORT_BUCKET?: R2Bucket
 }

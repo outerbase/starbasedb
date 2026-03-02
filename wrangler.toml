@@ -78,3 +78,10 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# R2 Bucket for database export storage
+# Required for large database exports that exceed the 30-second timeout
+# Create a bucket: wrangler r2 bucket create starbasedb-exports
+[[r2_buckets]]
+binding = "EXPORT_BUCKET"
+bucket_name = "starbasedb-exports"
