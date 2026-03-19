@@ -54,6 +54,67 @@ export async function getTableData(
     }
 }
 
+export async function tableExists(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): Promise<boolean> {
+    const tableExistsResult = await executeOperation(
+        [
+            {
+                sql: `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
+                params: [tableName],
+            },
+        ],
+        dataSource,
+        config
+    )
+
+    return !!(tableExistsResult && tableExistsResult.length)
+}
+
+export function quoteIdentifier(identifier: string): string {
+    return `"${identifier.replace(/"/g, '""')}"`
+}
+
+export async function forEachPage(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration,
+    pageSize: number,
+    callback: (rows: any[]) => Promise<void> | void
+): Promise<void> {
+    const safePageSize =
+        Number.isFinite(pageSize) && pageSize > 0 ? pageSize : 1000
+    const quotedTableName = quoteIdentifier(tableName)
+    let offset = 0
+
+    while (true) {
+        const rows = await executeOperation(
+            [
+                {
+                    sql: `SELECT * FROM ${quotedTableName} LIMIT ? OFFSET ?;`,
+                    params: [safePageSize, offset],
+                },
+            ],
+            dataSource,
+            config
+        )
+
+        if (!rows.length) {
+            return
+        }
+
+        await callback(rows)
+
+        if (rows.length < safePageSize) {
+            return
+        }
+
+        offset += safePageSize
+    }
+}
+
 export function createExportResponse(
     data: any,
     fileName: string,
@@ -67,4 +128,17 @@ export function createExportResponse(
     })
 
     return new Response(blob, { headers })
+}
+
+export function createStreamingExportResponse(
+    stream: ReadableStream,
+    fileName: string,
+    contentType: string
+): Response {
+    const headers = new Headers({
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+    })
+
+    return new Response(stream, { headers })
 }
