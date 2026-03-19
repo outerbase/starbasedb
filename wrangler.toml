@@ -75,6 +75,22 @@ ENABLE_RLS = 0
 AUTH_ALGORITHM = "RS256"
 AUTH_JWKS_ENDPOINT = ""
 
+# -----------------------------------------------------------------------------
+# Data Sync plugin (plugins/data-sync) — GitHub Issue #72
+# Workers env only receives flat vars; mirror any "plugins.data-sync" design here.
+# -----------------------------------------------------------------------------
+# DATA_SYNC_ENABLED = "false"
+# DATA_SYNC_INTERVAL_SECONDS = "300"
+# DATA_SYNC_BATCH_SIZE = "250"
+# DATA_SYNC_MAX_RETRIES = "3"
+# DATA_SYNC_RETRY_BASE_MS = "400"
+# Example DATA_SYNC_JOBS (single line JSON):
+# DATA_SYNC_JOBS = "[{\"externalTable\":\"public.users\",\"localTable\":\"users\",\"cursorKind\":\"incremental_id\",\"cursorColumn\":\"id\",\"pkColumns\":[\"id\"]}]"
+
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# Optional: Worker cron — call POST /data-sync/sync-data with admin token from scheduled handler
+# [triggers]
+# crons = ["*/5 * * * *"]

@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { DataSyncPlugin } from '../plugins/data-sync'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -54,7 +55,15 @@ export interface Env {
     AUTH_ALGORITHM?: string
     AUTH_JWKS_ENDPOINT?: string
 
-    HYPERDRIVE: Hyperdrive
+    HYPERDRIVE?: Hyperdrive
+
+    /** Data sync plugin (Issue #72) — configure via [vars] in wrangler.toml */
+    DATA_SYNC_ENABLED?: string
+    DATA_SYNC_INTERVAL_SECONDS?: string
+    DATA_SYNC_JOBS?: string
+    DATA_SYNC_BATCH_SIZE?: string
+    DATA_SYNC_MAX_RETRIES?: string
+    DATA_SYNC_RETRY_BASE_MS?: string
 
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
@@ -225,6 +234,7 @@ export default {
                 cdcPlugin,
                 cronPlugin,
                 new StatsPlugin(),
+                new DataSyncPlugin(env),
                 interfacePlugin,
             ] satisfies StarbasePlugin[]
 

@@ -1,0 +1,5 @@
+{
+    "name": "data-sync",
+    "title": "Data Sync",
+    "description": "Pull-based incremental sync from PostgreSQL/MySQL (or Hyperdrive) into StarbaseDB SQLite."
+}
