@@ -1,7 +1,34 @@
-import { executeOperation } from '.'
+import {
+    createStreamingExportResponse,
+    executeOperation,
+    forEachPage,
+    quoteIdentifier,
+} from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
+
+const encoder = new TextEncoder()
+
+function toSqlLiteral(value: unknown): string {
+    if (value === null || value === undefined) {
+        return 'NULL'
+    }
+
+    if (typeof value === 'string') {
+        return `'${value.replace(/'/g, "''")}'`
+    }
+
+    if (typeof value === 'number' || typeof value === 'bigint') {
+        return String(value)
+    }
+
+    if (typeof value === 'boolean') {
+        return value ? '1' : '0'
+    }
+
+    return `'${JSON.stringify(value).replace(/'/g, "''")}'`
+}
 
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
@@ -15,55 +42,73 @@ export async function dumpDatabaseRoute(
             config
         )
 
-        const tables = tablesResult.map((row: any) => row.name)
-        let dumpContent = 'SQLite format 3\0' // SQLite file header
+        const tables = tablesResult
+            .map((row: any) => row.name)
+            .filter((table: string) => !table.startsWith('tmp_'))
 
-        // Iterate through all tables
-        for (const table of tables) {
-            // Get table schema
-            const schemaResult = await executeOperation(
-                [
-                    {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
-                    },
-                ],
-                dataSource,
-                config
-            )
+        const stream = new ReadableStream<Uint8Array>({
+            start: async (controller) => {
+                try {
+                    controller.enqueue(encoder.encode('SQLite format 3\0'))
 
-            if (schemaResult.length) {
-                const schema = schemaResult[0].sql
-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
-            }
+                    for (const table of tables) {
+                        const schemaResult = await executeOperation(
+                            [
+                                {
+                                    sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
+                                    params: [table],
+                                },
+                            ],
+                            dataSource,
+                            config
+                        )
 
-            // Get table data
-            const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
-                dataSource,
-                config
-            )
+                        if (!schemaResult.length) {
+                            continue
+                        }
 
-            for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
-                        ? `'${value.replace(/'/g, "''")}'`
-                        : value
-                )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
-            }
+                        const schema = schemaResult[0].sql
+                        controller.enqueue(
+                            encoder.encode(
+                                `\n-- Table: ${table}\n${schema};\n\n`
+                            )
+                        )
 
-            dumpContent += '\n'
-        }
+                        await forEachPage(
+                            table,
+                            dataSource,
+                            config,
+                            1000,
+                            (rows) => {
+                                const quotedTableName = quoteIdentifier(table)
+                                for (const row of rows) {
+                                    const values = Object.values(row).map(
+                                        (value) => toSqlLiteral(value)
+                                    )
+                                    controller.enqueue(
+                                        encoder.encode(
+                                            `INSERT INTO ${quotedTableName} VALUES (${values.join(', ')});\n`
+                                        )
+                                    )
+                                }
+                            }
+                        )
 
-        // Create a Blob from the dump content
-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
+                        controller.enqueue(encoder.encode('\n'))
+                    }
 
-        const headers = new Headers({
-            'Content-Type': 'application/x-sqlite3',
-            'Content-Disposition': 'attachment; filename="database_dump.sql"',
+                    controller.close()
+                } catch (error) {
+                    controller.error(error)
+                }
+            },
         })
 
-        return new Response(blob, { headers })
+        return createStreamingExportResponse(
+            stream,
+            'database_dump.sql',
+            'application/x-sqlite3'
+        )
     } catch (error: any) {
         console.error('Database Dump Error:', error)
         return createResponse(undefined, 'Failed to create database dump', 500)

@@ -243,6 +243,41 @@ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
 </code>
 </pre>
 
+For large databases, use the async export flow to avoid request timeout limits:
+
+<pre>
+<code>
+curl --location --request POST 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
+--header 'Authorization: Bearer ABC123' \
+--header 'Content-Type: application/json' \
+--data '{"callbackUrl":"https://example.com/webhooks/export-complete"}'
+</code>
+</pre>
+
+The above returns a `jobId`, `statusUrl`, and (when complete) a `downloadUrl`.
+If `callbackUrl` is provided, StarbaseDB will POST completion/failure events and retry with backoff on transient failures.
+
+Poll status:
+
+<pre>
+<code>
+curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/JOB_ID_HERE' \
+--header 'Authorization: Bearer ABC123'
+</code>
+</pre>
+
+Download when complete:
+
+<pre>
+<code>
+curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/JOB_ID_HERE/download' \
+--header 'Authorization: Bearer ABC123' \
+--output database_dump.sql
+</code>
+</pre>
+
+If you bind an R2 bucket as `EXPORT_R2_BUCKET`, completed async dumps will be uploaded to R2 and streamed from there on download.
+
 <h3>JSON Data Export</h3>
 <pre>
 <code>

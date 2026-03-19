@@ -1,12 +1,24 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { dumpDatabaseRoute } from './dump'
-import { executeOperation } from '.'
+import { executeOperation, forEachPage } from '.'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
 vi.mock('.', () => ({
     executeOperation: vi.fn(),
+    forEachPage: vi.fn(),
+    quoteIdentifier: vi.fn(
+        (identifier: string) => `"${identifier.replace(/"/g, '""')}"`
+    ),
+    createStreamingExportResponse: vi.fn((stream, fileName, contentType) => {
+        return new Response(stream, {
+            headers: {
+                'Content-Type': contentType,
+                'Content-Disposition': `attachment; filename="${fileName}"`,
+            },
+        })
+    }),
 }))
 
 vi.mock('../utils', () => ({
@@ -36,6 +48,18 @@ beforeEach(() => {
         role: 'admin',
         features: { allowlist: true, rls: true, rest: true },
     }
+
+    vi.mocked(forEachPage).mockImplementation(
+        async (_table, dataSource, config, _pageSize, callback) => {
+            const rows = await executeOperation(
+                [{ sql: 'SELECT * FROM __mocked_table__;' }],
+                dataSource,
+                config
+            )
+
+            await callback(rows)
+        }
+    )
 })
 
 describe('Database Dump Module', () => {
@@ -71,13 +95,13 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
     it('should handle empty databases (no tables)', async () => {
@@ -108,7 +132,7 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).not.toContain('INSERT INTO users VALUES')
+        expect(dumpText).not.toContain('INSERT INTO "users" VALUES')
     })
 
     it('should escape single quotes properly in string values', async () => {
@@ -124,7 +148,7 @@ describe('Database Dump Module', () => {
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            "INSERT INTO \"users\" VALUES (1, 'Alice''s adventure');"
         )
     })
 

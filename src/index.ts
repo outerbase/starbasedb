@@ -56,6 +56,9 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    // Optional bucket for large async dump artifacts
+    EXPORT_R2_BUCKET?: R2Bucket
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -119,6 +122,7 @@ export default {
                 cache: request.headers.get('X-Starbase-Cache') === 'true',
                 context: {
                     ...context,
+                    exportR2Bucket: env.EXPORT_R2_BUCKET,
                 },
                 executionContext: ctx,
             }
