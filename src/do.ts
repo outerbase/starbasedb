@@ -106,6 +106,78 @@ export class StarbaseDBDurableObject extends DurableObject {
 
     async alarm() {
         try {
+            const now = Date.now()
+            let nextAlarmAt: number | null = null
+
+            const setNextAlarm = (timestamp: number) => {
+                if (!Number.isFinite(timestamp) || timestamp <= 0) {
+                    return
+                }
+
+                nextAlarmAt =
+                    nextAlarmAt === null
+                        ? timestamp
+                        : Math.min(nextAlarmAt, timestamp)
+            }
+
+            const replicationTableExists = (await this.executeQuery({
+                sql: `SELECT name
+                      FROM sqlite_master
+                      WHERE type='table' AND name='tmp_replication_tasks'
+                      LIMIT 1;`,
+                isRaw: false,
+            })) as Record<string, SqlStorageValue>[]
+
+            if (replicationTableExists.length) {
+                const dueReplicationTasks = (await this.executeQuery({
+                    sql: `SELECT id, callback_host
+                          FROM tmp_replication_tasks
+                                                    WHERE is_active = 1
+                                                        AND callback_host IS NOT NULL
+                                                        AND next_run_at <= ?
+                          ORDER BY next_run_at ASC
+                          LIMIT 1;`,
+                    params: [now],
+                    isRaw: false,
+                })) as Record<string, SqlStorageValue>[]
+
+                if (dueReplicationTasks.length) {
+                    const task = dueReplicationTasks[0]
+
+                    try {
+                        await fetch(
+                            `${task.callback_host}/replication/callback?taskId=${task.id}`,
+                            {
+                                method: 'POST',
+                                headers: {
+                                    Authorization: `Bearer ${this.clientAuthToken}`,
+                                    'X-Starbase-Alarm': 'true',
+                                },
+                            }
+                        )
+                    } catch (error) {
+                        console.error(
+                            'Failed to continue replication via alarm:',
+                            error
+                        )
+                    }
+                }
+
+                const nextReplicationRow = (await this.executeQuery({
+                    sql: `SELECT MIN(next_run_at) AS next_run_at
+                          FROM tmp_replication_tasks
+                          WHERE is_active = 1;`,
+                    isRaw: false,
+                })) as Record<string, SqlStorageValue>[]
+
+                const nextReplicationAt = Number(
+                    nextReplicationRow[0]?.next_run_at || 0
+                )
+                if (nextReplicationAt > 0) {
+                    setNextAlarm(nextReplicationAt)
+                }
+            }
+
             // Fetch all the tasks that are marked to emit an event for this cycle.
             const task = (await this.executeQuery({
                 sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
@@ -113,6 +185,9 @@ export class StarbaseDBDurableObject extends DurableObject {
             })) as Record<string, SqlStorageValue>[]
 
             if (!task.length) {
+                if (nextAlarmAt !== null) {
+                    await this.setAlarm(nextAlarmAt)
+                }
                 return
             }
 
@@ -131,10 +206,14 @@ export class StarbaseDBDurableObject extends DurableObject {
 
                 // If the callback fails, we should try to reschedule to prevent the chain from breaking
                 try {
-                    await this.setAlarm(Date.now() + 60000)
+                    setNextAlarm(Date.now() + 60000)
                 } catch (retryError) {
                     console.error('Failed to set recovery alarm:', retryError)
                 }
+            }
+
+            if (nextAlarmAt !== null) {
+                await this.setAlarm(nextAlarmAt)
             }
         } catch (e) {
             console.error('There was an error processing an alarm: ', e)
