@@ -11,6 +11,7 @@ import { ChangeDataCapturePlugin } from '../plugins/cdc'
 import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
+import { ReplicationPlugin } from '../plugins/replication'
 import { InterfacePlugin } from '../plugins/interface'
 
 export { StarbaseDBDurableObject } from './do'
@@ -205,8 +206,14 @@ export default {
                 // Include change data capture code here
             }, ctx)
 
+            const replicationPlugin = new ReplicationPlugin({
+                tables: [
+                    // { name: 'your_table', cursorColumn: 'id' },
+                ],
+            })
+
             cronPlugin.onEvent(async ({ name, cron_tab, payload }) => {
-                // Include cron event code here
+                if (name === 'replication') await replicationPlugin.runSync()
             }, ctx)
 
             const interfacePlugin = new InterfacePlugin()
@@ -226,6 +233,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                replicationPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
