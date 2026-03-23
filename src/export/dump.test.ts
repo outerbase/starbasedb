@@ -42,16 +42,24 @@ describe('Database Dump Module', () => {
     it('should return a database dump when tables exist', async () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }, { name: 'orders' }])
+            // users schema
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
+            // users count
+            .mockResolvedValueOnce([{ count: 2 }])
+            // users data batch
             .mockResolvedValueOnce([
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
             ])
+            // orders schema
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
+            // orders count
+            .mockResolvedValueOnce([{ count: 2 }])
+            // orders data batch
             .mockResolvedValueOnce([
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
@@ -99,7 +107,8 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
-            .mockResolvedValueOnce([])
+            // count returns 0
+            .mockResolvedValueOnce([{ count: 0 }])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -117,6 +126,7 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
+            .mockResolvedValueOnce([{ count: 1 }])
             .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
@@ -141,5 +151,61 @@ describe('Database Dump Module', () => {
         expect(response.status).toBe(500)
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to create database dump')
+    })
+
+    it('should stream data in batches for large tables', async () => {
+        // Simulate a table with more rows than BATCH_SIZE (5000)
+        const largeBatch = Array.from({ length: 5000 }, (_, i) => ({
+            id: i + 1,
+            name: `User${i + 1}`,
+        }))
+        const smallBatch = Array.from({ length: 500 }, (_, i) => ({
+            id: 5001 + i,
+            name: `User${5001 + i}`,
+        }))
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+            .mockResolvedValueOnce([{ count: 5500 }])
+            // First batch of 5000
+            .mockResolvedValueOnce(largeBatch)
+            // Second batch of 500
+            .mockResolvedValueOnce(smallBatch)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        expect(response).toBeInstanceOf(Response)
+        const dumpText = await response.text()
+
+        // Verify first and last rows from first batch
+        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'User1');")
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (5000, 'User5000');"
+        )
+        // Verify rows from second batch
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (5001, 'User5001');"
+        )
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (5500, 'User5500');"
+        )
+
+        // Verify executeOperation was called with LIMIT/OFFSET queries
+        const calls = vi.mocked(executeOperation).mock.calls
+        // Call 4 (index 3): first batch with OFFSET 0
+        expect(calls[3][0][0].sql).toContain('LIMIT 5000 OFFSET 0')
+        // Call 5 (index 4): second batch with OFFSET 5000
+        expect(calls[4][0][0].sql).toContain('LIMIT 5000 OFFSET 5000')
+    })
+
+    it('should use Transfer-Encoding chunked header for streaming', async () => {
+        vi.mocked(executeOperation).mockResolvedValueOnce([])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        expect(response.headers.get('Transfer-Encoding')).toBe('chunked')
     })
 })
