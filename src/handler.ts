@@ -212,7 +212,7 @@ export class StarbaseDB {
 
                     return new Response(download.body, {
                         headers: {
-                            'Content-Type': 'application/x-sqlite3',
+                            'Content-Type': 'application/sql',
                             'Content-Disposition': `attachment; filename="${download.key}"`,
                         },
                     })

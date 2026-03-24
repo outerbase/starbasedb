@@ -5,8 +5,9 @@ import {
     getDumpStatus,
     DumpStatus,
 } from './export/dump-async'
+import type { Env } from './index'
 
-export class StarbaseDBDurableObject extends DurableObject {
+export class StarbaseDBDurableObject extends DurableObject<Env> {
     // Durable storage for the SQL database
     public sql: SqlStorage
     // Durable storage for the instance
