@@ -20,6 +20,8 @@ export async function dumpDatabaseRoute(
 
         // Iterate through all tables
         for (const table of tables) {
+            // Yield control to event loop to prevent blocking on large datasets
+            await new Promise(resolve => setTimeout(resolve, 0));
             // Get table schema
             const schemaResult = await executeOperation(
                 [
