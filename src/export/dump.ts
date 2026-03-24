@@ -3,67 +3,117 @@ import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
 
+function sanitizeIdentifier(name: string): string {
+    if (!/^[a-zA-Z0-9_]+$/.test(name)) {
+        throw new Error(`Invalid identifier: ${name}`)
+    }
+    return name
+}
+
+function formatValue(value: any): string {
+    if (value === null) return 'NULL'
+    if (typeof value === 'number') return value.toString()
+    if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`
+    return `'${JSON.stringify(value).replace(/'/g, "''")}'`
+}
+
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        // Get all table names
-        const tablesResult = await executeOperation(
-            [{ sql: "SELECT name FROM sqlite_master WHERE type='table';" }],
-            dataSource,
-            config
-        )
+        const encoder = new TextEncoder()
 
-        const tables = tablesResult.map((row: any) => row.name)
-        let dumpContent = 'SQLite format 3\0' // SQLite file header
+        const stream = new ReadableStream({
+            async start(controller) {
+                try {
+                    // Begin transaction
+                    controller.enqueue(
+                        encoder.encode('-- SQLite dump\nBEGIN TRANSACTION;\n')
+                    )
 
-        // Iterate through all tables
-        for (const table of tables) {
-            // Get table schema
-            const schemaResult = await executeOperation(
-                [
-                    {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
-                    },
-                ],
-                dataSource,
-                config
-            )
+                    // Get tables
+                    const tablesResult = await executeOperation(
+                        [{ sql: "SELECT name FROM sqlite_master WHERE type='table';" }],
+                        dataSource,
+                        config
+                    )
 
-            if (schemaResult.length) {
-                const schema = schemaResult[0].sql
-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
-            }
+                    const tables = tablesResult.map((row: any) => row.name)
 
-            // Get table data
-            const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
-                dataSource,
-                config
-            )
+                    for (const table of tables) {
+                        const safeTable = sanitizeIdentifier(table)
 
-            for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
-                        ? `'${value.replace(/'/g, "''")}'`
-                        : value
-                )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
-            }
+                        // Get schema (safe)
+                        const schemaResult = await executeOperation(
+                            [
+                                {
+                                    sql: "SELECT sql FROM sqlite_master WHERE type='table' AND name=?;",
+                                    params: [safeTable],
+                                },
+                            ],
+                            dataSource,
+                            config
+                        )
 
-            dumpContent += '\n'
-        }
+                        if (schemaResult.length) {
+                            const schema = schemaResult[0].sql
+                            controller.enqueue(
+                                encoder.encode(
+                                    `\n-- Table: ${safeTable}\n${schema};\n\n`
+                                )
+                            )
+                        }
 
-        // Create a Blob from the dump content
-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
+                        // Chunked data export
+                        const LIMIT = 500
+                        let offset = 0
 
-        const headers = new Headers({
-            'Content-Type': 'application/x-sqlite3',
-            'Content-Disposition': 'attachment; filename="database_dump.sql"',
+                        while (true) {
+                            const dataResult = await executeOperation(
+                                [
+                                    {
+                                        sql: `SELECT * FROM ${safeTable} LIMIT ? OFFSET ?;`,
+                                        params: [LIMIT, offset],
+                                    },
+                                ],
+                                dataSource,
+                                config
+                            )
+
+                            if (!dataResult.length) break
+
+                            for (const row of dataResult) {
+                                const values = Object.values(row)
+                                    .map(formatValue)
+                                    .join(', ')
+
+                                controller.enqueue(
+                                    encoder.encode(
+                                        `INSERT INTO ${safeTable} VALUES (${values});\n`
+                                    )
+                                )
+                            }
+
+                            offset += LIMIT
+                        }
+                    }
+
+                    // End transaction
+                    controller.enqueue(encoder.encode('\nCOMMIT;\n'))
+                    controller.close()
+                } catch (err) {
+                    controller.error(err)
+                }
+            },
         })
 
-        return new Response(blob, { headers })
+        return new Response(stream, {
+            headers: {
+                'Content-Type': 'application/sql',
+                'Content-Disposition': 'attachment; filename="database_dump.sql"',
+            },
+        })
     } catch (error: any) {
         console.error('Database Dump Error:', error)
         return createResponse(undefined, 'Failed to create database dump', 500)
