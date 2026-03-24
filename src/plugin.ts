@@ -39,6 +39,13 @@ export abstract class StarbasePlugin {
     }): Promise<any> {
         return opts.result
     }
+
+    public async beforeSync?(opts: {
+        dataSource: DataSource
+        config?: StarbaseDBConfiguration
+    }): Promise<void> {
+        throw new UnimplementedError('beforeSync')
+    }
 }
 
 export class StarbasePluginRegistry {
