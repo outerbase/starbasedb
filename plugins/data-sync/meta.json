@@ -1,0 +1,20 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_data_sync_metadata": {
+                "description": "Tracks per-table sync checkpoints and row counts"
+            },
+            "tmp_data_sync_log": {
+                "description": "Audit log of all sync runs with status and timing"
+            }
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}

@@ -12,6 +12,11 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { DataSyncPlugin } from '../plugins/data-sync'
+import {
+    PostgresSyncAdapter,
+    MySQLSyncAdapter,
+} from '../plugins/data-sync/adapter'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -211,6 +216,25 @@ export default {
 
             const interfacePlugin = new InterfacePlugin()
 
+            // Build the data sync plugin when an external source is configured.
+            // The adapter is chosen based on the external database dialect.
+            const dataSyncAdapter = dataSource.external
+                ? dataSource.external.dialect === 'mysql'
+                    ? new MySQLSyncAdapter()
+                    : new PostgresSyncAdapter()
+                : undefined
+
+            const dataSyncPlugin = dataSyncAdapter
+                ? new DataSyncPlugin({
+                      adapter: dataSyncAdapter,
+                      config: {
+                          tables: [],
+                          intervalMs: 60_000,
+                          batchSize: 1000,
+                      },
+                  })
+                : undefined
+
             const plugins = [
                 webSocketPlugin,
                 new StudioPlugin({
@@ -226,6 +250,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                ...(dataSyncPlugin ? [dataSyncPlugin] : []),
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
