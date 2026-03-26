@@ -196,8 +196,10 @@ export async function executeQuery(opts: {
     isRaw: boolean
     dataSource: DataSource
     config: StarbaseDBConfiguration
+    /** When true, bypasses the allowlist check for internal/system queries (e.g. PRAGMA table_info). */
+    isInternal?: boolean
 }): Promise<QueryResponse> {
-    let { sql, params, isRaw, dataSource, config } = opts
+    let { sql, params, isRaw, dataSource, config, isInternal } = opts
 
     if (!dataSource) {
         console.error('Data source not found.')
@@ -205,12 +207,15 @@ export async function executeQuery(opts: {
     }
 
     // If the allowlist feature is enabled, we should verify the query is allowed before proceeding.
-    await isQueryAllowed({
-        sql: sql,
-        isEnabled: config?.features?.allowlist ?? false,
-        dataSource,
-        config,
-    })
+    // Internal/system queries (e.g. PRAGMA table_info used by LiteREST) bypass the allowlist.
+    if (!isInternal) {
+        await isQueryAllowed({
+            sql: sql,
+            isEnabled: config?.features?.allowlist ?? false,
+            dataSource,
+            config,
+        })
+    }
 
     // If the row level security feature is enabled, we should apply our policies to this SQL statement.
     sql = await applyRLS({
