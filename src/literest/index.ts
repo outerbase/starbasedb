@@ -70,6 +70,7 @@ export class LiteREST {
             isRaw: false,
             dataSource: this.dataSource,
             config: this.config,
+            isInternal: true,
         })) as any[]
 
         let pkColumns = []
