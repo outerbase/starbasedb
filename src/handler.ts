@@ -38,8 +38,12 @@ type HonoContext = {
             executeTransaction: typeof executeTransaction
         }
     }
+    // Bindings tam burada, Variables ile aynı seviyede olmalı
+    Bindings: {
+        DUMP_BUCKET: R2Bucket
+        DATABASE_DURABLE_OBJECT: DurableObjectNamespace
+    }
 }
-
 export class StarbaseDB {
     private dataSource: DataSource
     private config: StarbaseDBConfiguration
@@ -80,7 +84,6 @@ export class StarbaseDB {
             })
             return next()
         })
-
         // Initialize plugins
         const registry = new StarbasePluginRegistry({
             app: this.app,
@@ -120,8 +123,12 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
-            this.app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
+            this.app.get('/export/dump', this.isInternalSource, async (c) => {
+                return dumpDatabaseRoute(
+                    this.dataSource, 
+                    this.config, 
+                    (c.env as any).DUMP_BUCKET
+                )
             })
 
             this.app.get(

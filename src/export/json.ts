@@ -9,6 +9,7 @@ export async function exportTableToJsonRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
+        // index.ts'deki motoru kullanarak veriyi çekiyoruz
         const data = await getTableData(tableName, dataSource, config)
 
         if (data === null) {
@@ -19,9 +20,10 @@ export async function exportTableToJsonRoute(
             )
         }
 
-        // Convert the result to JSON
+        // Veriyi JSON formatına çeviriyoruz (4 boşluk ile okunabilir yaptık)
         const jsonData = JSON.stringify(data, null, 4)
 
+        // index.ts'deki motoru kullanarak dosya yanıtını oluşturuyoruz
         return createExportResponse(
             jsonData,
             `${tableName}_export.json`,

@@ -1,19 +1,26 @@
 {
-    "_components.Dd6m7Hsm.js": {
-        "file": "assets/components.Dd6m7Hsm.js",
-        "name": "components",
-        "imports": ["_vendor.DLA8GOwG.js"]
-    },
-    "_vendor.DLA8GOwG.js": {
-        "file": "assets/vendor.DLA8GOwG.js",
-        "name": "vendor"
-    },
-    "plugins/interface/pages/template/index.tsx": {
-        "file": "assets/template.Cbhlkt6E.js",
-        "name": "template",
-        "src": "plugins/interface/pages/template/index.tsx",
-        "isEntry": true,
-        "imports": ["_components.Dd6m7Hsm.js", "_vendor.DLA8GOwG.js"],
-        "css": ["assets/template.BByNnpth.css"]
-    }
+  "_components.DJoX-dHS.js": {
+    "file": "assets/components.DJoX-dHS.js",
+    "name": "components",
+    "imports": [
+      "_vendor.CbRqHIrI.js"
+    ]
+  },
+  "_vendor.CbRqHIrI.js": {
+    "file": "assets/vendor.CbRqHIrI.js",
+    "name": "vendor"
+  },
+  "plugins/interface/pages/template/index.tsx": {
+    "file": "assets/template.Dslc8cuO.js",
+    "name": "template",
+    "src": "plugins/interface/pages/template/index.tsx",
+    "isEntry": true,
+    "imports": [
+      "_components.DJoX-dHS.js",
+      "_vendor.CbRqHIrI.js"
+    ],
+    "css": [
+      "assets/template.DpE9_NbU.css"
+    ]
+  }
 }

@@ -12,40 +12,25 @@ export async function exportTableToCsvRoute(
         const data = await getTableData(tableName, dataSource, config)
 
         if (data === null) {
-            return createResponse(
-                undefined,
-                `Table '${tableName}' does not exist.`,
-                404
-            )
+            return createResponse(undefined, `Table '${tableName}' does not exist.`, 404)
         }
 
-        // Convert the result to CSV
-        let csvContent = ''
-        if (data.length > 0) {
-            // Add headers
-            csvContent += Object.keys(data[0]).join(',') + '\n'
-
-            // Add data rows
-            data.forEach((row: any) => {
-                csvContent +=
-                    Object.values(row)
-                        .map((value) => {
-                            if (
-                                typeof value === 'string' &&
-                                (value.includes(',') ||
-                                    value.includes('"') ||
-                                    value.includes('\n'))
-                            ) {
-                                return `"${value.replace(/"/g, '""')}"`
-                            }
-                            return value
-                        })
-                        .join(',') + '\n'
-            })
+        if (data.length === 0) {
+            return createExportResponse('', `${tableName}_export.csv`, 'text/csv')
         }
+
+        // CSV Başlıklarını oluştur (Tablonun sütun isimleri)
+        const headers = Object.keys(data[0]).join(',')
+        
+        // Verileri satırlara çevir (Tırnak işaretlerini düzeltir)
+        const rows = data.map((row: any) => 
+            Object.values(row).map(value => `"${String(value).replace(/"/g, '""')}"`).join(',')
+        ).join('\n')
+
+        const csvData = `${headers}\n${rows}`
 
         return createExportResponse(
-            csvContent,
+            csvData,
             `${tableName}_export.csv`,
             'text/csv'
         )

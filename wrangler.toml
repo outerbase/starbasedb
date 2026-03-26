@@ -78,3 +78,6 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+[[r2_buckets]]
+binding = 'DUMP_BUCKET' # Kodun içinden bu isimle çağıracağız
+bucket_name = 'starbase-dumps'
