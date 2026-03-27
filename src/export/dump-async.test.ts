@@ -139,6 +139,30 @@ describe('initiateDump', () => {
             initiateDump(sql, r2 as any, storage as any)
         ).rejects.toThrow(/already in progress/)
     })
+
+    it('allows a new dump when an old one has been stale for over 1 hour', async () => {
+        const sql = makeSql({
+            t: { ddl: 'CREATE TABLE t (id INTEGER)', rows: [] },
+        })
+        const r2 = makeR2Bucket()
+        const storage = makeStorage()
+
+        const { dumpId: staleId } = await initiateDump(sql, r2 as any, storage as any)
+        // Manually backdate the stale dump's startedAt to over 1 hour ago
+        const staleState = storage._store.get(`dump:${staleId}`) as any
+        staleState.startedAt = Date.now() - 61 * 60 * 1000
+        storage._store.set(`dump:${staleId}`, staleState)
+
+        // Should succeed — the stale dump gets auto-expired
+        const { dumpId: newId } = await initiateDump(sql, r2 as any, storage as any)
+        expect(newId).toBeTruthy()
+        expect(newId).not.toBe(staleId)
+
+        // Old dump should be marked as failed
+        const oldState = storage._store.get(`dump:${staleId}`) as any
+        expect(oldState.status).toBe('failed')
+        expect(oldState.error).toContain('timed out')
+    })
 })
 
 describe('processDumpChunk + getDumpStatus', () => {
@@ -192,7 +216,7 @@ describe('processDumpChunk + getDumpStatus', () => {
         // The completed object should contain INSERT statements
         const content = r2._completedObjects[key]
         expect(content).toContain('CREATE TABLE products')
-        expect(content).toContain('INSERT INTO "products"')
+        expect(content).toContain('INSERT INTO "products" ("id", "title", "price")')
         expect(content).toContain("'O''Brien''s Ale'") // escaped single quote
         expect(content).toContain('NULL') // null value
     })

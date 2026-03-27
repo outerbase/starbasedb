@@ -5,6 +5,8 @@ const MIN_MULTIPART_PART_SIZE = 5 * 1024 * 1024
 const MAX_ALARM_DURATION_MS = 20_000
 /** DO storage max value size is 128 KiB; use 64 KiB chunks for the pending buffer. */
 const STORAGE_CHUNK_SIZE = 64 * 1024
+/** Maximum time a dump can remain in 'running' state before being considered stale (1 hour). */
+const MAX_DUMP_DURATION_MS = 60 * 60 * 1_000
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -95,15 +97,25 @@ export async function initiateDump(
     storage: DurableObjectStorage,
     callbackUrl?: string
 ): Promise<{ dumpId: string }> {
-    // Reject concurrent dumps
+    // Reject concurrent dumps (auto-expire stale ones)
     const existingId = await storage.get<string>('activeDumpId')
     if (existingId) {
         const existing = await storage.get<DumpState>(`dump:${existingId}`)
         if (existing?.status === 'running') {
-            throw new Error(
-                `A dump is already in progress (id: ${existingId}). ` +
-                    `Check GET /export/dump/${existingId} for status.`
-            )
+            if (Date.now() - existing.startedAt > MAX_DUMP_DURATION_MS) {
+                await storage.put(`dump:${existingId}`, {
+                    ...existing,
+                    status: 'failed',
+                    error: 'Dump timed out after 1 hour',
+                    completedAt: Date.now(),
+                })
+                await storage.delete('activeDumpId')
+            } else {
+                throw new Error(
+                    `A dump is already in progress (id: ${existingId}). ` +
+                        `Check GET /export/dump/${existingId} for status.`
+                )
+            }
         }
     }
 
@@ -195,6 +207,9 @@ export async function processDumpChunk(
         while (currentTableIndex < state.tables.length) {
             const table = state.tables[currentTableIndex]
 
+            // Escape double-quotes in table names for use in SQL identifiers
+            const escapedTable = table.replace(/"/g, '""')
+
             // Emit DDL on the first row of each table
             if (currentOffset === 0) {
                 const ddlCursor = sql.exec<{ sql: string | null }>(
@@ -203,19 +218,22 @@ export async function processDumpChunk(
                 )
                 const ddlRows = ddlCursor.toArray()
                 if (ddlRows.length && ddlRows[0].sql) {
-                    pendingBuffer += `-- Table: ${table}\n${ddlRows[0].sql};\n`
+                    pendingBuffer += `-- Table: ${table.replace(/\n/g, ' ')}\n${ddlRows[0].sql};\n`
                 }
             }
 
             // Read rows in batches
             const dataCursor = sql.exec<Record<string, SqlStorageValue>>(
-                `SELECT * FROM "${table}" LIMIT ? OFFSET ?;`,
+                `SELECT * FROM "${escapedTable}" LIMIT ? OFFSET ?;`,
                 ROWS_PER_BATCH,
                 currentOffset
             )
             const rows = dataCursor.toArray()
 
             for (const row of rows) {
+                const columns = Object.keys(row)
+                    .map((c) => `"${c.replace(/"/g, '""')}"`)
+                    .join(', ')
                 const values = Object.values(row)
                     .map((v) => {
                         if (v === null || v === undefined) return 'NULL'
@@ -232,7 +250,7 @@ export async function processDumpChunk(
                         return `'${String(v).replace(/'/g, "''")}'`
                     })
                     .join(', ')
-                pendingBuffer += `INSERT INTO "${table}" VALUES (${values});\n`
+                pendingBuffer += `INSERT INTO "${escapedTable}" (${columns}) VALUES (${values});\n`
             }
 
             if (rows.length < ROWS_PER_BATCH) {
