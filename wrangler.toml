@@ -78,3 +78,12 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# Optional R2 bucket for async/large database dumps (issue #59).
+# When configured, POST /export/dump/async will stream the dump to R2 and return
+# a signed download URL once complete. Without this binding, the endpoint returns
+# a 501 Not Implemented error.
+# Docs: https://developers.cloudflare.com/r2/buckets/create-buckets/
+# [[r2_buckets]]
+# binding = "DUMP_BUCKET"
+# bucket_name = "your-starbasedb-dumps"

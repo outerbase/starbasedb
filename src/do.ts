@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
+import { CREATE_DUMP_JOBS_TABLE } from './export/dump-async'
 
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
@@ -63,6 +64,7 @@ export class StarbaseDBDurableObject extends DurableObject {
         this.executeQuery({ sql: allowlistStatement })
         this.executeQuery({ sql: allowlistRejectedStatement })
         this.executeQuery({ sql: rlsStatement })
+        this.executeQuery({ sql: CREATE_DUMP_JOBS_TABLE })
     }
 
     init() {

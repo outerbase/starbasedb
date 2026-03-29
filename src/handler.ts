@@ -7,6 +7,7 @@ import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
 import { dumpDatabaseRoute } from './export/dump'
+import { startDumpJobRoute, getDumpJobStatusRoute } from './export/dump-async'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
@@ -47,16 +48,19 @@ export class StarbaseDB {
     private plugins: StarbasePlugin[]
     private initialized: boolean = false
     private app: StarbaseApp
+    private r2Bucket?: R2Bucket
 
     constructor(options: {
         dataSource: DataSource
         config: StarbaseDBConfiguration
         plugins?: StarbasePlugin[]
+        r2Bucket?: R2Bucket
     }) {
         this.dataSource = options.dataSource
         this.config = options.config
         this.liteREST = new LiteREST(this.dataSource, this.config)
         this.plugins = options.plugins || []
+        this.r2Bucket = options.r2Bucket
         this.app = new Hono<HonoContext>()
 
         if (
@@ -123,6 +127,34 @@ export class StarbaseDB {
             this.app.get('/export/dump', this.isInternalSource, async () => {
                 return dumpDatabaseRoute(this.dataSource, this.config)
             })
+
+            // Async dump: start a background dump job (requires R2 binding)
+            this.app.post(
+                '/export/dump/async',
+                this.isInternalSource,
+                async (c) => {
+                    return startDumpJobRoute(
+                        c.req.raw,
+                        this.dataSource,
+                        this.config,
+                        this.r2Bucket
+                    )
+                }
+            )
+
+            // Async dump: poll status / get download URL
+            this.app.get(
+                '/export/dump/status/:jobId',
+                this.isInternalSource,
+                async (c) => {
+                    const { jobId } = c.req.param()
+                    return getDumpJobStatusRoute(
+                        jobId,
+                        this.dataSource,
+                        this.r2Bucket
+                    )
+                }
+            )
 
             this.app.get(
                 '/export/json/:tableName',
