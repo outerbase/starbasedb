@@ -56,6 +56,15 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    /**
+     * Optional R2 bucket for large async database dumps.
+     * Add to wrangler.toml:
+     *   [[r2_buckets]]
+     *   binding = "DUMP_BUCKET"
+     *   bucket_name = "your-bucket-name"
+     */
+    DUMP_BUCKET?: R2Bucket
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -232,6 +241,7 @@ export default {
                 dataSource,
                 config,
                 plugins,
+                r2Bucket: (env as any).DUMP_BUCKET as R2Bucket | undefined,
             })
 
             const preAuthRequest = await starbase.handlePreAuth(request, ctx)
