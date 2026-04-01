@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { PullReplicatorPlugin } from '../plugins/pull-replicator'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -225,6 +226,7 @@ export default {
                 cdcPlugin,
                 cronPlugin,
                 new StatsPlugin(),
+                new PullReplicatorPlugin(),
                 interfacePlugin,
             ] satisfies StarbasePlugin[]
 
