@@ -1,6 +1,25 @@
 import { DurableObject } from 'cloudflare:workers'
 
+interface Env {
+    ADMIN_AUTHORIZATION_TOKEN: string
+    CLIENT_AUTHORIZATION_TOKEN: string
+    R2_BUCKET: R2Bucket
+    [key: string]: any
+}
+
+interface DumpState {
+    taskId: string
+    tables: string[]
+    currentTableIndex: number
+    currentRowOffset: number
+    uploadId?: string
+    parts: R2UploadedPart[]
+    status: 'pending' | 'in_progress' | 'completed' | 'failed'
+    error?: string
+}
+
 export class StarbaseDBDurableObject extends DurableObject {
+    private env: Env
     // Durable storage for the SQL database
     public sql: SqlStorage
     // Durable storage for the instance
@@ -19,6 +38,7 @@ export class StarbaseDBDurableObject extends DurableObject {
      */
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env)
+        this.env = env
         this.clientAuthToken = env.CLIENT_AUTHORIZATION_TOKEN
         this.sql = ctx.storage.sql
         this.storage = ctx.storage
@@ -72,6 +92,8 @@ export class StarbaseDBDurableObject extends DurableObject {
             deleteAlarm: this.deleteAlarm.bind(this),
             getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
+            startDump: this.startDump.bind(this),
+            getInternalState: this.getInternalState.bind(this),
         }
     }
 
@@ -104,8 +126,39 @@ export class StarbaseDBDurableObject extends DurableObject {
         return this.storage.deleteAlarm(options)
     }
 
+    public async startDump(taskId: string) {
+        const state: DumpState = {
+            taskId,
+            tables: [],
+            currentTableIndex: 0,
+            currentRowOffset: 0,
+            parts: [],
+            status: 'pending',
+        }
+        await this.storage.put(`dump_state_${taskId}`, state)
+        await this.setAlarm(Date.now() + 100)
+    }
+
+    public async getInternalState(key: string) {
+        return await this.storage.get(key)
+    }
+
     async alarm() {
         try {
+            // Check for any pending/in-progress dumps
+            const allStorage = await this.storage.list({ prefix: 'dump_state_' })
+            for (const [key, value] of allStorage) {
+                const state = value as DumpState
+                if (
+                    state.status === 'pending' ||
+                    state.status === 'in_progress'
+                ) {
+                    await this.processDump(state)
+                    // If we processed a dump chunk, we might have set a new alarm.
+                    // We should still allow cron to check if it needs to run.
+                }
+            }
+
             // Fetch all the tasks that are marked to emit an event for this cycle.
             const task = (await this.executeQuery({
                 sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
@@ -145,6 +198,96 @@ export class StarbaseDBDurableObject extends DurableObject {
             } catch (retryError) {
                 console.error('Failed to set recovery alarm:', retryError)
             }
+        }
+    }
+
+    private async processDump(state: DumpState) {
+        try {
+            state.status = 'in_progress'
+            const batchSize = 1000
+            let currentContent = ''
+            const key = `dumps/${state.taskId}.sql`
+
+            if (state.tables.length === 0) {
+                const tablesResult = (await this.executeQuery({
+                    sql: "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'tmp_%';",
+                    isRaw: false,
+                })) as any[]
+                state.tables = tablesResult.map((r) => r.name)
+
+                const upload = await this.env.R2_BUCKET.createMultipartUpload(
+                    key
+                )
+                state.uploadId = upload.uploadId
+                currentContent += 'SQLite format 3\0\n'
+            }
+
+            const upload = this.env.R2_BUCKET.resumeMultipartUpload(
+                key,
+                state.uploadId!
+            )
+
+            // Process tables until we have ~5MB or finish
+            while (
+                state.currentTableIndex < state.tables.length &&
+                currentContent.length < 5 * 1024 * 1024
+            ) {
+                const table = state.tables[state.currentTableIndex]
+
+                if (state.currentRowOffset === 0) {
+                    const schemaResult = (await this.executeQuery({
+                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
+                        isRaw: false,
+                    })) as any[]
+                    if (schemaResult.length) {
+                        currentContent += `\n-- Table: ${table}\n${schemaResult[0].sql};\n\n`
+                    }
+                }
+
+                const data = (await this.executeQuery({
+                    sql: `SELECT * FROM "${table}" LIMIT ${batchSize} OFFSET ${state.currentRowOffset};`,
+                    isRaw: false,
+                })) as any[]
+
+                for (const row of data) {
+                    const values = Object.values(row).map((value) =>
+                        typeof value === 'string'
+                            ? `'${value.replace(/'/g, "''")}'`
+                            : value === null
+                              ? 'NULL'
+                              : value
+                    )
+                    currentContent += `INSERT INTO "${table}" VALUES (${values.join(', ')});\n`
+                }
+
+                state.currentRowOffset += data.length
+                if (data.length < batchSize) {
+                    state.currentTableIndex++
+                    state.currentRowOffset = 0
+                    currentContent += '\n'
+                }
+            }
+
+            if (currentContent.length > 0) {
+                const partNumber = state.parts.length + 1
+                const part = await upload.uploadPart(partNumber, currentContent)
+                state.parts.push(part)
+            }
+
+            if (state.currentTableIndex >= state.tables.length) {
+                await upload.complete(state.parts)
+                state.status = 'completed'
+            } else {
+                // Schedule next chunk
+                await this.setAlarm(Date.now() + 1000)
+            }
+
+            await this.storage.put(`dump_state_${state.taskId}`, state)
+        } catch (error: any) {
+            state.status = 'failed'
+            state.error = error.message
+            await this.storage.put(`dump_state_${state.taskId}`, state)
+            console.error('Dump failed:', error)
         }
     }
 

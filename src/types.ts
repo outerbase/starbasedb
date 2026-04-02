@@ -64,6 +64,7 @@ export type DataSource = {
     cacheTTL?: number
     registry?: StarbasePluginRegistry
     executionContext?: ExecutionContext
+    env?: any
 }
 
 export enum RegionLocationHint {

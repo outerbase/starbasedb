@@ -7,6 +7,7 @@ import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
 import { dumpDatabaseRoute } from './export/dump'
+import { dumpStatusRoute, downloadDumpRoute } from './export/status'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
@@ -123,6 +124,24 @@ export class StarbaseDB {
             this.app.get('/export/dump', this.isInternalSource, async () => {
                 return dumpDatabaseRoute(this.dataSource, this.config)
             })
+
+            this.app.get(
+                '/export/status/:taskId',
+                this.isInternalSource,
+                async (c) => {
+                    const taskId = c.req.param('taskId')
+                    return dumpStatusRoute(taskId, this.dataSource, this.config)
+                }
+            )
+
+            this.app.get(
+                '/export/download/:taskId',
+                this.isInternalSource,
+                async (c) => {
+                    const taskId = c.req.param('taskId')
+                    return downloadDumpRoute(taskId, this.dataSource.env)
+                }
+            )
 
             this.app.get(
                 '/export/json/:tableName',
