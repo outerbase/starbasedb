@@ -21,7 +21,7 @@ export async function dumpStatusRoute(
         // Actually, it's better to add a specific RPC method for internal state.
         
         // For now, let's assume we'll add getInternalState to RPC
-        const dumpState = await (dataSource.rpc as any).getInternalState(`dump_state_${taskId}`);
+        const dumpState = await dataSource.rpc.getInternalState(`dump_state_${taskId}`);
 
         if (!dumpState) {
             return createResponse(undefined, 'Task not found', 404);

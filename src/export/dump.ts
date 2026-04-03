@@ -10,7 +10,7 @@ export async function dumpDatabaseRoute(
         const taskId = crypto.randomUUID()
 
         // Call RPC to start the dump
-        await (dataSource.rpc as any).startDump(taskId)
+        await dataSource.rpc.startDump(taskId)
 
         return createResponse({ task_id: taskId }, undefined, 202)
     } catch (error: any) {
