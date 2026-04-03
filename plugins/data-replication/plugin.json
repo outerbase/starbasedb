@@ -1,0 +1,7 @@
+{
+  "id": "data-replication-plugin",
+  "name": "External Data Replicator",
+  "description": "Replicate data from external sources (Postgres, etc) to local SQLite",
+  "version": "1.0.0"
+}
+
