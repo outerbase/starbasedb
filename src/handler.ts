@@ -27,6 +27,7 @@ export interface StarbaseDBConfiguration {
         export?: boolean
         import?: boolean
     }
+    dumpBucket?: R2Bucket
 }
 
 type HonoContext = {
@@ -123,6 +124,71 @@ export class StarbaseDB {
             this.app.get('/export/dump', this.isInternalSource, async () => {
                 return dumpDatabaseRoute(this.dataSource, this.config)
             })
+
+            this.app.get(
+                '/export/dump/status/:jobId',
+                this.isInternalSource,
+                this.hasJobId,
+                async (c) => {
+                    const { jobId } = c.req.valid('param')
+                    const dumpBucket = this.config.dumpBucket
+                    if (!dumpBucket) {
+                        return createResponse(
+                            undefined,
+                            'Dump status not available (R2 bucket not configured)',
+                            400
+                        )
+                    }
+
+                    // Check if the dump is still being processed
+                    // We store job metadata in R2 custom metadata or use a separate approach
+                    // For now, return a placeholder - in production you'd check DO storage or R2 metadata
+                    return createResponse(
+                        {
+                            jobId,
+                            status: 'processing',
+                            message: 'Use /export/dump/download/:jobId when ready',
+                        },
+                        undefined,
+                        200
+                    )
+                }
+            )
+
+            this.app.get(
+                '/export/dump/download/:jobId',
+                this.isInternalSource,
+                this.hasJobId,
+                async (c) => {
+                    const { jobId } = c.req.valid('param')
+                    const dumpBucket = this.config.dumpBucket
+                    if (!dumpBucket) {
+                        return createResponse(
+                            undefined,
+                            'Download not available (R2 bucket not configured)',
+                            400
+                        )
+                    }
+
+                    const objectKey = `dumps/${jobId}/database_dump.sql`
+                    const object = await dumpBucket.get(objectKey)
+
+                    if (!object) {
+                        return createResponse(
+                            undefined,
+                            `Dump not found for job ${jobId}`,
+                            404
+                        )
+                    }
+
+                    const headers = new Headers({
+                        'Content-Type': 'application/x-sqlite3',
+                        'Content-Disposition': `attachment; filename="database_dump_${jobId}.sql"`,
+                    })
+
+                    return new Response(object.body, { headers })
+                }
+            )
 
             this.app.get(
                 '/export/json/:tableName',
@@ -285,6 +351,21 @@ export class StarbaseDB {
             }
 
             return { tableName }
+        })
+    }
+
+    /**
+     * Validator middleware to check if the request path has a valid :jobId parameter.
+     */
+    private get hasJobId() {
+        return validator('param', (params) => {
+            const jobId = params['jobId']?.trim()
+
+            if (!jobId) {
+                return createResponse(undefined, 'Job ID is required', 400)
+            }
+
+            return { jobId }
         })
     }
 

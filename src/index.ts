@@ -56,6 +56,9 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    // R2 bucket for large database dump exports
+    DUMP_BUCKET?: R2Bucket
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -191,6 +194,7 @@ export default {
                     allowlist: env.ENABLE_ALLOWLIST,
                     rls: env.ENABLE_RLS,
                 },
+                dumpBucket: env.DUMP_BUCKET,
             }
 
             const webSocketPlugin = new WebSocketPlugin()
