@@ -78,3 +78,9 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# R2 bucket for large database dump exports
+# Uncomment and configure to enable large database dumps (>30s CPU time)
+# [[r2_buckets]]
+# binding = "DUMP_BUCKET"
+# bucket_name = "starbasedb-dumps"
