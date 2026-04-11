@@ -1,13 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { exportTableToJsonRoute } from './json'
-import { getTableData, createExportResponse } from './index'
+import { tableExists, getTableDataChunked } from './index'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
 vi.mock('./index', () => ({
-    getTableData: vi.fn(),
-    createExportResponse: vi.fn(),
+    tableExists: vi.fn(),
+    getTableDataChunked: vi.fn(),
+    createStreamingExportResponse: vi.fn((stream, fileName, contentType) => {
+        const headers = new Headers({
+            'Content-Type': contentType,
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+            'Transfer-Encoding': 'chunked',
+        })
+        return new Response(stream, { headers })
+    }),
+    CHUNK_SIZE: 5000,
 }))
 
 vi.mock('../utils', () => ({
@@ -41,7 +50,7 @@ beforeEach(() => {
 
 describe('JSON Export Module', () => {
     it('should return a 404 response if table does not exist', async () => {
-        vi.mocked(getTableData).mockResolvedValue(null)
+        vi.mocked(tableExists).mockResolvedValue(false)
 
         const response = await exportTableToJsonRoute(
             'missing_table',
@@ -54,18 +63,14 @@ describe('JSON Export Module', () => {
         expect(jsonResponse.error).toBe("Table 'missing_table' does not exist.")
     })
 
-    it('should return a JSON file when table data exists', async () => {
-        const mockData = [
+    it('should return a streaming JSON file when table data exists', async () => {
+        vi.mocked(tableExists).mockResolvedValue(true)
+
+        // Fewer rows than CHUNK_SIZE -> loop breaks after first call
+        vi.mocked(getTableDataChunked).mockResolvedValueOnce([
             { id: 1, name: 'Alice' },
             { id: 2, name: 'Bob' },
-        ]
-        vi.mocked(getTableData).mockResolvedValue(mockData)
-
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-json-content', {
-                headers: { 'Content-Type': 'application/json' },
-            })
-        )
+        ])
 
         const response = await exportTableToJsonRoute(
             'users',
@@ -73,27 +78,23 @@ describe('JSON Export Module', () => {
             mockConfig
         )
 
-        expect(getTableData).toHaveBeenCalledWith(
+        expect(tableExists).toHaveBeenCalledWith(
             'users',
             mockDataSource,
             mockConfig
         )
-        expect(createExportResponse).toHaveBeenCalledWith(
-            JSON.stringify(mockData, null, 4),
-            'users_export.json',
-            'application/json'
-        )
         expect(response.headers.get('Content-Type')).toBe('application/json')
+
+        const text = await response.text()
+        expect(text).toContain('{"id":1,"name":"Alice"}')
+        expect(text).toContain('{"id":2,"name":"Bob"}')
+        expect(text.startsWith('[')).toBe(true)
+        expect(text.trimEnd().endsWith(']')).toBe(true)
     })
 
     it('should return an empty JSON array when table has no data', async () => {
-        vi.mocked(getTableData).mockResolvedValue([])
-
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-json-content', {
-                headers: { 'Content-Type': 'application/json' },
-            })
-        )
+        vi.mocked(tableExists).mockResolvedValue(true)
+        vi.mocked(getTableDataChunked).mockResolvedValueOnce([])
 
         const response = await exportTableToJsonRoute(
             'empty_table',
@@ -101,12 +102,10 @@ describe('JSON Export Module', () => {
             mockConfig
         )
 
-        expect(createExportResponse).toHaveBeenCalledWith(
-            '[]',
-            'empty_table_export.json',
-            'application/json'
-        )
         expect(response.headers.get('Content-Type')).toBe('application/json')
+
+        const text = await response.text()
+        expect(text.replace(/\s/g, '')).toBe('[]')
     })
 
     it('should escape special characters in JSON properly', async () => {
@@ -114,13 +113,8 @@ describe('JSON Export Module', () => {
             { id: 1, name: 'Sahithi "The Best"' },
             { id: 2, description: 'New\nLine' },
         ]
-        vi.mocked(getTableData).mockResolvedValue(specialCharsData)
-
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-json-content', {
-                headers: { 'Content-Type': 'application/json' },
-            })
-        )
+        vi.mocked(tableExists).mockResolvedValue(true)
+        vi.mocked(getTableDataChunked).mockResolvedValueOnce(specialCharsData)
 
         const response = await exportTableToJsonRoute(
             'special_chars',
@@ -128,19 +122,18 @@ describe('JSON Export Module', () => {
             mockConfig
         )
 
-        expect(createExportResponse).toHaveBeenCalledWith(
-            JSON.stringify(specialCharsData, null, 4),
-            'special_chars_export.json',
-            'application/json'
-        )
         expect(response.headers.get('Content-Type')).toBe('application/json')
+
+        const text = await response.text()
+        expect(text).toContain(JSON.stringify(specialCharsData[0]))
+        expect(text).toContain(JSON.stringify(specialCharsData[1]))
     })
 
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
             .mockImplementation(() => {})
-        vi.mocked(getTableData).mockRejectedValue(new Error('Database Error'))
+        vi.mocked(tableExists).mockRejectedValue(new Error('Database Error'))
 
         const response = await exportTableToJsonRoute(
             'users',

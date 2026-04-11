@@ -1,7 +1,29 @@
-import { getTableData, createExportResponse } from './index'
+import {
+    tableExists,
+    getTableDataChunked,
+    createStreamingExportResponse,
+    CHUNK_SIZE,
+} from './index'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
+
+/**
+ * Format a single value for CSV output.
+ * Wraps in double quotes and escapes inner quotes when the value contains
+ * commas, double quotes, or newlines.
+ */
+function formatCsvValue(value: unknown): string {
+    if (value === null || value === undefined) {
+        return ''
+    }
+
+    const str = String(value)
+    if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+        return `"${str.replace(/"/g, '""')}"`
+    }
+    return str
+}
 
 export async function exportTableToCsvRoute(
     tableName: string,
@@ -9,9 +31,9 @@ export async function exportTableToCsvRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        const exists = await tableExists(tableName, dataSource, config)
 
-        if (data === null) {
+        if (!exists) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,33 +41,61 @@ export async function exportTableToCsvRoute(
             )
         }
 
-        // Convert the result to CSV
-        let csvContent = ''
-        if (data.length > 0) {
-            // Add headers
-            csvContent += Object.keys(data[0]).join(',') + '\n'
+        const encoder = new TextEncoder()
+        let headerWritten = false
 
-            // Add data rows
-            data.forEach((row: any) => {
-                csvContent +=
-                    Object.values(row)
-                        .map((value) => {
-                            if (
-                                typeof value === 'string' &&
-                                (value.includes(',') ||
-                                    value.includes('"') ||
-                                    value.includes('\n'))
-                            ) {
-                                return `"${value.replace(/"/g, '""')}"`
-                            }
-                            return value
-                        })
-                        .join(',') + '\n'
-            })
-        }
+        const stream = new ReadableStream({
+            async start(controller) {
+                try {
+                    let offset = 0
 
-        return createExportResponse(
-            csvContent,
+                    while (true) {
+                        const rows = await getTableDataChunked(
+                            tableName,
+                            offset,
+                            CHUNK_SIZE,
+                            dataSource,
+                            config
+                        )
+
+                        if (!rows || rows.length === 0) {
+                            break
+                        }
+
+                        let chunk = ''
+
+                        // Write header row from first batch of results
+                        if (!headerWritten) {
+                            chunk += Object.keys(rows[0]).join(',') + '\n'
+                            headerWritten = true
+                        }
+
+                        // Write data rows
+                        for (const row of rows) {
+                            chunk +=
+                                Object.values(row)
+                                    .map(formatCsvValue)
+                                    .join(',') + '\n'
+                        }
+
+                        controller.enqueue(encoder.encode(chunk))
+
+                        if (rows.length < CHUNK_SIZE) {
+                            break
+                        }
+
+                        offset += CHUNK_SIZE
+                    }
+
+                    controller.close()
+                } catch (error) {
+                    controller.error(error)
+                }
+            },
+        })
+
+        return createStreamingExportResponse(
+            stream,
             `${tableName}_export.csv`,
             'text/csv'
         )

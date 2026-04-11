@@ -1,7 +1,38 @@
-import { executeOperation } from '.'
+import {
+    executeOperation,
+    getTableDataChunked,
+    createStreamingExportResponse,
+    CHUNK_SIZE,
+} from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
+
+/**
+ * Format a single value for a SQL INSERT statement.
+ * Handles strings (with quote escaping), nulls, binary data (as hex),
+ * and numeric types.
+ */
+function formatSqlValue(value: unknown): string {
+    if (value === null || value === undefined) {
+        return 'NULL'
+    }
+
+    if (value instanceof ArrayBuffer || value instanceof Uint8Array) {
+        const bytes =
+            value instanceof ArrayBuffer ? new Uint8Array(value) : value
+        const hex = Array.from(bytes)
+            .map((b) => b.toString(16).padStart(2, '0'))
+            .join('')
+        return `X'${hex}'`
+    }
+
+    if (typeof value === 'string') {
+        return `'${value.replace(/'/g, "''")}'`
+    }
+
+    return String(value)
+}
 
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
@@ -16,54 +47,83 @@ export async function dumpDatabaseRoute(
         )
 
         const tables = tablesResult.map((row: any) => row.name)
-        let dumpContent = 'SQLite format 3\0' // SQLite file header
 
-        // Iterate through all tables
-        for (const table of tables) {
-            // Get table schema
-            const schemaResult = await executeOperation(
-                [
-                    {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
-                    },
-                ],
-                dataSource,
-                config
-            )
+        const encoder = new TextEncoder()
+        const stream = new ReadableStream({
+            async start(controller) {
+                try {
+                    // Write SQLite header
+                    controller.enqueue(encoder.encode('SQLite format 3\0'))
 
-            if (schemaResult.length) {
-                const schema = schemaResult[0].sql
-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
-            }
+                    // Iterate through all tables
+                    for (const table of tables) {
+                        // Get table schema
+                        const schemaResult = await executeOperation(
+                            [
+                                {
+                                    sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
+                                },
+                            ],
+                            dataSource,
+                            config
+                        )
 
-            // Get table data
-            const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
-                dataSource,
-                config
-            )
+                        if (schemaResult.length) {
+                            const schema = schemaResult[0].sql
+                            controller.enqueue(
+                                encoder.encode(
+                                    `\n-- Table: ${table}\n${schema};\n\n`
+                                )
+                            )
+                        }
 
-            for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
-                        ? `'${value.replace(/'/g, "''")}'`
-                        : value
-                )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
-            }
+                        // Stream table data in chunks using LIMIT/OFFSET
+                        let offset = 0
+                        while (true) {
+                            const rows = await getTableDataChunked(
+                                table,
+                                offset,
+                                CHUNK_SIZE,
+                                dataSource,
+                                config
+                            )
 
-            dumpContent += '\n'
-        }
+                            if (!rows || rows.length === 0) {
+                                break
+                            }
 
-        // Create a Blob from the dump content
-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
+                            let chunk = ''
+                            for (const row of rows) {
+                                const values =
+                                    Object.values(row).map(formatSqlValue)
+                                chunk += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+                            }
+                            controller.enqueue(encoder.encode(chunk))
 
-        const headers = new Headers({
-            'Content-Type': 'application/x-sqlite3',
-            'Content-Disposition': 'attachment; filename="database_dump.sql"',
+                            // If we got fewer rows than the chunk size, we've
+                            // reached the end of the table
+                            if (rows.length < CHUNK_SIZE) {
+                                break
+                            }
+
+                            offset += CHUNK_SIZE
+                        }
+
+                        controller.enqueue(encoder.encode('\n'))
+                    }
+
+                    controller.close()
+                } catch (error) {
+                    controller.error(error)
+                }
+            },
         })
 
-        return new Response(blob, { headers })
+        return createStreamingExportResponse(
+            stream,
+            'database_dump.sql',
+            'application/x-sqlite3'
+        )
     } catch (error: any) {
         console.error('Database Dump Error:', error)
         return createResponse(undefined, 'Failed to create database dump', 500)
