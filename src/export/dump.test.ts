@@ -1,12 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { dumpDatabaseRoute } from './dump'
-import { executeOperation } from '.'
+import { executeOperation, getTableDataChunked } from '.'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
 vi.mock('.', () => ({
     executeOperation: vi.fn(),
+    getTableDataChunked: vi.fn(),
+    createStreamingExportResponse: vi.fn((stream, fileName, contentType) => {
+        const headers = new Headers({
+            'Content-Type': contentType,
+            'Content-Disposition': `attachment; filename="${fileName}"`,
+            'Transfer-Encoding': 'chunked',
+        })
+        return new Response(stream, { headers })
+    }),
+    CHUNK_SIZE: 5000,
 }))
 
 vi.mock('../utils', () => ({
@@ -39,19 +49,27 @@ beforeEach(() => {
 })
 
 describe('Database Dump Module', () => {
-    it('should return a database dump when tables exist', async () => {
+    it('should return a streaming database dump when tables exist', async () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }, { name: 'orders' }])
+            // schema for users
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
+            // schema for orders
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
+            ])
+
+        // Since rows.length < CHUNK_SIZE (5000), the loop breaks after
+        // the first chunk without requesting another one.
+        vi.mocked(getTableDataChunked)
+            // users data (fewer than CHUNK_SIZE rows -> done)
             .mockResolvedValueOnce([
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
             ])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
-            ])
+            // orders data (fewer than CHUNK_SIZE rows -> done)
             .mockResolvedValueOnce([
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
@@ -99,7 +117,8 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
-            .mockResolvedValueOnce([])
+
+        vi.mocked(getTableDataChunked).mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -117,7 +136,10 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
-            .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+
+        vi.mocked(getTableDataChunked).mockResolvedValueOnce([
+            { id: 1, bio: "Alice's adventure" },
+        ])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -126,6 +148,42 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             "INSERT INTO users VALUES (1, 'Alice''s adventure');"
         )
+    })
+
+    it('should handle NULL values correctly', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
+            ])
+
+        vi.mocked(getTableDataChunked).mockResolvedValueOnce([
+            { id: 1, bio: null },
+        ])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        const dumpText = await response.text()
+        expect(dumpText).toContain('INSERT INTO users VALUES (1, NULL);')
+    })
+
+    it('should handle binary data as hex literals', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'files' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE files (id INTEGER, data BLOB);' },
+            ])
+
+        const binaryData = new Uint8Array([0xde, 0xad, 0xbe, 0xef])
+
+        vi.mocked(getTableDataChunked).mockResolvedValueOnce([
+            { id: 1, data: binaryData },
+        ])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        const dumpText = await response.text()
+        expect(dumpText).toContain("INSERT INTO files VALUES (1, X'deadbeef');")
     })
 
     it('should return a 500 response when an error occurs', async () => {
