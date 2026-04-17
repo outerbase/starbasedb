@@ -12,7 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
-
+import { ReplicationPlugin } from '../plugins/replication'
 export { StarbaseDBDurableObject } from './do'
 
 const DURABLE_OBJECT_ID = 'sql-durable-object'
@@ -212,7 +212,7 @@ export default {
             const interfacePlugin = new InterfacePlugin()
 
             const plugins = [
-                webSocketPlugin,
+                webSocketPlugin,new ReplicationPlugin(cronPlugin),
                 new StudioPlugin({
                     username: env.STUDIO_USER,
                     password: env.STUDIO_PASS,
