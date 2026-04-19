@@ -1,0 +1,8 @@
+{
+    "name": "Replication Plugin",
+    "description": "Pull-based data replication from external databases into StarbaseDB SQLite",
+    "version": "1.0.0",
+    "author": "tarai-dl",
+    "category": "data",
+    "tags": ["replication", "sync", "external-database", "postgres", "mysql"]
+}
