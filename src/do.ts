@@ -1,4 +1,14 @@
 import { DurableObject } from 'cloudflare:workers'
+import {
+    processExportChunk,
+    completeExportJob,
+    failExportJob,
+    getExportJob,
+    createExportJob,
+    deliverCallback,
+} from './export/job'
+import type { DataSource } from './types'
+import type { StarbaseDBConfiguration } from './handler'
 
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
@@ -9,6 +19,8 @@ export class StarbaseDBDurableObject extends DurableObject {
     public connections = new Map<string, WebSocket>()
     // Store the client auth token for requests back to our Worker
     private clientAuthToken: string
+    // R2 bucket for export storage
+    private exportBucket?: R2Bucket
 
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
@@ -20,6 +32,7 @@ export class StarbaseDBDurableObject extends DurableObject {
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env)
         this.clientAuthToken = env.CLIENT_AUTHORIZATION_TOKEN
+        this.exportBucket = (env as any).EXPORT_BUCKET
         this.sql = ctx.storage.sql
         this.storage = ctx.storage
 
@@ -59,10 +72,31 @@ export class StarbaseDBDurableObject extends DurableObject {
             "operator" TEXT DEFAULT '='
         )`
 
+        const exportJobsStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_export_jobs (
+            id TEXT PRIMARY KEY,
+            format TEXT NOT NULL,
+            status TEXT NOT NULL,
+            target_table TEXT,
+            r2_key TEXT NOT NULL,
+            r2_upload_id TEXT,
+            current_table TEXT,
+            current_offset INTEGER DEFAULT 0,
+            total_tables INTEGER,
+            completed_tables INTEGER DEFAULT 0,
+            bytes_written INTEGER DEFAULT 0,
+            parts_uploaded TEXT DEFAULT '[]',
+            callback_url TEXT,
+            error_message TEXT,
+            created_at TEXT DEFAULT (datetime('now')),
+            completed_at TEXT
+        )`
+
         this.executeQuery({ sql: cacheStatement })
         this.executeQuery({ sql: allowlistStatement })
         this.executeQuery({ sql: allowlistRejectedStatement })
         this.executeQuery({ sql: rlsStatement })
+        this.executeQuery({ sql: exportJobsStatement })
     }
 
     init() {
@@ -72,7 +106,43 @@ export class StarbaseDBDurableObject extends DurableObject {
             deleteAlarm: this.deleteAlarm.bind(this),
             getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
+            createExportJob: this.createExportJobRPC.bind(this),
+            getExportJob: this.getExportJobRPC.bind(this),
         }
+    }
+
+    private getDataSource(): DataSource {
+        return {
+            rpc: this.init(),
+            source: 'internal' as const,
+            r2ExportBucket: this.exportBucket,
+        }
+    }
+
+    private getConfig(): StarbaseDBConfiguration {
+        return { role: 'admin' }
+    }
+
+    public async createExportJobRPC(opts: {
+        format: 'sql' | 'json' | 'csv'
+        targetTable?: string
+        callbackUrl?: string
+    }): Promise<{ jobId: string; statusUrl: string; estimatedTables: number }> {
+        const dataSource = this.getDataSource()
+        const config = this.getConfig()
+        return createExportJob({
+            format: opts.format,
+            targetTable: opts.targetTable,
+            callbackUrl: opts.callbackUrl,
+            dataSource,
+            config,
+        })
+    }
+
+    public async getExportJobRPC(jobId: string) {
+        const dataSource = this.getDataSource()
+        const config = this.getConfig()
+        return getExportJob(jobId, dataSource, config)
     }
 
     public async getAlarm(): Promise<number | null> {
@@ -106,7 +176,85 @@ export class StarbaseDBDurableObject extends DurableObject {
 
     async alarm() {
         try {
-            // Fetch all the tasks that are marked to emit an event for this cycle.
+            const dataSource = this.getDataSource()
+            const config = this.getConfig()
+
+            // Check for stuck export jobs (>10 min)
+            const stuckJobs = (await this.executeQuery({
+                sql: `SELECT id FROM tmp_export_jobs WHERE status = 'in_progress' AND created_at < datetime('now', '-10 minutes')`,
+                isRaw: false,
+            })) as Record<string, SqlStorageValue>[]
+
+            for (const stuckJob of stuckJobs) {
+                await failExportJob({
+                    jobId: stuckJob.id as string,
+                    errorMessage: 'Export job timed out after 10 minutes',
+                    dataSource,
+                    config,
+                })
+                const failedJob = await getExportJob(
+                    stuckJob.id as string,
+                    dataSource,
+                    config
+                )
+                if (failedJob) {
+                    await deliverCallback({
+                        job: failedJob,
+                    })
+                }
+            }
+
+            // Check for pending or in_progress export jobs
+            const exportJobs = (await this.executeQuery({
+                sql: `SELECT id FROM tmp_export_jobs WHERE status IN ('pending', 'in_progress') ORDER BY created_at ASC LIMIT 1`,
+                isRaw: false,
+            })) as Record<string, SqlStorageValue>[]
+
+            if (exportJobs.length > 0) {
+                const jobId = exportJobs[0].id as string
+                try {
+                    const hasMore = await processExportChunk({
+                        jobId,
+                        dataSource,
+                        config,
+                    })
+
+                    if (hasMore) {
+                        await this.setAlarm(Date.now() + 100)
+                    } else {
+                        await completeExportJob({
+                            jobId,
+                            dataSource,
+                            config,
+                        })
+                        const completedJob = await getExportJob(
+                            jobId,
+                            dataSource,
+                            config
+                        )
+                        if (completedJob) {
+                            await deliverCallback({
+                                job: completedJob,
+                                downloadUrl: `/export/jobs/${jobId}/download`,
+                            })
+                        }
+                    }
+                } catch (error) {
+                    console.error('Export chunk processing error:', error)
+                    // Retry after 60 seconds
+                    try {
+                        await this.setAlarm(Date.now() + 60000)
+                    } catch (retryError) {
+                        console.error(
+                            'Failed to set export retry alarm:',
+                            retryError
+                        )
+                    }
+                }
+                return
+            }
+
+            // Existing cron task processing
             const task = (await this.executeQuery({
                 sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
                 isRaw: false,
@@ -129,7 +277,6 @@ export class StarbaseDBDurableObject extends DurableObject {
             } catch (error) {
                 console.error('Failed to call the alarm/cron callback:', error)
 
-                // If the callback fails, we should try to reschedule to prevent the chain from breaking
                 try {
                     await this.setAlarm(Date.now() + 60000)
                 } catch (retryError) {
@@ -139,7 +286,6 @@ export class StarbaseDBDurableObject extends DurableObject {
         } catch (e) {
             console.error('There was an error processing an alarm: ', e)
 
-            // Try to recover by scheduling a retry in 1 minute
             try {
                 await this.setAlarm(Date.now() + 60000)
             } catch (retryError) {
