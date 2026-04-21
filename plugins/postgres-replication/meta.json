@@ -1,0 +1,20 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_pg_replication_config": {
+                "description": "Stores replication configuration for each source-target table pair"
+            },
+            "tmp_pg_replication_log": {
+                "description": "Audit log of sync operations with status and row counts"
+            }
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
