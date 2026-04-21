@@ -32,6 +32,7 @@
   <li><strong><a href="https://starbasedb.hashnode.space/default-guide/rest-api/introduction">REST API Support</a></strong> automatically included for interacting with your tables</li>
   <li><strong><a href="https://github.com/Brayden/starbasedb/edit/main/README.md#deploy-a-starbasedb">Database Interface</a></strong> included out of the box deployed with your Cloudflare Worker</li>
   <li><strong><a href="https://starbasedb.hashnode.space/default-guide/import-export/sql-dump">Import & Export Data</a></strong> to import & extract your schema and data into a local `.sql`, `.json` or `.csv` file</li>
+  <li><strong>Async Export for Large Databases</strong> background chunked export via Durable Object alarms with R2 storage for databases that exceed the 30-second timeout</li>
   <li><strong><a href="https://github.com/Brayden/starbasedb/pull/26">Bindable Microservices</a></strong> via templates to kickstart development and own the logic (e.g. user authentication)</li>
   <li><strong><a href="https://starbasedb.hashnode.space/default-guide/introduction/connect-external-database">Connect to External Databases</a></strong> such as Postgres and MySQL and access it with the methods above</li>
   <li><strong>Scale-to-zero Compute</strong> to reduce costs when your database is not in use</li>
@@ -240,6 +241,58 @@ You can request a `database_dump.sql` file that exports your database schema and
 curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
 --header 'Authorization: Bearer ABC123' \
 --output database_dump.sql
+</code>
+</pre>
+
+<h3>Async Export (Large Databases)</h3>
+<p>For large databases that may exceed the 30-second request timeout, use the async export endpoint. This processes the export in the background using Durable Object alarms and stores the result in R2.</p>
+
+<p><strong>Requirements:</strong> An R2 bucket binding named <code>EXPORT_BUCKET</code> must be configured in your <code>wrangler.toml</code>.</p>
+
+<h4>Start an Async Export</h4>
+<pre>
+<code>
+curl --location --request POST 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
+--header 'Content-Type: application/json' \
+--header 'Authorization: Bearer ABC123' \
+--data-raw '{
+    "async": true,
+    "format": "sql",
+    "callbackUrl": "https://your-webhook.com/export-done"
+}'
+</code>
+</pre>
+
+<p>Response (202 Accepted):</p>
+<pre>
+<code>
+{
+    "result": {
+        "jobId": "export_20240101-170000_abc123",
+        "status": "pending",
+        "statusUrl": "/export/jobs/export_20240101-170000_abc123",
+        "estimatedTables": 15
+    }
+}
+</code>
+</pre>
+
+<p>Supported formats: <code>sql</code>, <code>json</code>, <code>csv</code></p>
+
+<h4>Check Export Job Status</h4>
+<pre>
+<code>
+curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/jobs/YOUR-JOB-ID' \
+--header 'Authorization: Bearer ABC123'
+</code>
+</pre>
+
+<h4>Download Completed Export</h4>
+<pre>
+<code>
+curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/jobs/YOUR-JOB-ID/download' \
+--header 'Authorization: Bearer ABC123' \
+--output export_file.sql
 </code>
 </pre>
 
