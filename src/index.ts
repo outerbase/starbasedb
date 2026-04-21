@@ -11,6 +11,7 @@ import { ChangeDataCapturePlugin } from '../plugins/cdc'
 import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
+import { DataReplicationPlugin } from '../plugins/data-replication'
 import { InterfacePlugin } from '../plugins/interface'
 
 export { StarbaseDBDurableObject } from './do'
@@ -209,6 +210,7 @@ export default {
                 // Include cron event code here
             }, ctx)
 
+            const replicationPlugin = new DataReplicationPlugin({ stub })
             const interfacePlugin = new InterfacePlugin()
 
             const plugins = [
@@ -224,6 +226,7 @@ export default {
                 new QueryLogPlugin({ ctx }),
                 cdcPlugin,
                 cronPlugin,
+                replicationPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
             ] satisfies StarbasePlugin[]
