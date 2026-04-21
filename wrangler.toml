@@ -75,6 +75,10 @@ ENABLE_RLS = 0
 AUTH_ALGORITHM = "RS256"
 AUTH_JWKS_ENDPOINT = ""
 
+[[r2_buckets]]
+binding = "EXPORT_BUCKET"
+bucket_name = "starbasedb-exports"
+
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
