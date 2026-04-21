@@ -38,6 +38,7 @@
         "@tailwindcss/vite": "^4.0.6",
         "@types/pg": "^8.11.10",
         "@vitest/coverage-istanbul": "2.1.8",
+        "fast-check": "^4.7.0",
         "husky": "^9.1.7",
         "lint-staged": "^15.2.11",
         "postcss": "^8",
