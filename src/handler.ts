@@ -6,7 +6,12 @@ import { DataSource } from './types'
 import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
-import { dumpDatabaseRoute } from './export/dump'
+import {
+    dumpDatabaseRoute,
+    asyncDumpDatabaseRoute,
+    getExportJobRoute,
+    downloadExportJobRoute,
+} from './export/dump'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
@@ -123,6 +128,40 @@ export class StarbaseDB {
             this.app.get('/export/dump', this.isInternalSource, async () => {
                 return dumpDatabaseRoute(this.dataSource, this.config)
             })
+
+            this.app.post('/export/dump', this.isInternalSource, async (c) => {
+                return asyncDumpDatabaseRoute(
+                    c.req.raw,
+                    this.dataSource,
+                    this.config
+                )
+            })
+
+            this.app.get(
+                '/export/jobs/:jobId',
+                this.isInternalSource,
+                async (c) => {
+                    const jobId = c.req.param('jobId')
+                    return getExportJobRoute(
+                        jobId,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
+
+            this.app.get(
+                '/export/jobs/:jobId/download',
+                this.isInternalSource,
+                async (c) => {
+                    const jobId = c.req.param('jobId')
+                    return downloadExportJobRoute(
+                        jobId,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
 
             this.app.get(
                 '/export/json/:tableName',
