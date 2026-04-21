@@ -112,29 +112,60 @@ export class StarbaseDBDurableObject extends DurableObject {
                 isRaw: false,
             })) as Record<string, SqlStorageValue>[]
 
-            if (!task.length) {
-                return
+            if (task.length) {
+                try {
+                    const firstTask = task[0]
+                    await fetch(`${firstTask.callback_host}/cron/callback`, {
+                        method: 'POST',
+                        headers: {
+                            Authorization: `Bearer ${this.clientAuthToken}`,
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify(task ?? []),
+                    })
+                } catch (error) {
+                    console.error(
+                        'Failed to call the alarm/cron callback:',
+                        error
+                    )
+
+                    // If the callback fails, we should try to reschedule to prevent the chain from breaking
+                    try {
+                        await this.setAlarm(Date.now() + 60000)
+                    } catch (retryError) {
+                        console.error(
+                            'Failed to set recovery alarm:',
+                            retryError
+                        )
+                    }
+                }
             }
 
+            // Trigger replication callback
             try {
-                const firstTask = task[0]
-                await fetch(`${firstTask.callback_host}/cron/callback`, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${this.clientAuthToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(task ?? []),
-                })
-            } catch (error) {
-                console.error('Failed to call the alarm/cron callback:', error)
+                const replicationConfigs = (await this.executeQuery({
+                    sql: 'SELECT callback_host FROM tmp_replication_configs WHERE enabled = 1 AND callback_host IS NOT NULL LIMIT 1',
+                    isRaw: false,
+                })) as Record<string, SqlStorageValue>[]
 
-                // If the callback fails, we should try to reschedule to prevent the chain from breaking
-                try {
-                    await this.setAlarm(Date.now() + 60000)
-                } catch (retryError) {
-                    console.error('Failed to set recovery alarm:', retryError)
+                if (
+                    replicationConfigs.length &&
+                    replicationConfigs[0].callback_host
+                ) {
+                    await fetch(
+                        `${replicationConfigs[0].callback_host}/replication/callback`,
+                        {
+                            method: 'POST',
+                            headers: {
+                                Authorization: `Bearer ${this.clientAuthToken}`,
+                                'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({ trigger: 'alarm' }),
+                        }
+                    )
                 }
+            } catch (error) {
+                console.error('Failed to call replication callback:', error)
             }
         } catch (e) {
             console.error('There was an error processing an alarm: ', e)

@@ -234,7 +234,10 @@ function applyRLSToAst(ast: any): void {
 
     const tablesWithRules: Record<string, string[]> = {}
     policies.forEach((policy) => {
-        const tbl = normalizeIdentifier(policy.condition.left.table)
+        let tbl = normalizeIdentifier(policy.condition.left.table)
+        if (tbl.includes('.')) {
+            tbl = tbl.split('.')[1]
+        }
         if (!tablesWithRules[tbl]) {
             tablesWithRules[tbl] = []
         }
@@ -264,13 +267,35 @@ function applyRLSToAst(ast: any): void {
     } else {
         // SELECT or DELETE
         tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
-                }
-                return tableName
-            }) || []
+            ast.from
+                ?.filter((fromTable: any) => fromTable.table)
+                .map((fromTable: any) => {
+                    let tableName = normalizeIdentifier(fromTable.table)
+                    if (tableName.includes('.')) {
+                        tableName = tableName.split('.')[1]
+                    }
+                    return tableName
+                }) || []
+
+        // Also extract tables from JOIN clauses
+        ast.from?.forEach((fromTable: any) => {
+            if (fromTable.join) {
+                const joins = Array.isArray(fromTable.join)
+                    ? fromTable.join
+                    : [fromTable.join]
+                joins.forEach((joinItem: any) => {
+                    if (joinItem.table) {
+                        let joinTableName = normalizeIdentifier(joinItem.table)
+                        if (joinTableName.includes('.')) {
+                            joinTableName = joinTableName.split('.')[1]
+                        }
+                        if (!tables.includes(joinTableName)) {
+                            tables.push(joinTableName)
+                        }
+                    }
+                })
+            }
+        })
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
@@ -292,7 +317,11 @@ function applyRLSToAst(ast: any): void {
         )
         .forEach(({ action, condition }) => {
             const targetTable = normalizeIdentifier(condition.left.table)
-            const isTargetTable = tables.includes(targetTable)
+            let normalizedTarget = targetTable
+            if (normalizedTarget.includes('.')) {
+                normalizedTarget = normalizedTarget.split('.')[1]
+            }
+            const isTargetTable = tables.includes(normalizedTarget)
 
             if (!isTargetTable) return
 
@@ -349,7 +378,9 @@ function applyRLSToAst(ast: any): void {
         })
 
     ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
+        if (fromItem.expr && fromItem.expr.ast) {
+            applyRLSToAst(fromItem.expr.ast)
+        } else if (fromItem.expr && fromItem.expr.type === 'select') {
             applyRLSToAst(fromItem.expr)
         }
 
@@ -359,7 +390,9 @@ function applyRLSToAst(ast: any): void {
                 ? fromItem.join
                 : [fromItem]
             joins.forEach((joinItem: any) => {
-                if (joinItem.expr && joinItem.expr.type === 'select') {
+                if (joinItem.expr && joinItem.expr.ast) {
+                    applyRLSToAst(joinItem.expr.ast)
+                } else if (joinItem.expr && joinItem.expr.type === 'select') {
                     applyRLSToAst(joinItem.expr)
                 }
             })

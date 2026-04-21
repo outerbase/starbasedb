@@ -1,0 +1,32 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_replication_configs": [
+                "id",
+                "source_table",
+                "target_table",
+                "columns",
+                "cursor_column",
+                "interval_seconds",
+                "enabled",
+                "callback_host",
+                "created_at",
+                "updated_at"
+            ],
+            "tmp_replication_state": [
+                "config_id",
+                "last_cursor_value",
+                "last_sync_at",
+                "rows_synced"
+            ]
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
