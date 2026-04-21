@@ -301,7 +301,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
         const configs = (await this.dataSource.rpc.executeQuery({
             sql: 'SELECT * FROM tmp_replication_configs WHERE id = ?',
             params: [configId],
-        })) as ReplicationConfig[]
+        })) as unknown as ReplicationConfig[]
 
         if (!configs.length) {
             throw new Error(`Configuration ${configId} not found`)
@@ -338,7 +338,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
             const states = (await this.dataSource.rpc.executeQuery({
                 sql: 'SELECT * FROM tmp_replication_state WHERE config_id = ?',
                 params: [configId],
-            })) as SyncState[]
+            })) as unknown as SyncState[]
 
             if (states.length && states[0].last_cursor_value !== null) {
                 lastCursor = states[0].last_cursor_value
@@ -378,7 +378,9 @@ export class DataReplicationPlugin extends StarbasePlugin {
         const configs = (await this.dataSource.rpc.executeQuery({
             sql: 'SELECT c.*, s.last_sync_at FROM tmp_replication_configs c LEFT JOIN tmp_replication_state s ON c.id = s.config_id WHERE c.enabled = 1',
             params: [],
-        })) as (ReplicationConfig & { last_sync_at: string | null })[]
+        })) as unknown as (ReplicationConfig & {
+            last_sync_at: string | null
+        })[]
 
         if (!configs.length) return
 
@@ -466,7 +468,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
                 const created = (await this.dataSource!.rpc.executeQuery({
                     sql: 'SELECT * FROM tmp_replication_configs ORDER BY id DESC LIMIT 1',
                     params: [],
-                })) as ReplicationConfig[]
+                })) as unknown as ReplicationConfig[]
 
                 return createResponse(created[0], undefined, 200)
             } catch (error: any) {
@@ -483,7 +485,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
             const configs = (await this.dataSource!.rpc.executeQuery({
                 sql: 'SELECT * FROM tmp_replication_configs',
                 params: [],
-            })) as ReplicationConfig[]
+            })) as unknown as ReplicationConfig[]
 
             return createResponse(configs, undefined, 200)
         })
@@ -494,7 +496,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
             const configs = (await this.dataSource!.rpc.executeQuery({
                 sql: 'SELECT * FROM tmp_replication_configs WHERE id = ?',
                 params: [id],
-            })) as ReplicationConfig[]
+            })) as unknown as ReplicationConfig[]
 
             if (!configs.length) {
                 return createResponse(undefined, 'Configuration not found', 404)
@@ -513,7 +515,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
                 const existing = (await this.dataSource!.rpc.executeQuery({
                     sql: 'SELECT * FROM tmp_replication_configs WHERE id = ?',
                     params: [id],
-                })) as ReplicationConfig[]
+                })) as unknown as ReplicationConfig[]
 
                 if (!existing.length) {
                     return createResponse(
@@ -569,7 +571,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
                 const updated = (await this.dataSource!.rpc.executeQuery({
                     sql: 'SELECT * FROM tmp_replication_configs WHERE id = ?',
                     params: [id],
-                })) as ReplicationConfig[]
+                })) as unknown as ReplicationConfig[]
 
                 return createResponse(updated[0], undefined, 200)
             } catch (error: any) {
@@ -588,7 +590,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
             const existing = (await this.dataSource!.rpc.executeQuery({
                 sql: 'SELECT * FROM tmp_replication_configs WHERE id = ?',
                 params: [id],
-            })) as ReplicationConfig[]
+            })) as unknown as ReplicationConfig[]
 
             if (!existing.length) {
                 return createResponse(undefined, 'Configuration not found', 404)
@@ -611,7 +613,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
             const states = (await this.dataSource!.rpc.executeQuery({
                 sql: 'SELECT * FROM tmp_replication_state',
                 params: [],
-            })) as SyncState[]
+            })) as unknown as SyncState[]
 
             return createResponse(states, undefined, 200)
         })
@@ -622,7 +624,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
             const states = (await this.dataSource!.rpc.executeQuery({
                 sql: 'SELECT * FROM tmp_replication_state WHERE config_id = ?',
                 params: [id],
-            })) as SyncState[]
+            })) as unknown as SyncState[]
 
             if (!states.length) {
                 return createResponse(undefined, 'Sync state not found', 404)
@@ -638,7 +640,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
             const configs = (await this.dataSource!.rpc.executeQuery({
                 sql: 'SELECT * FROM tmp_replication_configs WHERE id = ?',
                 params: [id],
-            })) as ReplicationConfig[]
+            })) as unknown as ReplicationConfig[]
 
             if (!configs.length) {
                 return createResponse(undefined, 'Configuration not found', 404)
@@ -667,7 +669,7 @@ export class DataReplicationPlugin extends StarbasePlugin {
                           WHERE c.enabled = 1
                           AND (s.last_sync_at IS NULL OR datetime(s.last_sync_at, '+' || c.interval_seconds || ' seconds') <= datetime('now'))`,
                     params: [],
-                })) as ReplicationConfig[]
+                })) as unknown as ReplicationConfig[]
 
                 const results: SyncResult[] = []
 
