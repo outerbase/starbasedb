@@ -32,21 +32,26 @@ export class ReplicationPlugin extends StarbasePlugin {
     }
 
     private async performSync(config: StarbaseDBConfiguration) {
+        return this.syncData()
+    }
+
+    public async syncData() {
         console.log(
             `Starting replication for ${this.replicationConfig.targetTable}`
         )
 
         try {
             // 1. Fetch data from source
-            // In a real implementation, this would use fetch() to a database proxy
-            // or a specialized database client that works in Cloudflare Workers.
             const sourceData = await this.fetchFromSource()
+
+            if (!sourceData || sourceData.length === 0) {
+                return { success: true, rowsSynced: 0 }
+            }
 
             // 2. Transform data based on mapping
             const transformedData = this.transformData(sourceData)
 
-            // 3. Batch insert into Starbase
-            // We can use the 'app' context or a direct DB call if available
+            // 3. Success (In a real implementation, we would execute an INSERT/UPSERT here)
             return {
                 success: true,
                 rowsSynced: transformedData.length,
@@ -60,9 +65,9 @@ export class ReplicationPlugin extends StarbasePlugin {
         }
     }
 
-    private async fetchFromSource(): Promise<any[]> {
+    public async fetchFromSource(): Promise<any[]> {
         // Placeholder for actual data fetching logic
-        // Example: fetch(this.replicationConfig.sourceUrl, { ... })
+        // For testing purposes, we can override this or mock the fetch call
         return []
     }
 
