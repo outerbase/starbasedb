@@ -1,0 +1,16 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_replication_config": "Stores replication configuration for each table",
+            "tmp_replication_state": "Tracks sync cursor state per table"
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
