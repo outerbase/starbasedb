@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { ReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -209,6 +210,12 @@ export default {
                 // Include cron event code here
             }, ctx)
 
+            const replicationPlugin = new ReplicationPlugin()
+
+            replicationPlugin.onEvent(async ({ source_table, target_table, rows_synced }) => {
+                // Include replication event code here
+            }, ctx)
+
             const interfacePlugin = new InterfacePlugin()
 
             const plugins = [
@@ -224,6 +231,7 @@ export default {
                 new QueryLogPlugin({ ctx }),
                 cdcPlugin,
                 cronPlugin,
+                replicationPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
             ] satisfies StarbasePlugin[]
