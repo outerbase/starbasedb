@@ -1,0 +1,22 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_data_sync_metadata": [
+                "table_name",
+                "tracking_col",
+                "last_value",
+                "synced_at"
+            ]
+        },
+        "secrets": {},
+        "variables": {
+            "syncIntervalMs": "How often to poll for new rows (milliseconds, default 300000)"
+        }
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
