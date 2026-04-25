@@ -6,3 +6,9 @@ export { ChangeDataCapturePlugin } from '../plugins/cdc'
 export { QueryLogPlugin } from '../plugins/query-log'
 export { ResendPlugin } from '../plugins/resend'
 export { ClerkPlugin } from '../plugins/clerk'
+export {
+    DataSyncPlugin,
+    DataSyncAdapter,
+    PostgresSync,
+    MySQLSync,
+} from '../plugins/data-sync'
