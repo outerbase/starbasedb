@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { DataReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -211,6 +212,27 @@ export default {
 
             const interfacePlugin = new InterfacePlugin()
 
+            // To enable pull replication from an external source into the internal DO SQLite,
+            // instantiate DataReplicationPlugin and add it to the plugins array below.
+            // Example:
+            //
+            // const replicationPlugin = new DataReplicationPlugin({
+            //     cronPlugin,
+            //     config: {
+            //         tables: [
+            //             {
+            //                 sourceTable: 'users',
+            //                 schema: 'public',
+            //                 cursorColumn: 'id',
+            //                 cursorType: 'integer',
+            //             },
+            //         ],
+            //         batchSize: 1000,
+            //         cronSchedule: '*/5 * * * *',
+            //         callbackHost: 'https://your-worker.workers.dev',
+            //     },
+            // })
+
             const plugins = [
                 webSocketPlugin,
                 new StudioPlugin({
@@ -226,6 +248,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                // replicationPlugin,  // uncomment after configuring above
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
