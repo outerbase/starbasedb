@@ -97,7 +97,7 @@ describe('PostgresSyncAdapter', () => {
                 limit: 1000,
             })
             expect(sql).toContain('"public"."users"')
-            expect(sql).toContain('LIMIT $1')
+            expect(sql).toContain('LIMIT ?')
             expect(sql).not.toContain('WHERE')
             expect(params).toEqual([1000])
         })
@@ -111,8 +111,8 @@ describe('PostgresSyncAdapter', () => {
                 limit: 500,
             })
             expect(sql).toContain('WHERE')
-            expect(sql).toContain('"id" > $1')
-            expect(sql).toContain('LIMIT $2')
+            expect(sql).toContain('"id" > ?')
+            expect(sql).toContain('LIMIT ?')
             expect(params).toEqual(['42', 500])
         })
 

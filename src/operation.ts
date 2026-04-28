@@ -351,6 +351,8 @@ export async function executeTransaction(opts: {
 async function createSDKPostgresConnection(
     source: RemoteSource
 ): Promise<ConnectionDetails> {
+    const isLocalhost =
+        source.host === 'localhost' || source.host === '127.0.0.1'
     const client = new PostgreSQLConnection(
         new PgClient({
             host: source.host,
@@ -358,6 +360,7 @@ async function createSDKPostgresConnection(
             user: source.user,
             password: source.password,
             database: source.database,
+            ssl: isLocalhost ? false : { rejectUnauthorized: false },
         })
     )
 
@@ -447,7 +450,9 @@ export async function executeSDKQuery(opts: {
     let connection: SqlConnection
 
     if (external.dialect === 'postgresql') {
-        const { database } = await createSDKPostgresConnection(external)
+        const { database } = await createSDKPostgresConnection(
+            external as import('./types').PostgresSource
+        )
         connection = database
     } else if (external.dialect === 'mysql') {
         const { database } = await createSDKMySQLConnection(external)

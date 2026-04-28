@@ -9,7 +9,7 @@ export class PostgresSyncAdapter extends SyncAdapter {
         return {
             sql: `SELECT column_name, data_type, is_nullable
                   FROM information_schema.columns
-                  WHERE table_schema = $1 AND table_name = $2
+                  WHERE table_schema = ? AND table_name = ?
                   ORDER BY ordinal_position`,
             params: [schema, table] as unknown[],
         }
@@ -32,13 +32,13 @@ export class PostgresSyncAdapter extends SyncAdapter {
 
         if (cursorValue === null) {
             return {
-                sql: `SELECT ${cols} FROM ${tbl} ORDER BY "${cursorColumn}" ASC LIMIT $1`,
+                sql: `SELECT ${cols} FROM ${tbl} ORDER BY "${cursorColumn}" ASC LIMIT ?`,
                 params: [limit] as unknown[],
             }
         }
 
         return {
-            sql: `SELECT ${cols} FROM ${tbl} WHERE "${cursorColumn}" > $1 ORDER BY "${cursorColumn}" ASC LIMIT $2`,
+            sql: `SELECT ${cols} FROM ${tbl} WHERE "${cursorColumn}" > ? ORDER BY "${cursorColumn}" ASC LIMIT ?`,
             params: [cursorValue, limit] as unknown[],
         }
     }
