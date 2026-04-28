@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { DataReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -211,6 +212,22 @@ export default {
 
             const interfacePlugin = new InterfacePlugin()
 
+            const replicationPlugin = new DataReplicationPlugin({
+                cronPlugin,
+                config: {
+                    // Add tables to replicate from your external source:
+                    // {
+                    //   sourceTable: 'users',
+                    //   schema: 'public',       // optional, defaults to 'public'
+                    //   cursorColumn: 'id',     // column used for incremental sync
+                    //   cursorType: 'integer',  // 'integer' or 'timestamp'
+                    //   targetTable: 'my_users' // optional, defaults to schema_table
+                    // }
+                    tables: [],
+                    batchSize: 1000,
+                },
+            })
+
             const plugins = [
                 webSocketPlugin,
                 new StudioPlugin({
@@ -226,6 +243,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                replicationPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
