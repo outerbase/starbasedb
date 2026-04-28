@@ -270,6 +270,15 @@ describe('SyncAdapter shared helpers', () => {
             expect(sql).toContain('"email" TEXT')
             expect(sql).toContain('"meta" TEXT')
         })
+
+        it('should add PRIMARY KEY clause when primaryKey is provided', () => {
+            const sql = adapter.buildCreateTableSQL(
+                'public_users',
+                [{ name: 'id', sourceType: 'integer', sqliteType: 'INTEGER', nullable: false }],
+                'id'
+            )
+            expect(sql).toContain('PRIMARY KEY ("id")')
+        })
     })
 
     describe('buildUpsertSQL()', () => {

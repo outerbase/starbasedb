@@ -416,7 +416,8 @@ export class DataReplicationPlugin extends StarbasePlugin {
                         adapter.parseIntrospectResult(introspectRows)
                     const createSQL = adapter.buildCreateTableSQL(
                         targetTable,
-                        columnDefs
+                        columnDefs,
+                        tableConfig.cursorColumn
                     )
                     await dataSource.rpc.executeQuery({
                         sql: createSQL,

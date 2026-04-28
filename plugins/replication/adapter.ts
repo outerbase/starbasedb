@@ -33,7 +33,8 @@ export abstract class SyncAdapter {
 
     buildCreateTableSQL(
         targetTable: string,
-        columns: ColumnDefinition[]
+        columns: ColumnDefinition[],
+        primaryKey?: string
     ): string {
         const cols = columns
             .map(
@@ -41,7 +42,8 @@ export abstract class SyncAdapter {
                     `"${c.name}" ${c.sqliteType}${c.nullable ? '' : ' NOT NULL'}`
             )
             .join(', ')
-        return `CREATE TABLE IF NOT EXISTS "${targetTable}" (${cols})`
+        const pkClause = primaryKey ? `, PRIMARY KEY ("${primaryKey}")` : ''
+        return `CREATE TABLE IF NOT EXISTS "${targetTable}" (${cols}${pkClause})`
     }
 
     buildUpsertSQL(
