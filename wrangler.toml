@@ -78,3 +78,13 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# Replication plugin: pulls rows from an external Postgres or MySQL into the
+# DO SQLite on a per-table interval. Uncomment the trigger and set the
+# REPLICATION_CONFIG_JSON var below to enable. The trigger only needs to fire
+# at the smallest interval you want; the plugin handles per-table cadence.
+# [triggers]
+# crons = ["* * * * *"]
+
+# Example REPLICATION_CONFIG_JSON (single line, escape as needed):
+# REPLICATION_CONFIG_JSON = '[{"source":"postgres","conn":"postgres://user:pass@host/db","intervalSeconds":300,"tables":[{"name":"users","watermark":"updated_at","primaryKey":"id"},{"name":"events","watermark":"id"}]}]'

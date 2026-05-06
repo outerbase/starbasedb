@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { ReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -56,7 +57,23 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    // External-to-internal replication. JSON-encoded ReplicationConfig.
+    // See plugins/replication/README.md for the schema. Empty/unset disables.
+    REPLICATION_CONFIG_JSON?: string
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
+}
+
+// Module-level singleton so the scheduled() handler and fetch() handler share
+// the same plugin instance (and cached adapter pool).
+let sharedReplicationPlugin: ReplicationPlugin | undefined
+function getReplicationPlugin(env: Env): ReplicationPlugin {
+    if (!sharedReplicationPlugin) {
+        sharedReplicationPlugin = new ReplicationPlugin({
+            env: { REPLICATION_CONFIG_JSON: env.REPLICATION_CONFIG_JSON },
+        })
+    }
+    return sharedReplicationPlugin
 }
 
 export default {
@@ -210,6 +227,7 @@ export default {
             }, ctx)
 
             const interfacePlugin = new InterfacePlugin()
+            const replicationPlugin = getReplicationPlugin(env)
 
             const plugins = [
                 webSocketPlugin,
@@ -226,6 +244,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                replicationPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
@@ -328,6 +347,45 @@ export default {
                     : 'An unexpected error occurred',
                 400
             )
+        }
+    },
+
+    /**
+     * Cloudflare Cron Trigger entry point. The plugin owns its own
+     * per-table scheduling on top of this — the trigger only needs to fire
+     * often enough to be the smallest interval the user wants. A single
+     * `* * * * *` trigger is sufficient for any user-configured interval
+     * down to one minute.
+     *
+     * If `REPLICATION_CONFIG_JSON` is unset this is a no-op.
+     */
+    async scheduled(_event, env, ctx): Promise<void> {
+        if (!env.REPLICATION_CONFIG_JSON) return
+
+        const region = env.REGION ?? RegionLocationHint.AUTO
+        const id = env.DATABASE_DURABLE_OBJECT.idFromName(DURABLE_OBJECT_ID)
+        const stub =
+            region !== RegionLocationHint.AUTO
+                ? env.DATABASE_DURABLE_OBJECT.get(id, {
+                      locationHint: region as DurableObjectLocationHint,
+                  })
+                : env.DATABASE_DURABLE_OBJECT.get(id)
+        const rpc = await stub.init()
+
+        const dataSource: DataSource = {
+            rpc,
+            source: 'internal',
+            executionContext: ctx,
+        }
+
+        const plugin = getReplicationPlugin(env)
+        try {
+            const summary = await plugin.runDue(dataSource)
+            if (summary.length > 0) {
+                console.log('replication: tick complete', summary)
+            }
+        } catch (e) {
+            console.error('replication: scheduled tick failed', e)
         }
     },
 } satisfies ExportedHandler<Env>
