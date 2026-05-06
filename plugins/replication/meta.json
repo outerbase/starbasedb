@@ -1,0 +1,18 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "_starbase_replication_watermarks": "Per-table cursor used by append-only pulls.",
+            "_starbase_replication_log": "Audit trail of replication ticks (rows pulled, ok, error)."
+        },
+        "secrets": {},
+        "variables": {
+            "REPLICATION_CONFIG_JSON": "JSON-encoded array of source configs. See plugins/replication/README.md."
+        }
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
