@@ -1,13 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { exportTableToCsvRoute } from './csv'
-import { getTableData, createExportResponse } from './index'
-import { createResponse } from '../utils'
+import { executeOperation } from './index'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
 vi.mock('./index', () => ({
-    getTableData: vi.fn(),
-    createExportResponse: vi.fn(),
+    executeOperation: vi.fn(),
 }))
 
 vi.mock('../utils', () => ({
@@ -24,14 +22,12 @@ let mockDataSource: DataSource
 let mockConfig: StarbaseDBConfiguration
 
 beforeEach(() => {
-    vi.clearAllMocks()
+    vi.mocked(executeOperation).mockReset()
 
     mockDataSource = {
         source: 'external',
         external: { dialect: 'sqlite' },
-        rpc: {
-            executeQuery: vi.fn(),
-        },
+        rpc: { executeQuery: vi.fn() },
     } as any
 
     mockConfig = {
@@ -41,40 +37,39 @@ beforeEach(() => {
     }
 })
 
-describe('CSV Export Module', () => {
-    it('should return a CSV file when table data exists', async () => {
-        vi.mocked(getTableData).mockResolvedValue([
+/** Wire up an existence check followed by a single page of rows. */
+function mockTable(rows: any[]) {
+    vi.mocked(executeOperation)
+        .mockResolvedValueOnce([{ name: 'tbl' }]) // existence check
+        .mockResolvedValueOnce(rows) // first page
+        .mockResolvedValueOnce([]) // empty page → terminate
+}
+
+describe('CSV Export Module (streaming)', () => {
+    it('streams a CSV body when the table has data', async () => {
+        mockTable([
             { id: 1, name: 'Alice', age: 30 },
             { id: 2, name: 'Bob', age: 25 },
         ])
 
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-csv-content', {
-                headers: { 'Content-Type': 'text/csv' },
-            })
-        )
-
         const response = await exportTableToCsvRoute(
             'users',
             mockDataSource,
             mockConfig
         )
 
-        expect(getTableData).toHaveBeenCalledWith(
-            'users',
-            mockDataSource,
-            mockConfig
-        )
-        expect(createExportResponse).toHaveBeenCalledWith(
-            'id,name,age\n1,Alice,30\n2,Bob,25\n',
-            'users_export.csv',
-            'text/csv'
-        )
         expect(response.headers.get('Content-Type')).toBe('text/csv')
+        expect(response.headers.get('Content-Disposition')).toBe(
+            'attachment; filename="users_export.csv"'
+        )
+        expect(response.body).toBeInstanceOf(ReadableStream)
+
+        const csv = await response.text()
+        expect(csv).toBe('id,name,age\n1,Alice,30\n2,Bob,25\n')
     })
 
-    it('should return 404 if table does not exist', async () => {
-        vi.mocked(getTableData).mockResolvedValue(null)
+    it('returns 404 if the table does not exist', async () => {
+        vi.mocked(executeOperation).mockResolvedValueOnce([])
 
         const response = await exportTableToCsvRoute(
             'non_existent_table',
@@ -82,27 +77,19 @@ describe('CSV Export Module', () => {
             mockConfig
         )
 
-        expect(getTableData).toHaveBeenCalledWith(
-            'non_existent_table',
-            mockDataSource,
-            mockConfig
-        )
         expect(response.status).toBe(404)
-
-        const jsonResponse: { error: string } = await response.json()
-        expect(jsonResponse.error).toBe(
-            "Table 'non_existent_table' does not exist."
-        )
+        const body = (await response.json()) as { error: string }
+        expect(body.error).toBe("Table 'non_existent_table' does not exist.")
     })
 
-    it('should handle empty table (return only headers)', async () => {
-        vi.mocked(getTableData).mockResolvedValue([])
-
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-csv-content', {
-                headers: { 'Content-Type': 'text/csv' },
-            })
-        )
+    it('emits an empty body for an empty table (header row needs at least one row to know columns)', async () => {
+        mockTable([])
+        // mockTable above queues two empty pages after the existence check; we
+        // only need one. Re-prime to keep this scenario explicit.
+        vi.mocked(executeOperation).mockReset()
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'empty_table' }])
+            .mockResolvedValueOnce([])
 
         const response = await exportTableToCsvRoute(
             'empty_table',
@@ -110,29 +97,13 @@ describe('CSV Export Module', () => {
             mockConfig
         )
 
-        expect(getTableData).toHaveBeenCalledWith(
-            'empty_table',
-            mockDataSource,
-            mockConfig
-        )
-        expect(createExportResponse).toHaveBeenCalledWith(
-            '',
-            'empty_table_export.csv',
-            'text/csv'
-        )
         expect(response.headers.get('Content-Type')).toBe('text/csv')
+        const csv = await response.text()
+        expect(csv).toBe('')
     })
 
-    it('should escape commas and quotes in CSV values', async () => {
-        vi.mocked(getTableData).mockResolvedValue([
-            { id: 1, name: 'Sahithi, is', bio: 'my forever "penguin"' },
-        ])
-
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-csv-content', {
-                headers: { 'Content-Type': 'text/csv' },
-            })
-        )
+    it('quotes fields containing commas, quotes, or newlines', async () => {
+        mockTable([{ id: 1, name: 'Sahithi, is', bio: 'my forever "penguin"' }])
 
         const response = await exportTableToCsvRoute(
             'special_chars',
@@ -140,19 +111,17 @@ describe('CSV Export Module', () => {
             mockConfig
         )
 
-        expect(createExportResponse).toHaveBeenCalledWith(
-            'id,name,bio\n1,"Sahithi, is","my forever ""penguin"""\n',
-            'special_chars_export.csv',
-            'text/csv'
+        const csv = await response.text()
+        expect(csv).toBe(
+            'id,name,bio\n1,"Sahithi, is","my forever ""penguin"""\n'
         )
-        expect(response.headers.get('Content-Type')).toBe('text/csv')
     })
 
-    it('should return 500 on an unexpected error', async () => {
-        const consoleErrorMock = vi
-            .spyOn(console, 'error')
-            .mockImplementation(() => {})
-        vi.mocked(getTableData).mockRejectedValue(new Error('Database Error'))
+    it('returns 500 when the existence check throws', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+        vi.mocked(executeOperation).mockRejectedValueOnce(
+            new Error('Database Error')
+        )
 
         const response = await exportTableToCsvRoute(
             'users',
@@ -161,7 +130,26 @@ describe('CSV Export Module', () => {
         )
 
         expect(response.status).toBe(500)
-        const jsonResponse: { error: string } = await response.json()
-        expect(jsonResponse.error).toBe('Failed to export table to CSV')
+        const body = (await response.json()) as { error: string }
+        expect(body.error).toBe('Failed to export table to CSV')
+    })
+
+    it('reads pages with parameterised LIMIT/OFFSET', async () => {
+        mockTable([{ id: 1, name: 'Alice' }])
+
+        const response = await exportTableToCsvRoute(
+            'users',
+            mockDataSource,
+            mockConfig
+        )
+        await response.text()
+
+        const dataCall = vi
+            .mocked(executeOperation)
+            .mock.calls.find(([qs]) =>
+                qs[0].sql.startsWith('SELECT * FROM users')
+            )
+        expect(dataCall).toBeDefined()
+        expect(dataCall![0][0].sql).toContain('LIMIT ? OFFSET ?')
     })
 })
