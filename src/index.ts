@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { ReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -95,8 +96,8 @@ export default {
             const stub =
                 region !== RegionLocationHint.AUTO
                     ? env.DATABASE_DURABLE_OBJECT.get(id, {
-                          locationHint: region as DurableObjectLocationHint,
-                      })
+                        locationHint: region as DurableObjectLocationHint,
+                    })
                     : env.DATABASE_DURABLE_OBJECT.get(id)
 
             // Create a new RPC Session on the Durable Object.
@@ -113,8 +114,8 @@ export default {
                     ? source.toLowerCase().trim() === 'external'
                         ? 'external'
                         : source.toLowerCase().trim() === 'hyperdrive'
-                          ? 'hyperdrive'
-                          : 'internal'
+                            ? 'hyperdrive'
+                            : 'internal'
                     : 'internal',
                 cache: request.headers.get('X-Starbase-Cache') === 'true',
                 context: {
@@ -201,9 +202,17 @@ export default {
                 events: [],
             })
 
+            const replicationPlugin = new ReplicationPlugin({
+                replicas: [],
+                authToken: '',
+                // tables: ['users', 'orders'],
+            })
+
             cdcPlugin.onEvent(async ({ action, schema, table, data }) => {
                 // Include change data capture code here
             }, ctx)
+
+            replicationPlugin.onEvent(ctx)
 
             cronPlugin.onEvent(async ({ name, cron_tab, payload }) => {
                 // Include cron event code here
@@ -226,6 +235,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                replicationPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
