@@ -1,0 +1,23 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_replication_state": [
+                "source_id",
+                "table_name",
+                "cursor_column",
+                "cursor_value",
+                "last_run_ts",
+                "last_rows_pulled",
+                "last_error"
+            ]
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
