@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { DataReplicatorPlugin } from '../plugins/data-replicator'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -211,6 +212,8 @@ export default {
 
             const interfacePlugin = new InterfacePlugin()
 
+            const dataReplicatorPlugin = new DataReplicatorPlugin()
+
             const plugins = [
                 webSocketPlugin,
                 new StudioPlugin({
@@ -226,7 +229,13 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                dataReplicatorPlugin,
             ] satisfies StarbasePlugin[]
+
+            // Start data replication if external source is configured
+            if (dataSource.external) {
+                dataReplicatorPlugin.startReplication()
+            }
 
             const starbase = new StarbaseDB({
                 dataSource,

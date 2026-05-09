@@ -1,0 +1,8 @@
+
+{
+  "name": "Data Replicator",
+  "description": "Replicates data from external sources to the internal SQLite database",
+  "author": "OpenHands",
+  "version": "1.0.0",
+  "icon": "sync"
+}
