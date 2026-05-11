@@ -6,6 +6,9 @@ compatibility_date = "2024-09-25"
 bindings = [{ name = "DATABASE_DURABLE_OBJECT", class_name = "DatabaseDurableObject", script_name = "starbasedb" }]
 
 [vars]
+EXTERNAL_DB_URL = ""
+EXTERNAL_DB_TOKEN = ""
+EXTERNAL_DB_ID = ""
 REQUIRE_EMAIL_CONFIRM = 1
 PASSWORD_REQUIRE_LENGTH = 13
 PASSWORD_REQUIRE_UPPERCASE = true
