@@ -128,6 +128,36 @@ describe('Database Dump Module', () => {
         )
     })
 
+    it('should serialize null values as SQL NULL in insert statements', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, nickname TEXT);' },
+            ])
+            .mockResolvedValueOnce([{ id: 1, nickname: null }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        expect(response).toBeInstanceOf(Response)
+        const dumpText = await response.text()
+        expect(dumpText).toContain('INSERT INTO users VALUES (1, NULL);')
+        expect(dumpText).not.toContain('INSERT INTO users VALUES (1, );')
+    })
+
+    it('should still dump table data when a schema lookup returns no rows', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([])
+            .mockResolvedValueOnce([{ id: 1, name: 'Alice' }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        expect(response).toBeInstanceOf(Response)
+        const dumpText = await response.text()
+        expect(dumpText).not.toContain('-- Table: users')
+        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
+    })
+
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
