@@ -136,6 +136,57 @@ describe('JSON Export Module', () => {
         expect(response.headers.get('Content-Type')).toBe('application/json')
     })
 
+    it('should preserve nulls, booleans, and nested values in the exported JSON body', async () => {
+        const mixedData = [
+            {
+                id: 1,
+                active: false,
+                metadata: { role: 'owner', tags: ['alpha'] },
+                deleted_at: null,
+            },
+        ]
+        vi.mocked(getTableData).mockResolvedValue(mixedData)
+
+        vi.mocked(createExportResponse).mockReturnValue(
+            new Response('mocked-json-content', {
+                headers: { 'Content-Type': 'application/json' },
+            })
+        )
+
+        const response = await exportTableToJsonRoute(
+            'mixed_values',
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(createExportResponse).toHaveBeenCalledWith(
+            JSON.stringify(mixedData, null, 4),
+            'mixed_values_export.json',
+            'application/json'
+        )
+        expect(response.headers.get('Content-Type')).toBe('application/json')
+    })
+
+    it('should return 500 if JSON serialization fails', async () => {
+        const consoleErrorMock = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        vi.mocked(getTableData).mockResolvedValue([
+            { id: 1, unsupported: BigInt(1) },
+        ])
+
+        const response = await exportTableToJsonRoute(
+            'unsupported_values',
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(500)
+        const jsonResponse = (await response.json()) as { error: string }
+        expect(jsonResponse.error).toBe('Failed to export table to JSON')
+        expect(consoleErrorMock).toHaveBeenCalled()
+    })
+
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')

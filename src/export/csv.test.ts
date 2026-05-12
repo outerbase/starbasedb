@@ -148,6 +148,36 @@ describe('CSV Export Module', () => {
         expect(response.headers.get('Content-Type')).toBe('text/csv')
     })
 
+    it('should escape multiline CSV values and keep primitive values stable', async () => {
+        vi.mocked(getTableData).mockResolvedValue([
+            {
+                id: 1,
+                active: true,
+                notes: 'first line\nsecond line',
+                nullable: null,
+            },
+        ])
+
+        vi.mocked(createExportResponse).mockReturnValue(
+            new Response('mocked-csv-content', {
+                headers: { 'Content-Type': 'text/csv' },
+            })
+        )
+
+        const response = await exportTableToCsvRoute(
+            'mixed_values',
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(createExportResponse).toHaveBeenCalledWith(
+            'id,active,notes,nullable\n1,true,"first line\nsecond line",\n',
+            'mixed_values_export.csv',
+            'text/csv'
+        )
+        expect(response.headers.get('Content-Type')).toBe('text/csv')
+    })
+
     it('should return 500 on an unexpected error', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')

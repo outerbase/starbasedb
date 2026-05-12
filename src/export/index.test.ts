@@ -60,6 +60,24 @@ describe('Database Operations Module', () => {
 
             expect(result).toEqual([])
         })
+
+        it('should return non-array transaction results unchanged', async () => {
+            const rawResult = [{ changes: 2, lastInsertRowid: 42 }]
+            vi.mocked(executeTransaction).mockResolvedValue(rawResult)
+
+            const result = await executeOperation(
+                [
+                    {
+                        sql: 'INSERT INTO users (name) VALUES (?)',
+                        params: ['Alice'],
+                    },
+                ],
+                mockDataSource,
+                mockConfig
+            )
+
+            expect(result).toEqual(rawResult)
+        })
     })
 
     describe('getTableData', () => {
@@ -81,6 +99,23 @@ describe('Database Operations Module', () => {
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
             ])
+            expect(executeTransaction).toHaveBeenNthCalledWith(1, {
+                queries: [
+                    {
+                        sql: `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
+                        params: ['users'],
+                    },
+                ],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
+            expect(executeTransaction).toHaveBeenNthCalledWith(2, {
+                queries: [{ sql: 'SELECT * FROM users;' }],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
         })
 
         it('should return null if table does not exist', async () => {
@@ -153,6 +188,16 @@ describe('Database Operations Module', () => {
             expect(response.headers.get('Content-Disposition')).toBe(
                 'attachment; filename="notes.txt"'
             )
+        })
+
+        it('should preserve exported response body content', async () => {
+            const response = createExportResponse(
+                '{"ok":true}',
+                'payload.json',
+                'application/json'
+            )
+
+            expect(await response.text()).toBe('{"ok":true}')
         })
     })
 })
