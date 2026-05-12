@@ -38,6 +38,18 @@ describe('Cache Module', () => {
             expect(result).toBeNull()
         })
 
+        it('should return null for internal data sources', async () => {
+            mockDataSource.source = 'internal'
+            const result = await beforeQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
+                dataSource: mockDataSource,
+            })
+
+            expect(result).toBeNull()
+            expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
+        })
+
         it('should return null if query has parameters', async () => {
             const result = await beforeQueryCache({
                 sql: 'SELECT * FROM users WHERE id = ?',
@@ -51,6 +63,18 @@ describe('Cache Module', () => {
         it('should return null if query is modifying (INSERT)', async () => {
             const result = await beforeQueryCache({
                 sql: 'INSERT INTO users (id, name) VALUES (1, "John")',
+                params: [],
+                dataSource: mockDataSource,
+            })
+
+            expect(result).toBeNull()
+        })
+
+        it('should return null if no cached row is present', async () => {
+            vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([])
+
+            const result = await beforeQueryCache({
+                sql: 'SELECT * FROM users',
                 params: [],
                 dataSource: mockDataSource,
             })
@@ -111,6 +135,19 @@ describe('Cache Module', () => {
             expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
         })
 
+        it('should not cache internal data source results', async () => {
+            mockDataSource.source = 'internal'
+
+            await afterQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
+                result: [{ id: 1, name: 'John' }],
+                dataSource: mockDataSource,
+            })
+
+            expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
+        })
+
         it('should not cache modifying queries (UPDATE)', async () => {
             await afterQueryCache({
                 sql: 'UPDATE users SET name = "John" WHERE id = 1',
@@ -152,6 +189,30 @@ describe('Cache Module', () => {
                 sql: 'UPDATE tmp_cache SET timestamp = ?, results = ? WHERE query = ?',
                 params: expect.any(Array),
             })
+        })
+
+        it('should swallow cache write errors', async () => {
+            const consoleErrorSpy = vi
+                .spyOn(console, 'error')
+                .mockImplementation(() => {})
+            vi.mocked(mockDataSource.rpc.executeQuery).mockRejectedValue(
+                new Error('database unavailable')
+            )
+
+            const result = await afterQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
+                result: [{ id: 1, name: 'John' }],
+                dataSource: mockDataSource,
+            })
+
+            expect(result).toBeUndefined()
+            expect(consoleErrorSpy).toHaveBeenCalledWith(
+                'Error in cache operation:',
+                expect.any(Error)
+            )
+
+            consoleErrorSpy.mockRestore()
         })
     })
 
