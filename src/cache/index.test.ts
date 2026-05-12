@@ -25,6 +25,10 @@ beforeEach(() => {
     } as any
 })
 
+function mockExecuteQuery() {
+    return mockDataSource.rpc.executeQuery as any
+}
+
 describe('Cache Module', () => {
     describe('beforeQueryCache', () => {
         it('should return null if caching is disabled', async () => {
@@ -36,6 +40,19 @@ describe('Cache Module', () => {
             })
 
             expect(result).toBeNull()
+        })
+
+        it('should return null without querying cache for internal data sources', async () => {
+            mockDataSource.source = 'internal'
+
+            const result = await beforeQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
+                dataSource: mockDataSource,
+            })
+
+            expect(result).toBeNull()
+            expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
         })
 
         it('should return null if query has parameters', async () => {
@@ -65,9 +82,7 @@ describe('Cache Module', () => {
                 results: JSON.stringify([{ id: 1, name: 'John' }]),
             }
 
-            vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
-                cachedData,
-            ])
+            mockExecuteQuery().mockResolvedValue([cachedData])
 
             const result = await beforeQueryCache({
                 sql: 'SELECT * FROM users',
@@ -85,9 +100,7 @@ describe('Cache Module', () => {
                 results: JSON.stringify([{ id: 1, name: 'John' }]),
             }
 
-            vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
-                expiredCache,
-            ])
+            mockExecuteQuery().mockResolvedValue([expiredCache])
 
             const result = await beforeQueryCache({
                 sql: 'SELECT * FROM users',
@@ -97,6 +110,22 @@ describe('Cache Module', () => {
 
             expect(result).toBeNull()
         })
+
+        it('should return null on cache miss', async () => {
+            mockExecuteQuery().mockResolvedValue([])
+
+            const result = await beforeQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
+                dataSource: mockDataSource,
+            })
+
+            expect(result).toBeNull()
+            expect(mockDataSource.rpc.executeQuery).toHaveBeenCalledWith({
+                sql: 'SELECT timestamp, ttl, query, results FROM tmp_cache WHERE query = ?',
+                params: ['SELECT * FROM users'],
+            })
+        })
     })
 
     describe('afterQueryCache', () => {
@@ -104,6 +133,32 @@ describe('Cache Module', () => {
             await afterQueryCache({
                 sql: 'SELECT * FROM users WHERE id = ?',
                 params: [1],
+                result: [{ id: 1, name: 'John' }],
+                dataSource: mockDataSource,
+            })
+
+            expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
+        })
+
+        it('should not cache internal data source queries', async () => {
+            mockDataSource.source = 'internal'
+
+            await afterQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
+                result: [{ id: 1, name: 'John' }],
+                dataSource: mockDataSource,
+            })
+
+            expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
+        })
+
+        it('should not cache when cache is disabled', async () => {
+            mockDataSource.cache = false
+
+            await afterQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
                 result: [{ id: 1, name: 'John' }],
                 dataSource: mockDataSource,
             })
@@ -123,7 +178,7 @@ describe('Cache Module', () => {
         })
 
         it('should insert new cache entry if query not cached', async () => {
-            vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([])
+            mockExecuteQuery().mockResolvedValue([])
 
             await afterQueryCache({
                 sql: 'SELECT * FROM users',
@@ -138,8 +193,30 @@ describe('Cache Module', () => {
             })
         })
 
+        it('should insert cache entries with the default ttl when none is configured', async () => {
+            delete mockDataSource.cacheTTL
+            mockExecuteQuery().mockResolvedValue([])
+
+            await afterQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
+                result: [{ id: 1, name: 'John' }],
+                dataSource: mockDataSource,
+            })
+
+            expect(mockDataSource.rpc.executeQuery).toHaveBeenLastCalledWith({
+                sql: 'INSERT INTO tmp_cache (timestamp, ttl, query, results) VALUES (?, ?, ?, ?)',
+                params: [
+                    expect.any(Number),
+                    60,
+                    'SELECT * FROM users',
+                    JSON.stringify([{ id: 1, name: 'John' }]),
+                ],
+            })
+        })
+
         it('should update existing cache entry', async () => {
-            vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([1])
+            mockExecuteQuery().mockResolvedValue([1])
 
             await afterQueryCache({
                 sql: 'SELECT * FROM users',
@@ -152,6 +229,28 @@ describe('Cache Module', () => {
                 sql: 'UPDATE tmp_cache SET timestamp = ?, results = ? WHERE query = ?',
                 params: expect.any(Array),
             })
+        })
+
+        it('should swallow cache write errors after logging them', async () => {
+            const consoleError = vi
+                .spyOn(console, 'error')
+                .mockImplementation(() => undefined)
+            mockExecuteQuery().mockRejectedValue(new Error('cache unavailable'))
+
+            await expect(
+                afterQueryCache({
+                    sql: 'SELECT * FROM users',
+                    params: [],
+                    result: [{ id: 1, name: 'John' }],
+                    dataSource: mockDataSource,
+                })
+            ).resolves.toBeUndefined()
+
+            expect(consoleError).toHaveBeenCalledWith(
+                'Error in cache operation:',
+                expect.any(Error)
+            )
+            consoleError.mockRestore()
         })
     })
 
