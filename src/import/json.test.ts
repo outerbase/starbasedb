@@ -106,6 +106,33 @@ describe('JSON Import Module', () => {
         expect(jsonResponse.error).toBe('No file uploaded')
     })
 
+    it('should return 400 when uploaded JSON file is invalid', async () => {
+        const formData = new FormData()
+        formData.append(
+            'file',
+            new File(['not json'], 'users.json', { type: 'application/json' })
+        )
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: formData,
+        })
+
+        const response = await importTableFromJsonRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(400)
+        const jsonResponse = (await response.json()) as {
+            error?: string
+            result?: any
+        }
+        expect(jsonResponse.error).toBe('Invalid file upload')
+    })
+
     it('should successfully insert valid JSON data into the table', async () => {
         vi.mocked(executeOperation).mockResolvedValue([])
 
@@ -133,6 +160,81 @@ describe('JSON Import Module', () => {
         }
         expect(jsonResponse.result.message).toBe(
             'Imported 2 out of 2 records successfully. 0 records failed.'
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            1,
+            [{ sql: 'INSERT INTO users (id, name) VALUES (?, ?)', params: [1, 'Alice'] }],
+            mockDataSource,
+            mockConfig
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            2,
+            [{ sql: 'INSERT INTO users (id, name) VALUES (?, ?)', params: [2, 'Bob'] }],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should apply column mapping before inserting records', async () => {
+        vi.mocked(executeOperation).mockResolvedValue([])
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                data: [{ user_id: 1, full_name: 'Alice' }],
+                columnMapping: {
+                    user_id: 'id',
+                    full_name: 'name',
+                },
+            }),
+        })
+
+        const response = await importTableFromJsonRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(200)
+        expect(executeOperation).toHaveBeenCalledWith(
+            [{ sql: 'INSERT INTO users (id, name) VALUES (?, ?)', params: [1, 'Alice'] }],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should import JSON data uploaded as multipart form-data', async () => {
+        vi.mocked(executeOperation).mockResolvedValue([])
+
+        const formData = new FormData()
+        formData.append(
+            'file',
+            new File(
+                [JSON.stringify({ data: [{ id: 1, name: 'Alice' }] })],
+                'users.json',
+                { type: 'application/json' }
+            )
+        )
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: formData,
+        })
+
+        const response = await importTableFromJsonRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(200)
+        expect(executeOperation).toHaveBeenCalledWith(
+            [{ sql: 'INSERT INTO users (id, name) VALUES (?, ?)', params: [1, 'Alice'] }],
+            mockDataSource,
+            mockConfig
         )
     })
 
