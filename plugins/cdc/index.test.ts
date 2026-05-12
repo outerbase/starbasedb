@@ -1,20 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { Hono } from 'hono'
 import { ChangeDataCapturePlugin } from './index'
 import { StarbaseDBConfiguration } from '../../src/handler'
-import { DataSource } from '../../src/types'
-import type { DurableObjectStub } from '@cloudflare/workers-types'
 
 const parser = new (require('node-sql-parser').Parser)()
 
 let cdcPlugin: ChangeDataCapturePlugin
-let mockDurableObjectStub: DurableObjectStub<any>
+let mockDurableObjectStub: any
 let mockConfig: StarbaseDBConfiguration
 
 beforeEach(() => {
     vi.clearAllMocks()
     mockDurableObjectStub = {
         fetch: vi.fn().mockResolvedValue(new Response('OK', { status: 200 })),
-    } as unknown as DurableObjectStub
+    }
 
     mockConfig = {
         role: 'admin',
@@ -34,7 +33,7 @@ beforeEach(() => {
     vi.clearAllMocks()
     mockDurableObjectStub = {
         fetch: vi.fn(),
-    } as any
+    }
 
     mockConfig = {
         role: 'admin',
@@ -125,6 +124,70 @@ describe('ChangeDataCapturePlugin - queryEventDetected', () => {
 
         expect(mockCallback).not.toHaveBeenCalled()
     })
+
+    it('should broadcast matching events to callbacks and the durable object', () => {
+        cdcPlugin.listeningEvents = [
+            { action: 'INSERT', schema: 'main', table: 'users' },
+        ]
+        const mockCallback = vi.fn()
+        cdcPlugin.onEvent(mockCallback)
+
+        const ast = parser.astify(
+            `INSERT INTO users (id, name) VALUES (8, 'Frank')`
+        )
+
+        cdcPlugin.queryEventDetected('INSERT', ast, [], 'session-123')
+
+        const payload = {
+            action: 'INSERT',
+            schema: 'main',
+            table: 'users',
+            data: { id: 8, name: 'Frank' },
+        }
+
+        expect(mockCallback).toHaveBeenCalledWith(payload)
+        expect(mockDurableObjectStub.fetch).toHaveBeenCalledOnce()
+
+        const request = vi.mocked(mockDurableObjectStub.fetch).mock
+            .calls[0][0] as Request
+        expect(request.url).toBe(
+            'https://example.com/socket/broadcast?sessionId=session-123'
+        )
+        expect(request.method).toBe('POST')
+    })
+
+    it('continues broadcasting when a callback throws', () => {
+        cdcPlugin.listeningEvents = [
+            { action: 'DELETE', schema: 'main', table: 'orders' },
+        ]
+        const brokenCallback = vi.fn(() => {
+            throw new Error('callback failed')
+        })
+        const workingCallback = vi.fn()
+        const consoleError = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        cdcPlugin['eventCallbacks'].push(brokenCallback, workingCallback)
+
+        const ast = parser.astify(`DELETE FROM orders WHERE id = 99`)
+
+        cdcPlugin.queryEventDetected('DELETE', ast, [])
+
+        expect(brokenCallback).toHaveBeenCalledOnce()
+        expect(workingCallback).toHaveBeenCalledWith({
+            action: 'DELETE',
+            schema: 'main',
+            table: 'orders',
+            data: { id: 99 },
+        })
+        expect(mockDurableObjectStub.fetch).toHaveBeenCalledOnce()
+        expect(consoleError).toHaveBeenCalledWith(
+            'Error in CDC event callback:',
+            expect.any(Error)
+        )
+
+        consoleError.mockRestore()
+    })
 })
 
 describe('ChangeDataCapturePlugin - onEvent', () => {
@@ -152,5 +215,157 @@ describe('ChangeDataCapturePlugin - onEvent', () => {
         cdcPlugin['eventCallbacks'].forEach((cb) => cb(eventPayload))
 
         expect(mockCallback).toHaveBeenCalledWith(eventPayload)
+    })
+
+    it('uses waitUntil for asynchronous callbacks when execution context is provided', () => {
+        const asyncResult = Promise.resolve()
+        const mockCallback = vi.fn(() => asyncResult)
+        const waitUntil = vi.fn()
+
+        cdcPlugin.onEvent(mockCallback, { waitUntil } as any)
+
+        const payload = {
+            action: 'INSERT',
+            schema: 'public',
+            table: 'users',
+            data: { id: 10 },
+        }
+        cdcPlugin['eventCallbacks'][0](payload)
+
+        expect(mockCallback).toHaveBeenCalledWith(payload)
+        expect(waitUntil).toHaveBeenCalledWith(asyncResult)
+    })
+})
+
+describe('ChangeDataCapturePlugin - afterQuery', () => {
+    it('returns the original result when no events are configured', async () => {
+        const plugin = new ChangeDataCapturePlugin({
+            stub: mockDurableObjectStub,
+            broadcastAllEvents: false,
+            events: [],
+        })
+        const result = [{ id: 1 }]
+
+        await expect(
+            plugin.afterQuery({
+                sql: `INSERT INTO users (id) VALUES (1)`,
+                result,
+                isRaw: false,
+            })
+        ).resolves.toBe(result)
+
+        expect(mockDurableObjectStub.fetch).not.toHaveBeenCalled()
+    })
+
+    it('detects INSERT statements after removing RETURNING clauses', async () => {
+        cdcPlugin.listeningEvents = [
+            { action: 'INSERT', schema: 'main', table: 'users' },
+        ]
+        const mockCallback = vi.fn()
+        cdcPlugin.onEvent(mockCallback)
+        const result = [{ id: 12, name: 'Grace' }]
+
+        await expect(
+            cdcPlugin.afterQuery({
+                sql: `INSERT INTO users (id, name) VALUES (12, 'Grace') RETURNING *`,
+                result,
+                isRaw: false,
+            })
+        ).resolves.toBe(result)
+
+        expect(mockCallback).toHaveBeenCalledWith({
+            action: 'INSERT',
+            schema: 'main',
+            table: 'users',
+            data: result,
+        })
+        expect(mockDurableObjectStub.fetch).toHaveBeenCalledOnce()
+    })
+
+    it('logs parse errors and still returns the original result', async () => {
+        const consoleError = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        const result = [{ ok: true }]
+
+        await expect(
+            cdcPlugin.afterQuery({
+                sql: `not valid sql`,
+                result,
+                isRaw: false,
+            })
+        ).resolves.toBe(result)
+
+        expect(consoleError).toHaveBeenCalledWith(
+            'Error parsing SQL in CDC plugin:',
+            'not valid sql',
+            expect.any(Error)
+        )
+        expect(mockDurableObjectStub.fetch).not.toHaveBeenCalled()
+
+        consoleError.mockRestore()
+    })
+})
+
+describe('ChangeDataCapturePlugin - register', () => {
+    it('rejects non-websocket requests to the CDC route', async () => {
+        const app = new Hono()
+        await cdcPlugin.register(app as any)
+
+        const response = await app.request('/cdc')
+
+        expect(response.status).toBe(400)
+        await expect(response.text()).resolves.toBe('Expected upgrade request')
+        expect(mockDurableObjectStub.fetch).not.toHaveBeenCalled()
+    })
+
+    it('rejects websocket subscriptions from non-admin users', async () => {
+        const app = new Hono()
+        app.use(async (c, next) => {
+            const context = c as any
+            context.set('config', { role: 'user' })
+            await next()
+        })
+        await cdcPlugin.register(app as any)
+
+        const response = await app.request('/cdc', {
+            headers: { upgrade: 'websocket' },
+        })
+
+        expect(response.status).toBe(400)
+        await expect(response.text()).resolves.toBe('Unauthorized request')
+        expect(mockDurableObjectStub.fetch).not.toHaveBeenCalled()
+    })
+
+    it('forwards admin websocket subscriptions to the durable object', async () => {
+        const randomUUID = vi
+            .spyOn(crypto, 'randomUUID')
+            .mockReturnValue('00000000-0000-4000-8000-000000000000')
+        vi.mocked(mockDurableObjectStub.fetch).mockResolvedValue(
+            new Response('upgraded', { status: 200 })
+        )
+        const app = new Hono()
+        app.use(async (c, next) => {
+            const context = c as any
+            context.set('config', { role: 'admin' })
+            await next()
+        })
+        await cdcPlugin.register(app as any)
+
+        const response = await app.request('/cdc', {
+            headers: { upgrade: 'websocket' },
+        })
+
+        expect(response.status).toBe(200)
+        expect(mockDurableObjectStub.fetch).toHaveBeenCalledOnce()
+
+        const request = vi.mocked(mockDurableObjectStub.fetch).mock
+            .calls[0][0] as Request
+        expect(request.url).toBe(
+            'https://example.com/socket?sessionId=00000000-0000-4000-8000-000000000000'
+        )
+        expect(request.method).toBe('GET')
+
+        randomUUID.mockRestore()
     })
 })
