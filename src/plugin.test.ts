@@ -92,6 +92,57 @@ describe('StarbasePlugin', () => {
 
         expect(result.sql).toBe('[B] [A] SELECT * FROM users')
     })
+
+    it('should call each beforeQuery hook once with the previous hook output', async () => {
+        const firstPlugin = new TestPlugin('FirstPlugin')
+        const secondPlugin = new TestPlugin('SecondPlugin')
+
+        const firstBeforeQuery = vi
+            .spyOn(firstPlugin, 'beforeQuery')
+            .mockResolvedValue({
+                sql: 'SELECT * FROM users WHERE active = ?',
+                params: [1],
+            })
+        const secondBeforeQuery = vi
+            .spyOn(secondPlugin, 'beforeQuery')
+            .mockResolvedValue({
+                sql: 'SELECT * FROM users WHERE active = ? LIMIT ?',
+                params: [1, 10],
+            })
+
+        const dataSource = { source: 'internal' } as DataSource
+        const config = { role: 'admin' } as StarbaseDBConfiguration
+        const registry = new StarbasePluginRegistry({
+            app: mockApp,
+            plugins: [firstPlugin, secondPlugin],
+        })
+
+        const result = await registry.beforeQuery({
+            sql: 'SELECT * FROM users',
+            params: [],
+            dataSource,
+            config,
+        })
+
+        expect(firstBeforeQuery).toHaveBeenCalledTimes(1)
+        expect(firstBeforeQuery).toHaveBeenCalledWith({
+            sql: 'SELECT * FROM users',
+            params: [],
+            dataSource,
+            config,
+        })
+        expect(secondBeforeQuery).toHaveBeenCalledTimes(1)
+        expect(secondBeforeQuery).toHaveBeenCalledWith({
+            sql: 'SELECT * FROM users WHERE active = ?',
+            params: [1],
+            dataSource,
+            config,
+        })
+        expect(result).toEqual({
+            sql: 'SELECT * FROM users WHERE active = ? LIMIT ?',
+            params: [1, 10],
+        })
+    })
 })
 
 describe('StarbasePluginRegistry', () => {
