@@ -12,6 +12,31 @@ import type { DataSource } from './types'
 import type { StarbaseDBConfiguration } from './handler'
 import type { SqlConnection } from '@outerbase/sdk/dist/connections/sql-base'
 
+const mockSdkConnection = vi.hoisted(() => ({
+    connect: vi.fn(),
+    raw: vi.fn(),
+}))
+const mockPostgresEnd = vi.hoisted(() => vi.fn())
+const mockPostgresUnsafe = vi.hoisted(() => vi.fn())
+const mockPostgresFactory = vi.hoisted(() =>
+    vi.fn(() => ({
+        unsafe: mockPostgresUnsafe,
+        end: mockPostgresEnd,
+    }))
+)
+
+vi.mock('pg', () => ({ Client: vi.fn() }))
+vi.mock('mysql2', () => ({ createConnection: vi.fn(() => ({})) }))
+vi.mock('@libsql/client/web', () => ({ createClient: vi.fn(() => ({})) }))
+vi.mock('postgres', () => ({ default: mockPostgresFactory }))
+vi.mock('@outerbase/sdk', () => ({
+    CloudflareD1Connection: vi.fn(() => mockSdkConnection),
+    MySQLConnection: vi.fn(() => mockSdkConnection),
+    PostgreSQLConnection: vi.fn(() => mockSdkConnection),
+    StarbaseConnection: vi.fn(() => mockSdkConnection),
+    TursoConnection: vi.fn(() => mockSdkConnection),
+}))
+
 // const mockSqlConnection = vi.hoisted(() => ({
 //     connect: vi.fn().mockResolvedValue(undefined),
 //     raw: vi
@@ -133,6 +158,12 @@ beforeEach(() => {
 
     vi.mocked(beforeQueryCache).mockResolvedValue(null)
     vi.mocked(afterQueryCache).mockResolvedValue(null)
+    mockSdkConnection.connect.mockResolvedValue(undefined)
+    mockSdkConnection.raw.mockResolvedValue({
+        data: [{ id: 1, name: 'SDK-Test-Result' }],
+    })
+    mockPostgresUnsafe.mockResolvedValue([{ id: 3, name: 'Hyperdrive' }])
+    mockPostgresEnd.mockResolvedValue(undefined)
     // vi.mock('./operation', () => ({
     //     createSDKPostgresConnection: vi
     //         .fn()
@@ -275,6 +306,106 @@ describe('executeQuery', () => {
 
         expect(result).toEqual([{ id: 99, name: 'Cached' }])
         expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
+    })
+
+    it('should skip cache lookup for raw queries and convert raw rows back after hooks', async () => {
+        mockDataSource.rpc.executeQuery = vi.fn().mockResolvedValue({
+            columns: ['id', 'name'],
+            rows: [
+                [1, 'Alice'],
+                [2, 'Bob'],
+            ],
+            meta: { rows_read: 2, rows_written: 0 },
+        })
+        mockDataSource.registry = {
+            beforeQuery: vi.fn(async ({ sql, params }) => ({
+                sql: `${sql} WHERE active = ?`,
+                params: [...(params ?? []), true],
+            })),
+            afterQuery: vi.fn(async ({ result }) =>
+                result.map((row: any) => ({
+                    ...row,
+                    seenByPlugin: true,
+                }))
+            ),
+        } as any
+
+        const result = await executeQuery({
+            sql: 'SELECT * FROM users',
+            params: [],
+            isRaw: true,
+            dataSource: mockDataSource,
+            config: mockConfig,
+        })
+
+        expect(beforeQueryCache).not.toHaveBeenCalled()
+        expect(afterQueryCache).not.toHaveBeenCalled()
+        expect(mockDataSource.rpc.executeQuery).toHaveBeenCalledWith({
+            sql: 'SELECT * FROM users WHERE active = ?',
+            params: [true],
+            isRaw: true,
+        })
+        expect(result).toEqual({
+            columns: ['id', 'name', 'seenByPlugin'],
+            rows: [
+                [1, 'Alice', true],
+                [2, 'Bob', true],
+            ],
+            meta: { rows_read: 2, rows_written: 0 },
+        })
+    })
+
+    it('should return empty results when an internal query returns nothing', async () => {
+        mockDataSource.rpc.executeQuery = vi.fn().mockResolvedValue(undefined)
+
+        const result = await executeQuery({
+            sql: 'SELECT * FROM missing',
+            params: undefined,
+            isRaw: false,
+            dataSource: mockDataSource,
+            config: mockConfig,
+        })
+
+        expect(result).toEqual([])
+        expect(afterQueryCache).not.toHaveBeenCalled()
+    })
+
+    it('should execute hyperdrive queries and close the postgres client through waitUntil', async () => {
+        const waitUntil = vi.fn()
+        const result = await executeQuery({
+            sql: 'SELECT * FROM users WHERE id = ?',
+            params: [3],
+            isRaw: false,
+            dataSource: {
+                source: 'hyperdrive',
+                external: { connectionString: 'postgres://example' },
+                executionContext: { waitUntil },
+            } as any,
+            config: { ...mockConfig, features: {} },
+        })
+
+        expect(mockPostgresFactory).toHaveBeenCalledWith('postgres://example', {
+            max: 5,
+            fetch_types: false,
+        })
+        expect(mockPostgresUnsafe).toHaveBeenCalledWith(
+            'SELECT * FROM users WHERE id = ?',
+            [3]
+        )
+        expect(waitUntil).toHaveBeenCalled()
+        expect(result).toEqual([{ id: 3, name: 'Hyperdrive' }])
+    })
+
+    it('should throw when hyperdrive has no connection string', async () => {
+        await expect(
+            executeQuery({
+                sql: 'SELECT 1',
+                params: undefined,
+                isRaw: false,
+                dataSource: { source: 'hyperdrive', external: {} } as any,
+                config: mockConfig,
+            })
+        ).rejects.toThrow('Hyperdrive connection string not found')
     })
 
     it('should return an empty array if the data source is missing', async () => {
@@ -444,6 +575,124 @@ describe('executeExternalQuery', () => {
         })
 
         expect(result).toEqual([])
+    })
+
+    it('should call the SDK path when no Outerbase API key is configured', async () => {
+        const result = await executeExternalQuery({
+            sql: 'SELECT * FROM users WHERE id = ?',
+            params: [1],
+            dataSource: {
+                source: 'postgresql',
+                external: {
+                    dialect: 'postgresql',
+                    provider: 'postgresql',
+                    host: 'mock-host',
+                    port: 5432,
+                    user: 'mock-user',
+                    password: 'mock-password',
+                    database: 'mock-db',
+                },
+            } as any,
+            config: { ...mockConfig, outerbaseApiKey: undefined },
+        })
+
+        expect(mockSdkConnection.connect).toHaveBeenCalled()
+        expect(mockSdkConnection.raw).toHaveBeenCalledWith(
+            'SELECT * FROM users WHERE id = ?',
+            [1]
+        )
+        expect(result).toEqual([{ id: 1, name: 'SDK-Test-Result' }])
+    })
+})
+
+describe('executeSDKQuery', () => {
+    it.each([
+        [
+            'postgresql',
+            {
+                dialect: 'postgresql',
+                provider: 'postgresql',
+                host: 'mock-host',
+                port: 5432,
+                user: 'mock-user',
+                password: 'mock-password',
+                database: 'mock-db',
+            },
+        ],
+        [
+            'mysql',
+            {
+                dialect: 'mysql',
+                provider: 'mysql',
+                host: 'mock-host',
+                port: 3306,
+                user: 'mock-user',
+                password: 'mock-password',
+                database: 'mock-db',
+            },
+        ],
+        [
+            'cloudflare-d1',
+            {
+                provider: 'cloudflare-d1',
+                apiKey: 'mock-api-key',
+                accountId: 'account-id',
+                databaseId: 'database-id',
+            },
+        ],
+        [
+            'starbase',
+            {
+                provider: 'starbase',
+                apiKey: 'mock-api-key',
+                token: 'https://starbase.example',
+            },
+        ],
+        [
+            'turso',
+            {
+                provider: 'turso',
+                uri: 'libsql://example',
+                token: 'mock-token',
+            },
+        ],
+    ])('should execute SDK queries for %s sources', async (_name, external) => {
+        const result = await executeSDKQuery({
+            sql: 'SELECT 1',
+            params: [],
+            dataSource: { source: 'external', external } as any,
+            config: mockConfig,
+        })
+
+        expect(mockSdkConnection.connect).toHaveBeenCalled()
+        expect(mockSdkConnection.raw).toHaveBeenCalledWith('SELECT 1', [])
+        expect(result).toEqual([{ id: 1, name: 'SDK-Test-Result' }])
+    })
+
+    it('should return an empty array when no external connection exists', async () => {
+        const result = await executeSDKQuery({
+            sql: 'SELECT 1',
+            params: [],
+            dataSource: { source: 'external' } as any,
+            config: mockConfig,
+        })
+
+        expect(result).toEqual([])
+        expect(mockSdkConnection.connect).not.toHaveBeenCalled()
+    })
+
+    it('should reject unsupported external database types', async () => {
+        await expect(
+            executeSDKQuery({
+                sql: 'SELECT 1',
+                params: [],
+                dataSource: {
+                    source: 'external',
+                    external: { provider: 'unsupported' },
+                } as any,
+                config: mockConfig,
+            })
+        ).rejects.toThrow('Unsupported external database type')
     })
 })
 
