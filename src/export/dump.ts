@@ -44,11 +44,15 @@ export async function dumpDatabaseRoute(
             )
 
             for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
+                const values = Object.values(row).map((value) => {
+                    if (value === null) {
+                        return 'NULL'
+                    }
+
+                    return typeof value === 'string'
                         ? `'${value.replace(/'/g, "''")}'`
                         : value
-                )
+                })
                 dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
             }
 
