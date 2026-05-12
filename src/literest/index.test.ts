@@ -73,6 +73,94 @@ describe('LiteREST', () => {
         })
     })
 
+    describe('getPrimaryKeyColumns', () => {
+        it('should query PostgreSQL information schema with the provided schema', async () => {
+            mockDataSource.external = {
+                dialect: 'postgresql',
+            } as any
+            vi.mocked(executeQuery).mockResolvedValue([
+                { name: 'tenant_id' },
+                { name: 'id' },
+            ])
+
+            // @ts-expect-error: Testing private method
+            const pkColumns = await liteRest.getPrimaryKeyColumns(
+                'orders',
+                'sales'
+            )
+
+            expect(pkColumns).toEqual(['tenant_id', 'id'])
+            expect(executeQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sql: expect.stringContaining(
+                        'information_schema.table_constraints'
+                    ),
+                    params: [],
+                    dataSource: mockDataSource,
+                    config: mockConfig,
+                })
+            )
+
+            const [{ sql }] = vi.mocked(executeQuery).mock.calls[0]
+            expect(sql).toContain("tc.table_name = 'orders'")
+            expect(sql).toContain("tc.table_schema = 'sales'")
+        })
+
+        it('should query MySQL information schema when using a MySQL external source', async () => {
+            mockDataSource.external = {
+                dialect: 'mysql',
+            } as any
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id' }])
+
+            // @ts-expect-error: Testing private method
+            const pkColumns = await liteRest.getPrimaryKeyColumns('users')
+
+            expect(pkColumns).toEqual(['id'])
+
+            const [{ sql }] = vi.mocked(executeQuery).mock.calls[0]
+            expect(sql).toContain('information_schema.key_column_usage')
+            expect(sql).toContain("table_name = 'users'")
+            expect(sql).toContain("constraint_name = 'PRIMARY'")
+            expect(sql).toContain('table_schema = DATABASE()')
+        })
+
+        it('should filter SQLite primary key metadata down to valid named columns', async () => {
+            mockDataSource.source = 'internal'
+            mockDataSource.external = undefined
+            vi.mocked(executeQuery).mockResolvedValue([
+                { name: 'id', pk: 1 },
+                { name: 'name', pk: 0 },
+                { name: null, pk: 2 },
+                { name: 'legacy_id', pk: '1' },
+            ])
+
+            // @ts-expect-error: Testing private method
+            const pkColumns = await liteRest.getPrimaryKeyColumns('users')
+
+            expect(pkColumns).toEqual(['id'])
+            expect(executeQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sql: 'PRAGMA table_info(users);',
+                    dataSource: mockDataSource,
+                    config: mockConfig,
+                })
+            )
+        })
+    })
+
+    describe('parseRequest', () => {
+        it('should reject REST requests that do not name a table', async () => {
+            const request = new Request('http://localhost/rest', {
+                method: 'GET',
+            })
+
+            // @ts-expect-error: Testing private method
+            await expect(liteRest.parseRequest(request)).rejects.toThrow(
+                'Expected a table name in the path'
+            )
+        })
+    })
+
     describe('handleRequest', () => {
         it('should return 405 for unsupported methods', async () => {
             const request = new Request('http://localhost/rest/main/users', {
@@ -148,6 +236,21 @@ describe('LiteREST', () => {
 
             const jsonResponse = (await response.json()) as { error: string }
             expect(jsonResponse.error).toBe('Invalid data format')
+        })
+
+        it('should return 400 for empty POST data', async () => {
+            const request = new Request('http://localhost/rest/main/users', {
+                method: 'POST',
+                body: JSON.stringify({}),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(400)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('No data provided')
         })
 
         it('should return 500 for POST errors', async () => {
@@ -236,6 +339,43 @@ describe('LiteREST', () => {
             )
         })
 
+        it('should return 400 for PATCH with no updatable fields', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'PATCH',
+                body: JSON.stringify({ id: 1 }),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(400)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('No updatable data provided')
+        })
+
+        it('should return 500 for PATCH operation errors', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+            vi.mocked(executeTransaction).mockRejectedValue(
+                new Error('Update failed')
+            )
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'PATCH',
+                body: JSON.stringify({ name: 'Broken Name' }),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(500)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('Update failed')
+        })
+
         it('should handle PUT requests successfully', async () => {
             vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
                 if (sql.includes('PRAGMA table_info(users)')) {
@@ -280,6 +420,62 @@ describe('LiteREST', () => {
 
             const jsonResponse = (await response.json()) as { error: string }
             expect(jsonResponse.error).toBe('Invalid data format')
+        })
+
+        it('should return 400 for PUT requests missing the primary key value', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+
+            const request = new Request('http://localhost/rest/main/users', {
+                method: 'PUT',
+                body: JSON.stringify({ name: 'Missing Id' }),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(400)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe(
+                "Missing primary key value for 'id'"
+            )
+        })
+
+        it('should return 400 for empty PUT data', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'PUT',
+                body: JSON.stringify({}),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(400)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('No data provided')
+        })
+
+        it('should return 500 for PUT operation errors', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+            vi.mocked(executeTransaction).mockRejectedValue(
+                new Error('Replace failed')
+            )
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'PUT',
+                body: JSON.stringify({ name: 'Broken User' }),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(500)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('Replace failed')
         })
 
         it('should return 405 for invalid HTTP methods', async () => {
@@ -341,6 +537,23 @@ describe('LiteREST', () => {
             )
         })
 
+        it('should return 400 for DELETE when no primary key exists', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([])
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'DELETE',
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(400)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe(
+                "No primary key found for table 'users'"
+            )
+        })
+
         it('should return 500 for DELETE errors', async () => {
             vi.mocked(executeQuery).mockRejectedValue(
                 new Error('Delete failed')
@@ -357,6 +570,25 @@ describe('LiteREST', () => {
             const jsonResponse = (await response.json()) as { error: string }
             expect(jsonResponse.error).toBe('Delete failed')
         })
+
+        it('should return 500 for DELETE operation errors after primary key lookup', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+            vi.mocked(executeTransaction).mockRejectedValue(
+                new Error('Delete transaction failed')
+            )
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'DELETE',
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(500)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('Delete transaction failed')
+        })
+
         it('should return 400 if DELETE is attempted with missing composite PK values', async () => {
             vi.mocked(executeQuery).mockResolvedValue([
                 { name: 'user_id', pk: 1 },
@@ -487,6 +719,31 @@ describe('LiteREST', () => {
             )
 
             expect(query).not.toContain('DROP TABLE users')
+        })
+
+        it('should build filters for IN values and default invalid ordering to ASC', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+            const searchParams = new URLSearchParams({
+                'status.in': 'active, pending',
+                'name.like': 'A%',
+                sort_by: 'created-at',
+                order: 'sideways',
+                limit: '2',
+                offset: '0',
+            })
+
+            // @ts-expect-error: Testing private method
+            const { query, params } = await liteRest.buildSelectQuery(
+                'users',
+                'main',
+                undefined,
+                searchParams
+            )
+
+            expect(query).toBe(
+                'SELECT * FROM main.users WHERE status IN (?, ?) AND name LIKE ? ORDER BY createdat ASC LIMIT ?'
+            )
+            expect(params).toEqual(['active', 'pending', 'A%', 2])
         })
     })
 })
