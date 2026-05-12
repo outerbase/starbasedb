@@ -115,6 +115,26 @@ describe('QueryLogPlugin - addQuery()', () => {
             params: ['SELECT * FROM test', 50],
         })
     })
+
+    it('should swallow insert failures and return an empty list', async () => {
+        const consoleErrorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        vi.mocked(mockDataSource.rpc.executeQuery).mockRejectedValueOnce(
+            new Error('insert failed')
+        )
+
+        queryLogPlugin['state'].query = 'SELECT * FROM failing_query'
+        queryLogPlugin['state'].totalTime = 25
+
+        await expect(
+            queryLogPlugin['addQuery'](mockDataSource)
+        ).resolves.toEqual([])
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+            'Error inserting rejected allowlist query:',
+            expect.any(Error)
+        )
+    })
 })
 
 describe('QueryLogPlugin - expireLog()', () => {
@@ -134,5 +154,21 @@ describe('QueryLogPlugin - expireLog()', () => {
 
         const result = await queryLogPlugin['expireLog']()
         expect(result).toBe(false)
+    })
+
+    it('should return false when log expiration fails', async () => {
+        const consoleErrorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        vi.mocked(mockDataSource.rpc.executeQuery).mockRejectedValueOnce(
+            new Error('delete failed')
+        )
+        queryLogPlugin['dataSource'] = mockDataSource
+
+        await expect(queryLogPlugin['expireLog']()).resolves.toBe(false)
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+            'Error purging old query logs:',
+            expect.any(Error)
+        )
     })
 })
