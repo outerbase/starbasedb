@@ -8,6 +8,8 @@ import { DataSource, QueryResult } from '../../src/types'
 
 const parser = new (require('node-sql-parser').Parser)()
 
+const firstStatement = (ast: any) => (Array.isArray(ast) ? ast[0] : ast)
+
 export class SqlMacrosPlugin extends StarbasePlugin {
     config?: StarbaseDBConfiguration
 
@@ -59,7 +61,7 @@ export class SqlMacrosPlugin extends StarbasePlugin {
 
     private checkSelectStar(sql: string, params?: unknown[]): string {
         try {
-            const ast = parser.astify(sql)[0]
+            const ast = firstStatement(parser.astify(sql))
 
             // Only check SELECT statements
             if (ast.type === 'select') {
@@ -116,7 +118,7 @@ export class SqlMacrosPlugin extends StarbasePlugin {
                 '$_exclude',
                 '__exclude'
             )
-            const normalizedQuery = parser.astify(preparedSql)[0]
+            const normalizedQuery = firstStatement(parser.astify(preparedSql))
 
             // Only process SELECT statements
             if (normalizedQuery.type !== 'select') {
