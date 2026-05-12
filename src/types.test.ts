@@ -91,4 +91,19 @@ describe('RegionLocationHint Enum Tests', () => {
         expect(RegionLocationHint.AFR).toBe('afr')
         expect(RegionLocationHint.ME).toBe('me')
     })
+
+    it('should expose only the supported region location hints', () => {
+        expect(Object.values(RegionLocationHint)).toEqual([
+            'auto',
+            'wnam',
+            'enam',
+            'sam',
+            'weur',
+            'eeur',
+            'apac',
+            'oc',
+            'afr',
+            'me',
+        ])
+    })
 })

@@ -17,6 +17,20 @@ describe('API Request Handler', () => {
         expect(text).toBe('Success')
     })
 
+    it('should ignore query strings for the template GET route', async () => {
+        const request = new Request(
+            'https://starbasedb.test.workers.dev/api/your/path/here?debug=true',
+            {
+                method: 'GET',
+            }
+        )
+
+        const response = await handleApiRequest(request)
+
+        expect(response.status).toBe(200)
+        expect(await response.text()).toBe('Success')
+    })
+
     it('should return 404 for an unknown GET request', async () => {
         const request = new Request(
             'https://starbasedb.test.workers.dev/api/unknown',
@@ -30,6 +44,20 @@ describe('API Request Handler', () => {
         expect(response.status).toBe(404)
         const text = await response.text()
         expect(text).toBe('Not found')
+    })
+
+    it('should return 404 for the template route with a trailing slash', async () => {
+        const request = new Request(
+            'https://starbasedb.test.workers.dev/api/your/path/here/',
+            {
+                method: 'GET',
+            }
+        )
+
+        const response = await handleApiRequest(request)
+
+        expect(response.status).toBe(404)
+        expect(await response.text()).toBe('Not found')
     })
 
     it('should return 404 for an unknown POST request', async () => {
