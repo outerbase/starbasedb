@@ -11,6 +11,8 @@ test('createResponse returns success response with data', async () => {
     })
 
     expect(response.status).toBe(200)
+    expect(response.headers.get('Content-Type')).toBe('application/json')
+    expect(response.headers.get('Access-Control-Allow-Origin')).toBe('*')
 })
 
 test('createResponse returns error response', async () => {
@@ -22,4 +24,14 @@ test('createResponse returns error response', async () => {
     })
 
     expect(response.status).toBe(500)
+})
+
+test('createResponse preserves explicit result and error keys when both are present', async () => {
+    const response = createResponse({ ok: false }, 'Bad request', 400)
+
+    expect(await response.json()).toEqual({
+        result: { ok: false },
+        error: 'Bad request',
+    })
+    expect(response.status).toBe(400)
 })
