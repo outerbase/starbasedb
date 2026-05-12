@@ -25,6 +25,26 @@ class MockPlugin extends StarbasePlugin {
 class TestPlugin extends StarbasePlugin {}
 
 describe('StarbasePlugin', () => {
+    it('should pass through query inputs by default', async () => {
+        const plugin = new TestPlugin('TestPlugin')
+        const input = { sql: 'SELECT * FROM users', params: [1] }
+
+        await expect(plugin.beforeQuery(input)).resolves.toEqual(input)
+    })
+
+    it('should pass through query results by default', async () => {
+        const plugin = new TestPlugin('TestPlugin')
+        const result = [{ id: 1, name: 'Jane' }]
+
+        await expect(
+            plugin.afterQuery({
+                sql: 'SELECT * FROM users',
+                result,
+                isRaw: false,
+            })
+        ).resolves.toBe(result)
+    })
+
     it('should throw an error when register() is called without implementation', async () => {
         const plugin = new TestPlugin('TestPlugin')
 
@@ -114,6 +134,24 @@ describe('StarbasePluginRegistry', () => {
         await registry.init()
 
         expect(mockPlugin.register).toHaveBeenCalledWith(mockApp)
+    })
+
+    it('should expose current plugin names in registration order', () => {
+        const registry = new StarbasePluginRegistry({
+            app: mockApp,
+            plugins: [new TestPlugin('PluginA'), new TestPlugin('PluginB')],
+        })
+
+        expect(registry.currentPlugins()).toEqual(['PluginA', 'PluginB'])
+    })
+
+    it('should ignore plugins without register implementation during init', async () => {
+        const registry = new StarbasePluginRegistry({
+            app: mockApp,
+            plugins: [new TestPlugin('NoopPlugin')],
+        })
+
+        await expect(registry.init()).resolves.toBeUndefined()
     })
 
     it('should handle UnimplementedError during registration', async () => {
