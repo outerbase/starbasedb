@@ -5,7 +5,9 @@ import {
     CloudflareD1Source,
     StarbaseDBSource,
     TursoDBSource,
+    HyperdriveSource,
     ExternalDatabaseSource,
+    DataSource,
     RegionLocationHint,
 } from './types'
 
@@ -65,6 +67,19 @@ describe('Database Source Type Tests', () => {
         expectTypeOf(tursoSource).toMatchTypeOf<TursoDBSource>()
     })
 
+    it('should match the expected HyperdriveSource structure', () => {
+        const hyperdriveSource: HyperdriveSource = {
+            dialect: 'postgresql',
+            connectionString: 'postgres://user:pass@example.com/db',
+            defaultSchema: 'public',
+        }
+
+        expect(hyperdriveSource.dialect).toBe('postgresql')
+        expect(hyperdriveSource.connectionString).toContain('example.com')
+        expect(hyperdriveSource.defaultSchema).toBe('public')
+        expectTypeOf(hyperdriveSource).toMatchTypeOf<HyperdriveSource>()
+    })
+
     it('should allow all ExternalDatabaseSource types', () => {
         const externalSource: ExternalDatabaseSource = {
             dialect: 'postgresql',
@@ -75,6 +90,25 @@ describe('Database Source Type Tests', () => {
             database: 'testdb',
         }
         expectTypeOf(externalSource).toMatchTypeOf<ExternalDatabaseSource>()
+    })
+
+    it('should allow DataSource metadata for hyperdrive connections', () => {
+        const dataSource = {
+            source: 'hyperdrive',
+            external: {
+                dialect: 'postgresql',
+                connectionString: 'postgres://user:pass@example.com/db',
+            },
+            cache: true,
+            cacheTTL: 60,
+            context: { tenant: 'test' },
+        } as unknown as DataSource
+
+        expect(dataSource.source).toBe('hyperdrive')
+        expect(dataSource.external?.dialect).toBe('postgresql')
+        expect(dataSource.cache).toBe(true)
+        expect(dataSource.cacheTTL).toBe(60)
+        expect(dataSource.context).toEqual({ tenant: 'test' })
     })
 })
 
