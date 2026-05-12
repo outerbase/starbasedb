@@ -8,6 +8,10 @@ import { DataSource, QueryResult } from '../../src/types'
 
 const parser = new (require('node-sql-parser').Parser)()
 
+function firstStatement(ast: any) {
+    return Array.isArray(ast) ? ast[0] : ast
+}
+
 export class SqlMacrosPlugin extends StarbasePlugin {
     config?: StarbaseDBConfiguration
 
@@ -59,7 +63,7 @@ export class SqlMacrosPlugin extends StarbasePlugin {
 
     private checkSelectStar(sql: string, params?: unknown[]): string {
         try {
-            const ast = parser.astify(sql)[0]
+            const ast = firstStatement(parser.astify(sql))
 
             // Only check SELECT statements
             if (ast.type === 'select') {
@@ -116,7 +120,7 @@ export class SqlMacrosPlugin extends StarbasePlugin {
                 '$_exclude',
                 '__exclude'
             )
-            const normalizedQuery = parser.astify(preparedSql)[0]
+            const normalizedQuery = firstStatement(parser.astify(preparedSql))
 
             // Only process SELECT statements
             if (normalizedQuery.type !== 'select') {
@@ -148,8 +152,8 @@ export class SqlMacrosPlugin extends StarbasePlugin {
 
                 // Extract column name(s) from arguments
                 excludedColumns = Array.isArray(args)
-                    ? args.map((arg: any) => arg.column)
-                    : [args.column]
+                    ? args.map((arg: any) => arg.column.toLowerCase())
+                    : [args.column.toLowerCase()]
             } catch (error: any) {
                 console.error('Error processing exclude arguments:', error)
                 console.error(error.stack)
