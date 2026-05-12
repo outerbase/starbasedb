@@ -97,6 +97,43 @@ describe('LiteREST', () => {
             expect(jsonResponse.result).toEqual([{ id: 1, name: 'Alice' }])
         })
 
+        it('should handle GET requests with schema-qualified paths', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([
+                { id: 1, name: 'Alice' },
+            ])
+
+            const request = new Request(
+                'http://localhost/rest/public/users',
+                {
+                    method: 'GET',
+                }
+            )
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(200)
+            expect(executeTransaction).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    queries: [
+                        {
+                            sql: 'SELECT * FROM public.users',
+                            params: [],
+                        },
+                    ],
+                })
+            )
+        })
+
+        it('should reject requests that do not include a table path', async () => {
+            const request = new Request('http://localhost/rest', {
+                method: 'GET',
+            })
+
+            await expect(liteRest.handleRequest(request)).rejects.toThrow(
+                'Expected a table name in the path'
+            )
+        })
+
         it('should return 500 for GET errors', async () => {
             const consoleErrorMock = vi
                 .spyOn(console, 'error')
@@ -148,6 +185,21 @@ describe('LiteREST', () => {
 
             const jsonResponse = (await response.json()) as { error: string }
             expect(jsonResponse.error).toBe('Invalid data format')
+        })
+
+        it('should return 400 for empty POST data', async () => {
+            const request = new Request('http://localhost/rest/main/users', {
+                method: 'POST',
+                body: JSON.stringify({}),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(400)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('No data provided')
         })
 
         it('should return 500 for POST errors', async () => {
@@ -213,6 +265,23 @@ describe('LiteREST', () => {
 
             const jsonResponse = (await response.json()) as { error: string }
             expect(jsonResponse.error).toBe('Invalid data format')
+        })
+
+        it('should return 400 for PATCH data that only contains the primary key', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'PATCH',
+                body: JSON.stringify({ id: 1 }),
+                headers: { 'Content-Type': 'application/json' },
+            })
+
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(400)
+
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('No updatable data provided')
         })
 
         it('should return 400 for PATCH request missing composite PK values', async () => {
@@ -453,6 +522,24 @@ describe('LiteREST', () => {
 
             expect(query).toContain('LIMIT ? OFFSET ?')
             expect(params).toEqual([10, 5])
+        })
+
+        it('should build IN filter conditions from comma-separated values', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([])
+            const searchParams = new URLSearchParams({
+                'name.in': 'Alice,Bob',
+            })
+
+            // @ts-expect-error: Testing private method
+            const { query, params } = await liteRest.buildSelectQuery(
+                'users',
+                undefined,
+                undefined,
+                searchParams
+            )
+
+            expect(query).toContain('WHERE name IN (?, ?)')
+            expect(params).toEqual(['Alice', 'Bob'])
         })
 
         it('should ignore invalid limit and offset parameters', async () => {
