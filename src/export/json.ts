@@ -1,4 +1,9 @@
-import { getTableData, createExportResponse } from './index'
+import {
+    createExportStreamResponse,
+    createTextStream,
+    getTableDataBatches,
+    tableExists,
+} from './index'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
@@ -9,9 +14,9 @@ export async function exportTableToJsonRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        const exists = await tableExists(tableName, dataSource, config)
 
-        if (data === null) {
+        if (!exists) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,11 +24,27 @@ export async function exportTableToJsonRoute(
             )
         }
 
-        // Convert the result to JSON
-        const jsonData = JSON.stringify(data, null, 4)
+        const stream = createTextStream(async (enqueue) => {
+            let isFirstRow = true
 
-        return createExportResponse(
-            jsonData,
+            enqueue('[')
+
+            for await (const rows of getTableDataBatches(
+                tableName,
+                dataSource,
+                config
+            )) {
+                for (const row of rows) {
+                    enqueue(`${isFirstRow ? '' : ','}${JSON.stringify(row)}`)
+                    isFirstRow = false
+                }
+            }
+
+            enqueue(']')
+        })
+
+        return createExportStreamResponse(
+            stream,
             `${tableName}_export.json`,
             'application/json'
         )

@@ -1,7 +1,27 @@
-import { getTableData, createExportResponse } from './index'
+import {
+    createExportStreamResponse,
+    createTextStream,
+    getTableDataBatches,
+    tableExists,
+} from './index'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
+
+function escapeCsvValue(value: unknown): string {
+    const stringValue =
+        value === null || value === undefined ? '' : String(value)
+
+    if (
+        stringValue.includes(',') ||
+        stringValue.includes('"') ||
+        stringValue.includes('\n')
+    ) {
+        return `"${stringValue.replace(/"/g, '""')}"`
+    }
+
+    return stringValue
+}
 
 export async function exportTableToCsvRoute(
     tableName: string,
@@ -9,9 +29,9 @@ export async function exportTableToCsvRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        const exists = await tableExists(tableName, dataSource, config)
 
-        if (data === null) {
+        if (!exists) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,33 +39,32 @@ export async function exportTableToCsvRoute(
             )
         }
 
-        // Convert the result to CSV
-        let csvContent = ''
-        if (data.length > 0) {
-            // Add headers
-            csvContent += Object.keys(data[0]).join(',') + '\n'
+        const stream = createTextStream(async (enqueue) => {
+            let hasHeader = false
 
-            // Add data rows
-            data.forEach((row: any) => {
-                csvContent +=
-                    Object.values(row)
-                        .map((value) => {
-                            if (
-                                typeof value === 'string' &&
-                                (value.includes(',') ||
-                                    value.includes('"') ||
-                                    value.includes('\n'))
-                            ) {
-                                return `"${value.replace(/"/g, '""')}"`
-                            }
-                            return value
-                        })
-                        .join(',') + '\n'
-            })
-        }
+            for await (const rows of getTableDataBatches(
+                tableName,
+                dataSource,
+                config
+            )) {
+                if (!hasHeader && rows.length > 0) {
+                    enqueue(
+                        Object.keys(rows[0]).map(escapeCsvValue).join(',') +
+                            '\n'
+                    )
+                    hasHeader = true
+                }
 
-        return createExportResponse(
-            csvContent,
+                for (const row of rows) {
+                    enqueue(
+                        Object.values(row).map(escapeCsvValue).join(',') + '\n'
+                    )
+                }
+            }
+        })
+
+        return createExportStreamResponse(
+            stream,
             `${tableName}_export.csv`,
             'text/csv'
         )

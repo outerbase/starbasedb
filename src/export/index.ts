@@ -2,6 +2,8 @@ import { DataSource } from '../types'
 import { executeTransaction } from '../operation'
 import { StarbaseDBConfiguration } from '../handler'
 
+export const EXPORT_BATCH_SIZE = 1000
+
 export async function executeOperation(
     queries: { sql: string; params?: any[] }[],
     dataSource: DataSource,
@@ -54,6 +56,72 @@ export async function getTableData(
     }
 }
 
+export async function tableExists(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): Promise<boolean> {
+    const tableExistsResult = await executeOperation(
+        [
+            {
+                sql: `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
+                params: [tableName],
+            },
+        ],
+        dataSource,
+        config
+    )
+
+    return !!tableExistsResult && tableExistsResult.length > 0
+}
+
+export async function* getTableDataBatches(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration,
+    batchSize = EXPORT_BATCH_SIZE
+): AsyncGenerator<any[]> {
+    let offset = 0
+
+    while (true) {
+        const rows = await executeOperation(
+            [
+                {
+                    sql: `SELECT * FROM ${tableName} LIMIT ${batchSize} OFFSET ${offset};`,
+                },
+            ],
+            dataSource,
+            config
+        )
+
+        if (rows.length === 0) {
+            break
+        }
+
+        yield rows
+        offset += rows.length
+    }
+}
+
+export function createTextStream(
+    write: (enqueue: (chunk: string) => void) => Promise<void>
+): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder()
+
+    return new ReadableStream<Uint8Array>({
+        async start(controller) {
+            try {
+                await write((chunk) =>
+                    controller.enqueue(encoder.encode(chunk))
+                )
+                controller.close()
+            } catch (error) {
+                controller.error(error)
+            }
+        },
+    })
+}
+
 export function createExportResponse(
     data: any,
     fileName: string,
@@ -67,4 +135,17 @@ export function createExportResponse(
     })
 
     return new Response(blob, { headers })
+}
+
+export function createExportStreamResponse(
+    stream: ReadableStream<Uint8Array>,
+    fileName: string,
+    contentType: string
+): Response {
+    const headers = new Headers({
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+    })
+
+    return new Response(stream, { headers })
 }

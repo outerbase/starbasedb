@@ -1,5 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { executeOperation, getTableData, createExportResponse } from './index'
+import {
+    createExportResponse,
+    createExportStreamResponse,
+    createTextStream,
+    executeOperation,
+    getTableData,
+    getTableDataBatches,
+    tableExists,
+} from './index'
 import { executeTransaction } from '../operation'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
@@ -109,6 +117,66 @@ describe('Database Operations Module', () => {
         })
     })
 
+    describe('tableExists', () => {
+        it('should return true if the table exists', async () => {
+            vi.mocked(executeTransaction).mockResolvedValueOnce([
+                { name: 'users' },
+            ])
+
+            await expect(
+                tableExists('users', mockDataSource, mockConfig)
+            ).resolves.toBe(true)
+        })
+
+        it('should return false if the table does not exist', async () => {
+            vi.mocked(executeTransaction).mockResolvedValueOnce([])
+
+            await expect(
+                tableExists('missing_table', mockDataSource, mockConfig)
+            ).resolves.toBe(false)
+        })
+    })
+
+    describe('getTableDataBatches', () => {
+        it('should fetch rows in batches until no rows remain', async () => {
+            vi.mocked(executeTransaction)
+                .mockResolvedValueOnce([{ id: 1 }])
+                .mockResolvedValueOnce([{ id: 2 }])
+                .mockResolvedValueOnce([])
+
+            const rows: any[] = []
+
+            for await (const batch of getTableDataBatches(
+                'users',
+                mockDataSource,
+                mockConfig,
+                1
+            )) {
+                rows.push(...batch)
+            }
+
+            expect(rows).toEqual([{ id: 1 }, { id: 2 }])
+            expect(executeTransaction).toHaveBeenNthCalledWith(
+                1,
+                expect.objectContaining({
+                    queries: [{ sql: 'SELECT * FROM users LIMIT 1 OFFSET 0;' }],
+                })
+            )
+            expect(executeTransaction).toHaveBeenNthCalledWith(
+                2,
+                expect.objectContaining({
+                    queries: [{ sql: 'SELECT * FROM users LIMIT 1 OFFSET 1;' }],
+                })
+            )
+            expect(executeTransaction).toHaveBeenNthCalledWith(
+                3,
+                expect.objectContaining({
+                    queries: [{ sql: 'SELECT * FROM users LIMIT 1 OFFSET 2;' }],
+                })
+            )
+        })
+    })
+
     describe('createExportResponse', () => {
         it('should create a valid response for a CSV file', () => {
             const response = createExportResponse(
@@ -153,6 +221,26 @@ describe('Database Operations Module', () => {
             expect(response.headers.get('Content-Disposition')).toBe(
                 'attachment; filename="notes.txt"'
             )
+        })
+    })
+
+    describe('streaming export responses', () => {
+        it('should create a readable text stream response', async () => {
+            const stream = createTextStream(async (enqueue) => {
+                enqueue('hello')
+                enqueue(' world')
+            })
+            const response = createExportStreamResponse(
+                stream,
+                'notes.txt',
+                'text/plain'
+            )
+
+            expect(response.headers.get('Content-Type')).toBe('text/plain')
+            expect(response.headers.get('Content-Disposition')).toBe(
+                'attachment; filename="notes.txt"'
+            )
+            await expect(response.text()).resolves.toBe('hello world')
         })
     })
 })

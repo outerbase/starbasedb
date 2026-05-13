@@ -1,12 +1,44 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { dumpDatabaseRoute } from './dump'
-import { executeOperation } from '.'
+import { executeOperation, getTableDataBatches } from '.'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
+function createTestTextStream(
+    write: (enqueue: (chunk: string) => void) => Promise<void>
+): ReadableStream<Uint8Array> {
+    const encoder = new TextEncoder()
+
+    return new ReadableStream<Uint8Array>({
+        async start(controller) {
+            await write((chunk) => controller.enqueue(encoder.encode(chunk)))
+            controller.close()
+        },
+    })
+}
+
+async function* batches(...chunks: any[][]) {
+    for (const chunk of chunks) {
+        yield chunk
+    }
+}
+
 vi.mock('.', () => ({
     executeOperation: vi.fn(),
+    getTableDataBatches: vi.fn(),
+    createTextStream: createTestTextStream,
+    createExportStreamResponse: (
+        stream: ReadableStream<Uint8Array>,
+        fileName: string,
+        contentType: string
+    ) =>
+        new Response(stream, {
+            headers: {
+                'Content-Type': contentType,
+                'Content-Disposition': `attachment; filename="${fileName}"`,
+            },
+        }),
 }))
 
 vi.mock('../utils', () => ({
@@ -46,16 +78,21 @@ describe('Database Dump Module', () => {
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
             .mockResolvedValueOnce([
-                { id: 1, name: 'Alice' },
-                { id: 2, name: 'Bob' },
-            ])
-            .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
-            .mockResolvedValueOnce([
+        vi.mocked(getTableDataBatches).mockImplementation((tableName) => {
+            if (tableName === 'users') {
+                return batches([
+                    { id: 1, name: 'Alice' },
+                    { id: 2, name: 'Bob' },
+                ])
+            }
+
+            return batches([
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
             ])
+        })
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -99,7 +136,7 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
-            .mockResolvedValueOnce([])
+        vi.mocked(getTableDataBatches).mockReturnValue(batches())
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -117,7 +154,9 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
-            .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+        vi.mocked(getTableDataBatches).mockReturnValue(
+            batches([{ id: 1, bio: "Alice's adventure" }])
+        )
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -126,6 +165,39 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             "INSERT INTO users VALUES (1, 'Alice''s adventure');"
         )
+    })
+
+    it('should stream rows from multiple batches', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+        vi.mocked(getTableDataBatches).mockReturnValue(
+            batches([{ id: 1, name: 'Alice' }], [{ id: 2, name: 'Bob' }])
+        )
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
+        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+    })
+
+    it('should render null values as SQL NULL', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+        vi.mocked(getTableDataBatches).mockReturnValue(
+            batches([{ id: 1, name: null }])
+        )
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain('INSERT INTO users VALUES (1, NULL);')
     })
 
     it('should return a 500 response when an error occurs', async () => {

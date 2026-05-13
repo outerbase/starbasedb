@@ -1,7 +1,24 @@
-import { executeOperation } from '.'
+import {
+    createExportStreamResponse,
+    createTextStream,
+    executeOperation,
+    getTableDataBatches,
+} from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
+
+function escapeSqlValue(value: unknown): string {
+    if (value === null || value === undefined) {
+        return 'NULL'
+    }
+
+    if (typeof value === 'string') {
+        return `'${value.replace(/'/g, "''")}'`
+    }
+
+    return String(value)
+}
 
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
@@ -16,54 +33,50 @@ export async function dumpDatabaseRoute(
         )
 
         const tables = tablesResult.map((row: any) => row.name)
-        let dumpContent = 'SQLite format 3\0' // SQLite file header
 
-        // Iterate through all tables
-        for (const table of tables) {
-            // Get table schema
-            const schemaResult = await executeOperation(
-                [
-                    {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
-                    },
-                ],
-                dataSource,
-                config
-            )
+        const stream = createTextStream(async (enqueue) => {
+            enqueue('SQLite format 3\0') // SQLite file header
 
-            if (schemaResult.length) {
-                const schema = schemaResult[0].sql
-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
-            }
-
-            // Get table data
-            const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
-                dataSource,
-                config
-            )
-
-            for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
-                        ? `'${value.replace(/'/g, "''")}'`
-                        : value
+            // Iterate through all tables without building the full dump in memory.
+            for (const table of tables) {
+                // Get table schema
+                const schemaResult = await executeOperation(
+                    [
+                        {
+                            sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
+                        },
+                    ],
+                    dataSource,
+                    config
                 )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+
+                if (schemaResult.length) {
+                    const schema = schemaResult[0].sql
+                    enqueue(`\n-- Table: ${table}\n${schema};\n\n`)
+                }
+
+                for await (const rows of getTableDataBatches(
+                    table,
+                    dataSource,
+                    config
+                )) {
+                    for (const row of rows) {
+                        const values = Object.values(row).map(escapeSqlValue)
+                        enqueue(
+                            `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+                        )
+                    }
+                }
+
+                enqueue('\n')
             }
-
-            dumpContent += '\n'
-        }
-
-        // Create a Blob from the dump content
-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
-
-        const headers = new Headers({
-            'Content-Type': 'application/x-sqlite3',
-            'Content-Disposition': 'attachment; filename="database_dump.sql"',
         })
 
-        return new Response(blob, { headers })
+        return createExportStreamResponse(
+            stream,
+            'database_dump.sql',
+            'application/x-sqlite3'
+        )
     } catch (error: any) {
         console.error('Database Dump Error:', error)
         return createResponse(undefined, 'Failed to create database dump', 500)
