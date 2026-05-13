@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 
 import { Avatar } from './avatar'
 import { Card } from './card'
+import { Input } from './input/Input'
 import { Label } from './label/Label'
 import { Loader } from './loader/Loader'
 import { Toggle } from './toggle'
@@ -94,5 +95,39 @@ describe('interface primitive components', () => {
         expect(loader).toContain('style="height: 18px; width: 18px"')
         expect(toggle).toContain('h-7.5 w-12.5')
         expect(toggle).toContain('translate-x-full')
+    })
+
+    it('renders input wrappers with prefix, suffix, and invalid state', () => {
+        const wrapped = renderToString(
+            <Input
+                initialValue="abc"
+                isValid={false}
+                onValueChange={() => undefined}
+                placeholder="Filter"
+                preText="$"
+                postText="USD"
+                size="sm"
+            />
+        )
+        const plain = renderToString(
+            <Input
+                className="extra-input"
+                initialValue="plain"
+                onValueChange={() => undefined}
+                size="lg"
+            />
+        )
+
+        expect(wrapped).toContain('<div')
+        expect(wrapped).toContain('ob-size-sm')
+        expect(wrapped).toContain('>$</span>')
+        expect(wrapped).toContain('>USD</span>')
+        expect(wrapped).toContain('placeholder="Filter"')
+        expect(wrapped).toContain('text-ob-destructive')
+
+        expect(plain).toContain('<input')
+        expect(plain).toContain('extra-input')
+        expect(plain).toContain('ob-size-lg')
+        expect(plain).toContain('value="plain"')
     })
 })
