@@ -57,25 +57,29 @@ describe('StarbasePlugin', () => {
     })
     it('should apply beforeQuery modifications in order', async () => {
         class PluginA extends StarbasePlugin {
-            async beforeQuery(opts: {
-                sql: any
-                params?: any
-                dataSource?: DataSource | undefined
-                config?: StarbaseDBConfiguration | undefined
-            }) {
-                return { sql: `[A] ${opts.sql}`, params: opts.params }
-            }
+            beforeQuery = vi.fn(
+                async (opts: {
+                    sql: any
+                    params?: any
+                    dataSource?: DataSource | undefined
+                    config?: StarbaseDBConfiguration | undefined
+                }) => {
+                    return { sql: `[A] ${opts.sql}`, params: opts.params }
+                }
+            )
         }
 
         class PluginB extends StarbasePlugin {
-            async beforeQuery(opts: {
-                sql: any
-                params?: any
-                dataSource?: DataSource | undefined
-                config?: StarbaseDBConfiguration | undefined
-            }) {
-                return { sql: `[B] ${opts.sql}`, params: opts.params }
-            }
+            beforeQuery = vi.fn(
+                async (opts: {
+                    sql: any
+                    params?: any
+                    dataSource?: DataSource | undefined
+                    config?: StarbaseDBConfiguration | undefined
+                }) => {
+                    return { sql: `[B] ${opts.sql}`, params: opts.params }
+                }
+            )
         }
 
         const pluginA = new PluginA('PluginA')
@@ -90,7 +94,53 @@ describe('StarbasePlugin', () => {
             sql: 'SELECT * FROM users',
         })
 
+        expect(pluginA.beforeQuery).toHaveBeenCalledTimes(1)
+        expect(pluginB.beforeQuery).toHaveBeenCalledTimes(1)
+        expect(pluginB.beforeQuery).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sql: '[A] SELECT * FROM users',
+            })
+        )
         expect(result.sql).toBe('[B] [A] SELECT * FROM users')
+    })
+
+    it('should pass modified params to the next beforeQuery plugin', async () => {
+        class PluginA extends StarbasePlugin {
+            async beforeQuery(opts: {
+                sql: any
+                params?: any
+                dataSource?: DataSource | undefined
+                config?: StarbaseDBConfiguration | undefined
+            }) {
+                return { sql: opts.sql, params: [...(opts.params ?? []), 'A'] }
+            }
+        }
+
+        class PluginB extends StarbasePlugin {
+            async beforeQuery(opts: {
+                sql: any
+                params?: any
+                dataSource?: DataSource | undefined
+                config?: StarbaseDBConfiguration | undefined
+            }) {
+                return { sql: opts.sql, params: [...(opts.params ?? []), 'B'] }
+            }
+        }
+
+        const pluginA = new PluginA('PluginA')
+        const pluginB = new PluginB('PluginB')
+
+        const registry = new StarbasePluginRegistry({
+            app: mockApp,
+            plugins: [pluginA, pluginB],
+        })
+
+        const result = await registry.beforeQuery({
+            sql: 'SELECT * FROM users',
+            params: ['initial'],
+        })
+
+        expect(result.params).toEqual(['initial', 'A', 'B'])
     })
 })
 
@@ -139,7 +189,7 @@ describe('StarbasePluginRegistry', () => {
             sql: 'SELECT * FROM users',
         })
 
-        expect(mockPlugin.beforeQuery).toHaveBeenCalled()
+        expect(mockPlugin.beforeQuery).toHaveBeenCalledTimes(1)
         expect(result.sql).toBe('SELECT * FROM users /* modified */')
     })
 
