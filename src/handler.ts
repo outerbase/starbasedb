@@ -19,6 +19,11 @@ import { StarbasePlugin, StarbasePluginRegistry } from './plugin'
 export interface StarbaseDBConfiguration {
     outerbaseApiKey?: string
     role: 'admin' | 'client'
+    export?: {
+        bucket?: R2Bucket
+        callbackUrl?: string
+        chunkSize?: number
+    }
     features?: {
         allowlist?: boolean
         rls?: boolean
@@ -120,8 +125,8 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
-            this.app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
+            this.app.get('/export/dump', this.isInternalSource, async (c) => {
+                return dumpDatabaseRoute(c.req.raw, this.dataSource, this.config)
             })
 
             this.app.get(
