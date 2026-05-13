@@ -123,6 +123,24 @@ describe('StarbaseDB Middleware & Request Handling', () => {
 })
 
 describe('StarbaseDB Query Execution', () => {
+    it('should reject query requests without JSON content type', async () => {
+        const request = new Request('https://example.com/query', {
+            method: 'POST',
+            body: 'SELECT * FROM users',
+            headers: { 'Content-Type': 'text/plain' },
+        })
+
+        const response = await instance.queryRoute(request, false)
+
+        expect(createResponse).toHaveBeenCalledWith(
+            undefined,
+            'Content-Type must be application/json.',
+            400
+        )
+        expect(response.status).toBe(400)
+        expect(executeQuery).not.toHaveBeenCalled()
+    })
+
     it('should execute a valid SQL query', async () => {
         const request = new Request('https://example.com/query', {
             method: 'POST',
@@ -154,19 +172,95 @@ describe('StarbaseDB Query Execution', () => {
         expect(response.status).toBe(400)
     })
 
-    it('should execute a SQL transaction', async () => {
+    it('should reject invalid query params', async () => {
         const request = new Request('https://example.com/query', {
             method: 'POST',
             body: JSON.stringify({
-                transaction: [{ sql: "INSERT INTO users VALUES (1, 'Alice')" }],
+                sql: 'SELECT * FROM users WHERE id = ?',
+                params: '1',
             }),
             headers: { 'Content-Type': 'application/json' },
         })
 
         const response = await instance.queryRoute(request, false)
 
-        expect(executeTransaction).toHaveBeenCalled()
+        expect(createResponse).toHaveBeenCalledWith(
+            undefined,
+            'Invalid "params" field. Must be an array or object.',
+            400
+        )
+        expect(response.status).toBe(400)
+        expect(executeQuery).not.toHaveBeenCalled()
+    })
+
+    it('should execute a SQL transaction', async () => {
+        const request = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({
+                transaction: [
+                    {
+                        sql: "INSERT INTO users VALUES (?, 'Alice')",
+                        params: [1],
+                    },
+                ],
+            }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+
+        const response = await instance.queryRoute(request, true)
+
+        expect(executeTransaction).toHaveBeenCalledWith({
+            queries: [
+                {
+                    sql: "INSERT INTO users VALUES (?, 'Alice')",
+                    params: [1],
+                },
+            ],
+            isRaw: true,
+            dataSource: mockDataSource,
+            config: mockConfig,
+        })
         expect(response.status).toBe(200)
+    })
+
+    it('should reject transactions with an empty SQL statement', async () => {
+        const request = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({
+                transaction: [{ sql: '   ' }],
+            }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+
+        const response = await instance.queryRoute(request, false)
+
+        expect(createResponse).toHaveBeenCalledWith(
+            undefined,
+            'Invalid or empty "sql" field in transaction.',
+            400
+        )
+        expect(response.status).toBe(400)
+        expect(executeTransaction).not.toHaveBeenCalled()
+    })
+
+    it('should reject transactions with invalid params', async () => {
+        const request = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({
+                transaction: [{ sql: 'SELECT * FROM users', params: 'bad' }],
+            }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+
+        const response = await instance.queryRoute(request, false)
+
+        expect(createResponse).toHaveBeenCalledWith(
+            undefined,
+            'Invalid "params" field in transaction. Must be an array or object.',
+            400
+        )
+        expect(response.status).toBe(400)
+        expect(executeTransaction).not.toHaveBeenCalled()
     })
 })
 

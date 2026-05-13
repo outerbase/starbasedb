@@ -316,25 +316,31 @@ export class StarbaseDB {
                 (await request.json()) as QueryRequest & QueryTransactionRequest
 
             if (Array.isArray(transaction) && transaction.length) {
-                const queries = transaction.map((queryObj: any) => {
+                const queries = []
+
+                for (const queryObj of transaction) {
                     const { sql, params } = queryObj
 
                     if (typeof sql !== 'string' || !sql.trim()) {
-                        throw new Error(
-                            'Invalid or empty "sql" field in transaction.'
+                        return createResponse(
+                            undefined,
+                            'Invalid or empty "sql" field in transaction.',
+                            400
                         )
                     } else if (
                         params !== undefined &&
                         !Array.isArray(params) &&
                         typeof params !== 'object'
                     ) {
-                        throw new Error(
-                            'Invalid "params" field in transaction. Must be an array or object.'
+                        return createResponse(
+                            undefined,
+                            'Invalid "params" field in transaction. Must be an array or object.',
+                            400
                         )
                     }
 
-                    return { sql, params }
-                })
+                    queries.push({ sql, params })
+                }
 
                 const response = await executeTransaction({
                     queries,
