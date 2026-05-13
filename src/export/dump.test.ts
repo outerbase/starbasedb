@@ -1,12 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { dumpDatabaseRoute } from './dump'
-import { executeOperation } from '.'
+import { executeOperation, getTableDataPage } from '.'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
 vi.mock('.', () => ({
+    EXPORT_PAGE_SIZE: 500,
     executeOperation: vi.fn(),
+    getTableDataPage: vi.fn(),
+    quoteIdentifier: (identifier: string) =>
+        `"${identifier.replace(/"/g, '""')}"`,
 }))
 
 vi.mock('../utils', () => ({
@@ -46,11 +50,13 @@ describe('Database Dump Module', () => {
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
             .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
+            ])
+
+        vi.mocked(getTableDataPage)
+            .mockResolvedValueOnce([
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
-            ])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
             .mockResolvedValueOnce([
                 { id: 1, total: 99.99 },
@@ -71,13 +77,13 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
     it('should handle empty databases (no tables)', async () => {
@@ -99,7 +105,7 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
-            .mockResolvedValueOnce([])
+        vi.mocked(getTableDataPage).mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -117,14 +123,53 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
-            .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+        vi.mocked(getTableDataPage).mockResolvedValueOnce([
+            { id: 1, bio: "Alice's adventure" },
+        ])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            "INSERT INTO \"users\" VALUES (1, 'Alice''s adventure');"
+        )
+    })
+
+    it('should stream table data in pages instead of loading a full table at once', async () => {
+        const firstPage = Array.from({ length: 500 }, (_, index) => ({
+            id: index + 1,
+            name: `User ${index + 1}`,
+        }))
+        const secondPage = [{ id: 501, name: 'User 501' }]
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+
+        vi.mocked(getTableDataPage)
+            .mockResolvedValueOnce(firstPage)
+            .mockResolvedValueOnce(secondPage)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(getTableDataPage).toHaveBeenCalledWith(
+            'users',
+            0,
+            mockDataSource,
+            mockConfig
+        )
+        expect(getTableDataPage).toHaveBeenCalledWith(
+            'users',
+            500,
+            mockDataSource,
+            mockConfig
+        )
+        expect(dumpText).toContain(
+            'INSERT INTO "users" VALUES (501, \'User 501\');'
         )
     })
 
