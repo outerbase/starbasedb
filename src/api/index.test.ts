@@ -17,6 +17,36 @@ describe('API Request Handler', () => {
         expect(text).toBe('Success')
     })
 
+    it('should ignore query strings for a valid GET request', async () => {
+        const request = new Request(
+            'https://starbasedb.test.workers.dev/api/your/path/here?source=test',
+            {
+                method: 'GET',
+            }
+        )
+
+        const response = await handleApiRequest(request)
+
+        expect(response.status).toBe(200)
+        const text = await response.text()
+        expect(text).toBe('Success')
+    })
+
+    it('should return 404 when the path has a trailing slash', async () => {
+        const request = new Request(
+            'https://starbasedb.test.workers.dev/api/your/path/here/',
+            {
+                method: 'GET',
+            }
+        )
+
+        const response = await handleApiRequest(request)
+
+        expect(response.status).toBe(404)
+        const text = await response.text()
+        expect(text).toBe('Not found')
+    })
+
     it('should return 404 for an unknown GET request', async () => {
         const request = new Request(
             'https://starbasedb.test.workers.dev/api/unknown',
