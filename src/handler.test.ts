@@ -7,6 +7,7 @@ import { LiteREST } from './literest'
 import { createResponse } from './utils'
 import { corsPreflight } from './cors'
 import { StarbasePluginRegistry } from './plugin'
+import type { StarbasePlugin } from './plugin'
 
 vi.mock('./cors', () => ({
     corsPreflight: vi.fn().mockReturnValue(new Response(null, { status: 204 })),
@@ -178,6 +179,85 @@ describe('StarbaseDB Cache Expiry', () => {
             sql: 'DELETE FROM tmp_cache WHERE timestamp + (ttl * 1000) < ?',
             params: [expect.any(Number)],
         })
+    })
+})
+
+describe('StarbaseDB Pre-Auth Plugin Routing', () => {
+    function createInstanceWithPlugin(plugin: Partial<StarbasePlugin>) {
+        return new StarbaseDB({
+            dataSource: mockDataSource,
+            config: mockConfig,
+            plugins: [plugin as StarbasePlugin],
+        })
+    }
+
+    it('should route matching authless plugin paths before auth checks', async () => {
+        const authlessPlugin = {
+            opts: { requiresAuth: false },
+            pathPrefix: '/webhooks/:provider/*',
+        }
+        const preAuthInstance = createInstanceWithPlugin(authlessPlugin)
+        const request = new Request(
+            'https://example.com/webhooks/stripe/events/created'
+        )
+
+        const response = await preAuthInstance.handlePreAuth(
+            request,
+            mockExecutionContext
+        )
+
+        expect(preAuthInstance['app'].fetch).toHaveBeenCalledWith(request)
+        await expect(response?.text()).resolves.toBe('mock-response')
+    })
+
+    it('should skip authless plugins when the path does not match', async () => {
+        const authlessPlugin = {
+            opts: { requiresAuth: false },
+            pathPrefix: '/webhooks/:provider/*',
+        }
+        const preAuthInstance = createInstanceWithPlugin(authlessPlugin)
+        const request = new Request('https://example.com/query')
+
+        const response = await preAuthInstance.handlePreAuth(
+            request,
+            mockExecutionContext
+        )
+
+        expect(response).toBeUndefined()
+        expect(preAuthInstance['app'].fetch).not.toHaveBeenCalled()
+    })
+
+    it('should not route auth-required plugin paths before auth checks', async () => {
+        const authRequiredPlugin = {
+            opts: { requiresAuth: true },
+            pathPrefix: '/socket',
+        }
+        const preAuthInstance = createInstanceWithPlugin(authRequiredPlugin)
+        const request = new Request('https://example.com/socket')
+
+        const response = await preAuthInstance.handlePreAuth(
+            request,
+            mockExecutionContext
+        )
+
+        expect(response).toBeUndefined()
+        expect(preAuthInstance['app'].fetch).not.toHaveBeenCalled()
+    })
+
+    it('should ignore authless plugins without a path prefix', async () => {
+        const authlessPlugin = {
+            opts: { requiresAuth: false },
+        }
+        const preAuthInstance = createInstanceWithPlugin(authlessPlugin)
+        const request = new Request('https://example.com/webhooks/stripe')
+
+        const response = await preAuthInstance.handlePreAuth(
+            request,
+            mockExecutionContext
+        )
+
+        expect(response).toBeUndefined()
+        expect(preAuthInstance['app'].fetch).not.toHaveBeenCalled()
     })
 })
 
