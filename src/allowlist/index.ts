@@ -79,6 +79,20 @@ export async function isQueryAllowed(opts: {
         const normalizedQuery = parser.astify(normalizeSQL(sql))
 
         // Compare ASTs while ignoring specific values
+        const literalNodeTypes = new Set([
+            'number',
+            'string',
+            'bool',
+            'null',
+            'single_quote_string',
+            'double_quote_string',
+        ])
+
+        const isLiteralNode = (node: any): boolean =>
+            node !== null &&
+            typeof node === 'object' &&
+            literalNodeTypes.has(node.type)
+
         const deepCompareAst = (allowedAst: any, queryAst: any): boolean => {
             if (typeof allowedAst !== typeof queryAst) return false
 
@@ -97,9 +111,18 @@ export async function isQueryAllowed(opts: {
 
                 if (allowedKeys.length !== queryKeys.length) return false
 
-                return allowedKeys.every((key) =>
-                    deepCompareAst(allowedAst[key], queryAst[key])
-                )
+                return allowedKeys.every((key) => {
+                    if (
+                        key === 'value' &&
+                        isLiteralNode(allowedAst) &&
+                        isLiteralNode(queryAst) &&
+                        allowedAst.type === queryAst.type
+                    ) {
+                        return true
+                    }
+
+                    return deepCompareAst(allowedAst[key], queryAst[key])
+                })
             }
 
             // Base case: Primitive value comparison
