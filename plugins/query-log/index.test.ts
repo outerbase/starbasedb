@@ -49,6 +49,20 @@ describe('QueryLogPlugin - register()', () => {
             params: [],
         })
     })
+
+    it('should continue middleware when no data source is available', async () => {
+        const next = vi.fn()
+        const mockApp = {
+            use: vi.fn((middleware) =>
+                middleware({ get: vi.fn(() => undefined) }, next)
+            ),
+        } as unknown as StarbaseApp
+
+        await queryLogPlugin.register(mockApp)
+
+        expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
+        expect(next).toHaveBeenCalledTimes(1)
+    })
 })
 
 describe('QueryLogPlugin - beforeQuery()', () => {
@@ -101,6 +115,28 @@ describe('QueryLogPlugin - afterQuery()', () => {
 
         expect(mockExecutionContext.waitUntil).toHaveBeenCalledTimes(1)
     })
+
+    it('should return the original result without logging when no data source is provided', async () => {
+        const result = [{ id: 1 }]
+
+        await queryLogPlugin.beforeQuery({
+            sql: 'SELECT * FROM users',
+            dataSource: mockDataSource,
+        })
+        const returned = await queryLogPlugin.afterQuery({
+            sql: 'SELECT * FROM users',
+            result,
+            isRaw: false,
+        })
+
+        expect(returned).toBe(result)
+        expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalledWith(
+            expect.objectContaining({
+                sql: expect.stringContaining('INSERT INTO tmp_query_log'),
+            })
+        )
+        expect(mockExecutionContext.waitUntil).toHaveBeenCalledTimes(1)
+    })
 })
 
 describe('QueryLogPlugin - addQuery()', () => {
@@ -114,6 +150,27 @@ describe('QueryLogPlugin - addQuery()', () => {
             sql: expect.stringContaining('INSERT INTO tmp_query_log'),
             params: ['SELECT * FROM test', 50],
         })
+    })
+
+    it('should isolate query log insert failures from callers', async () => {
+        const consoleError = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => undefined)
+        mockDataSource.rpc.executeQuery = vi
+            .fn()
+            .mockRejectedValue(new Error('database is busy'))
+        queryLogPlugin['state'].query = 'SELECT * FROM test'
+        queryLogPlugin['state'].totalTime = 25
+
+        const result = await queryLogPlugin['addQuery'](mockDataSource)
+
+        expect(result).toEqual([])
+        expect(consoleError).toHaveBeenCalledWith(
+            'Error inserting rejected allowlist query:',
+            expect.any(Error)
+        )
+
+        consoleError.mockRestore()
     })
 })
 
@@ -134,5 +191,25 @@ describe('QueryLogPlugin - expireLog()', () => {
 
         const result = await queryLogPlugin['expireLog']()
         expect(result).toBe(false)
+    })
+
+    it('should return false and log when purge fails', async () => {
+        const consoleError = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => undefined)
+        mockDataSource.rpc.executeQuery = vi
+            .fn()
+            .mockRejectedValue(new Error('purge failed'))
+        queryLogPlugin['dataSource'] = mockDataSource
+
+        const result = await queryLogPlugin['expireLog']()
+
+        expect(result).toBe(false)
+        expect(consoleError).toHaveBeenCalledWith(
+            'Error purging old query logs:',
+            expect.any(Error)
+        )
+
+        consoleError.mockRestore()
     })
 })
