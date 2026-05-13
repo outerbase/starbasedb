@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { ReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -222,6 +223,11 @@ export default {
                     preventSelectStar: false,
                 }),
                 new QueryLogPlugin({ ctx }),
+                new ReplicationPlugin({
+                    tables: ['replication_demo'],
+                    cursorColumn: 'id',
+                    ctx,
+                }),
                 cdcPlugin,
                 cronPlugin,
                 new StatsPlugin(),
