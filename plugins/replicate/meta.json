@@ -1,0 +1,5 @@
+{
+  "name": "replicate",
+  "description": "Pull data from an external StarbaseDB data source into the internal Durable Object SQLite database",
+  "version": "0.0.1"
+}
