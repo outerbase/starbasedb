@@ -56,6 +56,11 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    // Optional R2 destination for long-running async exports.
+    EXPORT_BUCKET?: R2Bucket
+    EXPORT_CALLBACK_URL?: string
+    EXPORT_CHUNK_SIZE?: number
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -187,6 +192,11 @@ export default {
             const config: StarbaseDBConfiguration = {
                 outerbaseApiKey: env.OUTERBASE_API_KEY,
                 role,
+                export: {
+                    bucket: env.EXPORT_BUCKET,
+                    callbackUrl: env.EXPORT_CALLBACK_URL,
+                    chunkSize: env.EXPORT_CHUNK_SIZE,
+                },
                 features: {
                     allowlist: env.ENABLE_ALLOWLIST,
                     rls: env.ENABLE_RLS,
