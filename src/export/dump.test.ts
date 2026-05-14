@@ -128,6 +128,44 @@ describe('Database Dump Module', () => {
         )
     })
 
+    it('should paginate through large tables instead of loading all rows at once', async () => {
+        // A full page signals there may be more rows, triggering another query.
+        const fullPage = Array.from({ length: 1000 }, (_, i) => ({
+            id: i + 1,
+            name: `User${i + 1}`,
+        }))
+        const partialPage = [{ id: 1001, name: 'User1001' }]
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }]) // table list
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ]) // schema
+            .mockResolvedValueOnce(fullPage) // data page 1 (full -> fetch more)
+            .mockResolvedValueOnce(partialPage) // data page 2 (partial -> stop)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        expect(response).toBeInstanceOf(Response)
+        const dumpText = await response.text()
+
+        // tables + schema + 2 data pages
+        expect(executeOperation).toHaveBeenCalledTimes(4)
+        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'User1');")
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (1001, 'User1001');"
+        )
+
+        // Data queries should be paginated with LIMIT/OFFSET.
+        const firstDataQuery =
+            vi.mocked(executeOperation).mock.calls[2][0][0].sql
+        const secondDataQuery =
+            vi.mocked(executeOperation).mock.calls[3][0][0].sql
+        expect(firstDataQuery).toContain('LIMIT')
+        expect(firstDataQuery).toContain('OFFSET 0')
+        expect(secondDataQuery).toContain('OFFSET 1000')
+    })
+
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
