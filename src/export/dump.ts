@@ -56,60 +56,73 @@ export async function dumpDatabaseRoute(
 
         const tables = tablesResult.map((row: any) => row.name)
         const encoder = new TextEncoder()
+        let headerSent = false
+        let tableIndex = 0
+        let schemaSent = false
+        let offset = 0
         const stream = new ReadableStream({
-            async start(controller) {
+            async pull(controller) {
                 try {
-                    controller.enqueue(encoder.encode('SQLite format 3\0'))
+                    if (!headerSent) {
+                        headerSent = true
+                        controller.enqueue(encoder.encode('SQLite format 3\0'))
+                        return
+                    }
 
-                    for (const table of tables) {
-                        const schemaResult = await executeOperation(
-                            [
-                                {
-                                    sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
-                                    params: [table],
-                                },
-                            ],
-                            dataSource,
-                            config
-                        )
+                    while (tableIndex < tables.length) {
+                        const table = tables[tableIndex]
 
-                        if (schemaResult.length) {
-                            const schema = schemaResult[0].sql
-                            controller.enqueue(
-                                encoder.encode(
-                                    `\n-- Table: ${table}\n${schema};\n\n`
-                                )
-                            )
-                        }
-
-                        let offset = 0
-                        while (true) {
-                            const dataResult = await executeOperation(
+                        if (!schemaSent) {
+                            schemaSent = true
+                            const schemaResult = await executeOperation(
                                 [
                                     {
-                                        sql: `SELECT * FROM ${quoteIdentifier(table)} LIMIT ? OFFSET ?;`,
-                                        params: [
-                                            DEFAULT_DUMP_BATCH_SIZE,
-                                            offset,
-                                        ],
+                                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
+                                        params: [table],
                                     },
                                 ],
                                 dataSource,
                                 config
                             )
 
-                            if (!dataResult.length) break
+                            if (schemaResult.length) {
+                                const schema = schemaResult[0].sql
+                                controller.enqueue(
+                                    encoder.encode(
+                                        `\n-- Table: ${table}\n${schema};\n\n`
+                                    )
+                                )
+                                return
+                            }
+                        }
 
+                        const dataResult = await executeOperation(
+                            [
+                                {
+                                    sql: `SELECT * FROM ${quoteIdentifier(table)} LIMIT ? OFFSET ?;`,
+                                    params: [DEFAULT_DUMP_BATCH_SIZE, offset],
+                                },
+                            ],
+                            dataSource,
+                            config
+                        )
+
+                        if (dataResult.length) {
+                            offset += DEFAULT_DUMP_BATCH_SIZE
                             const chunk = dataResult
                                 .map((row: Record<string, unknown>) =>
                                     buildInsertStatement(table, row)
                                 )
                                 .join('')
                             controller.enqueue(encoder.encode(chunk))
-                            offset += DEFAULT_DUMP_BATCH_SIZE
+                            return
                         }
 
+                        tableIndex += 1
+                        schemaSent = false
+                        offset = 0
                         controller.enqueue(encoder.encode('\n'))
+                        return
                     }
 
                     controller.close()

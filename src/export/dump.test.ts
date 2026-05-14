@@ -162,6 +162,48 @@ describe('Database Dump Module', () => {
         )
     })
 
+    it('should request the next data page only after the prior chunk is consumed', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'events' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE events (id INTEGER, payload TEXT);' },
+            ])
+            .mockResolvedValueOnce([{ id: 1, payload: 'first' }])
+            .mockResolvedValueOnce([{ id: 2, payload: 'second' }])
+            .mockResolvedValueOnce([])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+
+        expect(executeOperation).toHaveBeenCalledTimes(1)
+
+        expect(decoder.decode((await reader.read()).value)).toBe(
+            'SQLite format 3\0'
+        )
+        expect(decoder.decode((await reader.read()).value)).toContain(
+            'CREATE TABLE events'
+        )
+
+        await Promise.resolve()
+        expect(executeOperation).not.toHaveBeenCalledWith(
+            [
+                {
+                    sql: 'SELECT * FROM "events" LIMIT ? OFFSET ?;',
+                    params: [500, 500],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(decoder.decode((await reader.read()).value)).toContain('first')
+
+        await reader.read()
+        await reader.read()
+        expect((await reader.read()).done).toBe(true)
+    })
+
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
