@@ -1,0 +1,15 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_replicator_tables": "Tracks which external tables are replicated, their tracking column and the last synced watermark."
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
