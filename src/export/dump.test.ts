@@ -49,6 +49,7 @@ describe('Database Dump Module', () => {
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
             ])
+            .mockResolvedValueOnce([])
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
@@ -56,6 +57,7 @@ describe('Database Dump Module', () => {
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
             ])
+            .mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -71,13 +73,13 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
     it('should handle empty databases (no tables)', async () => {
@@ -118,14 +120,88 @@ describe('Database Dump Module', () => {
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
             .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+            .mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            "INSERT INTO \"users\" VALUES (1, 'Alice''s adventure');"
         )
+    })
+
+    it('should read table rows in bounded pages', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'events' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE events (id INTEGER, payload TEXT);' },
+            ])
+            .mockResolvedValueOnce([{ id: 1, payload: 'first' }])
+            .mockResolvedValueOnce([{ id: 2, payload: 'second' }])
+            .mockResolvedValueOnce([])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain(
+            'INSERT INTO "events" VALUES (1, \'first\');'
+        )
+        expect(dumpText).toContain(
+            'INSERT INTO "events" VALUES (2, \'second\');'
+        )
+        expect(executeOperation).toHaveBeenCalledWith(
+            [
+                {
+                    sql: 'SELECT * FROM "events" LIMIT ? OFFSET ?;',
+                    params: [500, 500],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should request the next data page only after the prior chunk is consumed', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'events' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE events (id INTEGER, payload TEXT);' },
+            ])
+            .mockResolvedValueOnce([{ id: 1, payload: 'first' }])
+            .mockResolvedValueOnce([{ id: 2, payload: 'second' }])
+            .mockResolvedValueOnce([])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+
+        expect(executeOperation).toHaveBeenCalledTimes(1)
+
+        expect(decoder.decode((await reader.read()).value)).toBe(
+            'SQLite format 3\0'
+        )
+        expect(decoder.decode((await reader.read()).value)).toContain(
+            'CREATE TABLE events'
+        )
+
+        await Promise.resolve()
+        expect(executeOperation).not.toHaveBeenCalledWith(
+            [
+                {
+                    sql: 'SELECT * FROM "events" LIMIT ? OFFSET ?;',
+                    params: [500, 500],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(decoder.decode((await reader.read()).value)).toContain('first')
+
+        await reader.read()
+        await reader.read()
+        expect((await reader.read()).done).toBe(true)
     })
 
     it('should return a 500 response when an error occurs', async () => {
