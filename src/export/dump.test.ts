@@ -41,6 +41,23 @@ function makeRequest(url = 'https://example.com/export/dump') {
     return new Request(url)
 }
 
+function makeMockBucket() {
+    const objects = new Map<string, string>()
+    const bucket = {
+        get: vi.fn(async (key: string) => {
+            if (!objects.has(key)) return null
+            const value = objects.get(key)!
+            return { json: async () => JSON.parse(value), text: async () => value }
+        }),
+        put: vi.fn(async (key: string, value: any) => {
+            objects.set(key, typeof value === 'string' ? value : String(value))
+            return undefined
+        }),
+        objects,
+    }
+    return bucket as any
+}
+
 async function readStream(stream: ReadableStream<Uint8Array>): Promise<string> {
     const reader = stream.getReader()
     const decoder = new TextDecoder()
@@ -200,8 +217,8 @@ describe('dumpDatabaseRoute (async=true)', () => {
     })
 
     it('returns 202 accepted and uploads to R2 bucket', async () => {
-        const mockPut = vi.fn().mockResolvedValue(undefined)
-        const mockBucket = { put: mockPut } as any
+        const mockBucket = makeMockBucket()
+        const mockPut = mockBucket.put
 
         mockExecuteOperation
             .mockResolvedValueOnce([{ name: 'users' }])
@@ -216,16 +233,25 @@ describe('dumpDatabaseRoute (async=true)', () => {
             makeConfig({ export: { bucket: mockBucket } })
         )
 
-        expect(response.status).toBe(202)
+        expect(response.status).toBe(200)
         const json: any = await response.json()
-        expect(json.result.status).toBe('accepted')
+        expect(json.result.status).toBe('completed')
         expect(json.result.filename).toMatch(/^dump_/)
-        expect(mockPut).toHaveBeenCalledOnce()
+        expect(mockPut).toHaveBeenCalledWith(
+            expect.stringContaining('.manifest.json'),
+            expect.any(String),
+            expect.objectContaining({ httpMetadata: { contentType: 'application/json' } })
+        )
+        expect(mockPut).toHaveBeenCalledWith(
+            expect.stringContaining('.parts/'),
+            expect.any(String),
+            expect.objectContaining({ httpMetadata: { contentType: 'application/sql' } })
+        )
     })
 
     it('uses custom filename from query param', async () => {
-        const mockPut = vi.fn().mockResolvedValue(undefined)
-        const mockBucket = { put: mockPut } as any
+        const mockBucket = makeMockBucket()
+        const mockPut = mockBucket.put
 
         mockExecuteOperation.mockResolvedValueOnce([])
 
@@ -238,13 +264,18 @@ describe('dumpDatabaseRoute (async=true)', () => {
             makeConfig({ export: { bucket: mockBucket } })
         )
 
-        expect(response.status).toBe(202)
+        expect(response.status).toBe(200)
         const json: any = await response.json()
         expect(json.result.filename).toBe('my_backup.sql')
         expect(mockPut).toHaveBeenCalledWith(
-            'my_backup.sql',
-            expect.anything(),
-            expect.objectContaining({ httpMetadata: { contentType: 'application/x-sqlite3' } })
+            'my_backup.sql.manifest.json',
+            expect.any(String),
+            expect.objectContaining({ httpMetadata: { contentType: 'application/json' } })
+        )
+        expect(mockPut).toHaveBeenCalledWith(
+            'my_backup.sql.parts/00000000.sql',
+            expect.any(String),
+            expect.objectContaining({ httpMetadata: { contentType: 'application/sql' } })
         )
     })
 
@@ -252,8 +283,8 @@ describe('dumpDatabaseRoute (async=true)', () => {
         const fetchMock = vi.fn().mockResolvedValue(new Response('ok'))
         vi.stubGlobal('fetch', fetchMock)
 
-        const mockPut = vi.fn().mockResolvedValue(undefined)
-        const mockBucket = { put: mockPut } as any
+        const mockBucket = makeMockBucket()
+        const mockPut = mockBucket.put
 
         mockExecuteOperation.mockResolvedValueOnce([])
 
