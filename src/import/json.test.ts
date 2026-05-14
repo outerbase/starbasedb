@@ -106,6 +106,40 @@ describe('JSON Import Module', () => {
         expect(jsonResponse.error).toBe('No file uploaded')
     })
 
+    it('should reject JSON payloads without a data array', async () => {
+        const invalidPayloads = [
+            {},
+            { data: null },
+            { data: { id: 1, name: 'Alice' } },
+        ]
+
+        for (const payload of invalidPayloads) {
+            const request = new Request('http://localhost', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+
+            const response = await importTableFromJsonRoute(
+                'users',
+                request,
+                mockDataSource,
+                mockConfig
+            )
+
+            expect(response.status).toBe(400)
+            const jsonResponse = (await response.json()) as {
+                error?: string
+                result?: any
+            }
+            expect(jsonResponse.error).toBe(
+                'Invalid JSON format. Expected an object with "data" array and optional "columnMapping".'
+            )
+        }
+
+        expect(executeOperation).not.toHaveBeenCalled()
+    })
+
     it('should successfully insert valid JSON data into the table', async () => {
         vi.mocked(executeOperation).mockResolvedValue([])
 
