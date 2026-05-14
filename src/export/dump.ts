@@ -3,6 +3,7 @@ import {
     createTextStream,
     executeOperation,
     getTableDataBatches,
+    quoteSqlIdentifier,
 } from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
@@ -39,11 +40,14 @@ export async function dumpDatabaseRoute(
 
             // Iterate through all tables without building the full dump in memory.
             for (const table of tables) {
+                const tableIdentifier = quoteSqlIdentifier(table)
+
                 // Get table schema
                 const schemaResult = await executeOperation(
                     [
                         {
-                            sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
+                            sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
+                            params: [table],
                         },
                     ],
                     dataSource,
@@ -63,7 +67,7 @@ export async function dumpDatabaseRoute(
                     for (const row of rows) {
                         const values = Object.values(row).map(escapeSqlValue)
                         enqueue(
-                            `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+                            `INSERT INTO ${tableIdentifier} VALUES (${values.join(', ')});\n`
                         )
                     }
                 }

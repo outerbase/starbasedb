@@ -4,6 +4,10 @@ import { StarbaseDBConfiguration } from '../handler'
 
 export const EXPORT_BATCH_SIZE = 1000
 
+export function quoteSqlIdentifier(identifier: string): string {
+    return `"${identifier.replace(/"/g, '""')}"`
+}
+
 export async function executeOperation(
     queries: { sql: string; params?: any[] }[],
     dataSource: DataSource,
@@ -44,8 +48,9 @@ export async function getTableData(
         }
 
         // Get table data
+        const tableIdentifier = quoteSqlIdentifier(tableName)
         const dataResult = await executeOperation(
-            [{ sql: `SELECT * FROM ${tableName};` }],
+            [{ sql: `SELECT * FROM ${tableIdentifier};` }],
             dataSource,
             config
         )
@@ -82,12 +87,15 @@ export async function* getTableDataBatches(
     batchSize = EXPORT_BATCH_SIZE
 ): AsyncGenerator<any[]> {
     let offset = 0
+    const tableIdentifier = quoteSqlIdentifier(tableName)
+    const normalizedBatchSize = Math.max(1, Math.floor(batchSize))
 
     while (true) {
         const rows = await executeOperation(
             [
                 {
-                    sql: `SELECT * FROM ${tableName} LIMIT ${batchSize} OFFSET ${offset};`,
+                    sql: `SELECT * FROM ${tableIdentifier} LIMIT ? OFFSET ?;`,
+                    params: [normalizedBatchSize, offset],
                 },
             ],
             dataSource,

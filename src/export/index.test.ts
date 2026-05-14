@@ -6,6 +6,7 @@ import {
     executeOperation,
     getTableData,
     getTableDataBatches,
+    quoteSqlIdentifier,
     tableExists,
 } from './index'
 import { executeTransaction } from '../operation'
@@ -159,21 +160,69 @@ describe('Database Operations Module', () => {
             expect(executeTransaction).toHaveBeenNthCalledWith(
                 1,
                 expect.objectContaining({
-                    queries: [{ sql: 'SELECT * FROM users LIMIT 1 OFFSET 0;' }],
+                    queries: [
+                        {
+                            sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                            params: [1, 0],
+                        },
+                    ],
                 })
             )
             expect(executeTransaction).toHaveBeenNthCalledWith(
                 2,
                 expect.objectContaining({
-                    queries: [{ sql: 'SELECT * FROM users LIMIT 1 OFFSET 1;' }],
+                    queries: [
+                        {
+                            sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                            params: [1, 1],
+                        },
+                    ],
                 })
             )
             expect(executeTransaction).toHaveBeenNthCalledWith(
                 3,
                 expect.objectContaining({
-                    queries: [{ sql: 'SELECT * FROM users LIMIT 1 OFFSET 2;' }],
+                    queries: [
+                        {
+                            sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                            params: [1, 2],
+                        },
+                    ],
                 })
             )
+        })
+
+        it('should quote table identifiers used in batch queries', async () => {
+            vi.mocked(executeTransaction).mockResolvedValueOnce([])
+
+            const rows: any[] = []
+
+            for await (const batch of getTableDataBatches(
+                'user"events',
+                mockDataSource,
+                mockConfig,
+                10
+            )) {
+                rows.push(...batch)
+            }
+
+            expect(rows).toEqual([])
+            expect(executeTransaction).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    queries: [
+                        {
+                            sql: 'SELECT * FROM "user""events" LIMIT ? OFFSET ?;',
+                            params: [10, 0],
+                        },
+                    ],
+                })
+            )
+        })
+    })
+
+    describe('quoteSqlIdentifier', () => {
+        it('should quote double quotes inside identifiers', () => {
+            expect(quoteSqlIdentifier('user"events')).toBe('"user""events"')
         })
     })
 

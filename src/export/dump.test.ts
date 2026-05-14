@@ -27,6 +27,8 @@ async function* batches(...chunks: any[][]) {
 vi.mock('.', () => ({
     executeOperation: vi.fn(),
     getTableDataBatches: vi.fn(),
+    quoteSqlIdentifier: (identifier: string) =>
+        `"${identifier.replace(/"/g, '""')}"`,
     createTextStream: createTestTextStream,
     createExportStreamResponse: (
         stream: ReadableStream<Uint8Array>,
@@ -108,13 +110,13 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
     it('should handle empty databases (no tables)', async () => {
@@ -163,7 +165,7 @@ describe('Database Dump Module', () => {
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            "INSERT INTO \"users\" VALUES (1, 'Alice''s adventure');"
         )
     })
 
@@ -180,8 +182,8 @@ describe('Database Dump Module', () => {
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
         const dumpText = await response.text()
 
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
     })
 
     it('should render null values as SQL NULL', async () => {
@@ -197,7 +199,7 @@ describe('Database Dump Module', () => {
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
         const dumpText = await response.text()
 
-        expect(dumpText).toContain('INSERT INTO users VALUES (1, NULL);')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, NULL);')
     })
 
     it('should return a 500 response when an error occurs', async () => {
