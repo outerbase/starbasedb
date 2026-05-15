@@ -1,7 +1,28 @@
-import { getTableData, createExportResponse } from './index'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
+import {
+    createStreamingExportResponse,
+    formatCsvValue,
+    getTableColumns,
+    iterateTableRows,
+    tableExists,
+} from './streaming'
+
+async function* csvTableChunks(
+    tableName: string,
+    columns: string[],
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): AsyncGenerator<string> {
+    if (columns.length) {
+        yield `${columns.map(formatCsvValue).join(',')}\n`
+    }
+
+    for await (const row of iterateTableRows(tableName, dataSource, config)) {
+        yield `${columns.map((column) => formatCsvValue(row[column])).join(',')}\n`
+    }
+}
 
 export async function exportTableToCsvRoute(
     tableName: string,
@@ -9,9 +30,7 @@ export async function exportTableToCsvRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
-
-        if (data === null) {
+        if (!(await tableExists(tableName, dataSource, config))) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,33 +38,10 @@ export async function exportTableToCsvRoute(
             )
         }
 
-        // Convert the result to CSV
-        let csvContent = ''
-        if (data.length > 0) {
-            // Add headers
-            csvContent += Object.keys(data[0]).join(',') + '\n'
+        const columns = await getTableColumns(tableName, dataSource, config)
 
-            // Add data rows
-            data.forEach((row: any) => {
-                csvContent +=
-                    Object.values(row)
-                        .map((value) => {
-                            if (
-                                typeof value === 'string' &&
-                                (value.includes(',') ||
-                                    value.includes('"') ||
-                                    value.includes('\n'))
-                            ) {
-                                return `"${value.replace(/"/g, '""')}"`
-                            }
-                            return value
-                        })
-                        .join(',') + '\n'
-            })
-        }
-
-        return createExportResponse(
-            csvContent,
+        return createStreamingExportResponse(
+            csvTableChunks(tableName, columns, dataSource, config),
             `${tableName}_export.csv`,
             'text/csv'
         )

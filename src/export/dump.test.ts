@@ -71,13 +71,13 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
     it('should handle empty databases (no tables)', async () => {
@@ -124,8 +124,66 @@ describe('Database Dump Module', () => {
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            'INSERT INTO "users" VALUES (1, \'Alice\'\'s adventure\');'
         )
+    })
+
+    it('should page table data instead of loading a full table at once', async () => {
+        const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+            id: index + 1,
+            name: `User ${index + 1}`,
+        }))
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+            .mockResolvedValueOnce(firstPage)
+            .mockResolvedValueOnce([{ id: 1001, name: 'Last User' }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain(
+            'INSERT INTO "users" VALUES (1001, \'Last User\');'
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            3,
+            [
+                {
+                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                    params: [1000, 0],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            4,
+            [
+                {
+                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                    params: [1000, 1000],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should emit SQL NULL for nullish values', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
+            ])
+            .mockResolvedValueOnce([{ id: 1, bio: null }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, NULL);')
     })
 
     it('should return a 500 response when an error occurs', async () => {
