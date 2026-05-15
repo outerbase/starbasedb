@@ -139,7 +139,7 @@ describe('StarbasePluginRegistry', () => {
             sql: 'SELECT * FROM users',
         })
 
-        expect(mockPlugin.beforeQuery).toHaveBeenCalled()
+        expect(mockPlugin.beforeQuery).toHaveBeenCalledTimes(1)
         expect(result.sql).toBe('SELECT * FROM users /* modified */')
     })
 

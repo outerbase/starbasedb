@@ -1,0 +1,21 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_starbasedb_replication_state": {
+                "description": "Stores per-table external replication cursor state."
+            },
+            "tmp_starbasedb_replication_runs": {
+                "description": "Stores per-run replication status and error history."
+            }
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
+
