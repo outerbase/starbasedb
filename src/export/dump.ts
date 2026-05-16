@@ -2,6 +2,54 @@ import { executeOperation } from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
+import {
+    createStreamingExportResponse,
+    formatSqlValue,
+    getTableExportPlan,
+    iterateTableRows,
+    quoteSqlIdentifier,
+    TableExportPlan,
+} from './streaming'
+
+type TableDumpContext = {
+    name: string
+    schema?: string
+    exportPlan: TableExportPlan
+}
+
+async function* dumpDatabaseChunks(
+    tables: TableDumpContext[],
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): AsyncGenerator<string> {
+    yield 'PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\n'
+
+    for (const table of tables) {
+        if (table.schema) {
+            const normalizedSchema = table.schema.trim().replace(/;+\s*$/, '')
+            yield `\n-- Table: ${table.name}\n${normalizedSchema};\n\n`
+        }
+
+        const quotedTableName = quoteSqlIdentifier(table.name)
+
+        for await (const row of iterateTableRows(
+            table.name,
+            dataSource,
+            config,
+            undefined,
+            table.exportPlan
+        )) {
+            const values = Object.values(row).map(formatSqlValue)
+            yield `INSERT INTO ${quotedTableName} VALUES (${values.join(
+                ', '
+            )});\n`
+        }
+
+        yield '\n'
+    }
+
+    yield 'COMMIT;\n'
+}
 
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
@@ -15,55 +63,44 @@ export async function dumpDatabaseRoute(
             config
         )
 
-        const tables = tablesResult.map((row: any) => row.name)
-        let dumpContent = 'SQLite format 3\0' // SQLite file header
+        const tableNames = tablesResult
+            .map((row: any) => row.name)
+            .filter((name: unknown): name is string => typeof name === 'string')
+        const tables: TableDumpContext[] = []
 
-        // Iterate through all tables
-        for (const table of tables) {
-            // Get table schema
+        for (const table of tableNames) {
             const schemaResult = await executeOperation(
                 [
                     {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
+                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
+                        params: [table],
                     },
                 ],
                 dataSource,
                 config
             )
+            const schema =
+                typeof schemaResult[0]?.sql === 'string'
+                    ? schemaResult[0].sql
+                    : undefined
 
-            if (schemaResult.length) {
-                const schema = schemaResult[0].sql
-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
-            }
-
-            // Get table data
-            const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
-                dataSource,
-                config
-            )
-
-            for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
-                        ? `'${value.replace(/'/g, "''")}'`
-                        : value
-                )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
-            }
-
-            dumpContent += '\n'
+            tables.push({
+                name: table,
+                schema,
+                exportPlan: await getTableExportPlan(
+                    table,
+                    dataSource,
+                    config,
+                    schema
+                ),
+            })
         }
 
-        // Create a Blob from the dump content
-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
-
-        const headers = new Headers({
-            'Content-Type': 'application/x-sqlite3',
-            'Content-Disposition': 'attachment; filename="database_dump.sql"',
-        })
-
-        return new Response(blob, { headers })
+        return createStreamingExportResponse(
+            dumpDatabaseChunks(tables, dataSource, config),
+            'database_dump.sql',
+            'application/sql; charset=utf-8'
+        )
     } catch (error: any) {
         console.error('Database Dump Error:', error)
         return createResponse(undefined, 'Failed to create database dump', 500)
