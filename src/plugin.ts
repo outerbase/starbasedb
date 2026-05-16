@@ -89,7 +89,6 @@ export class StarbasePluginRegistry {
                 dataSource: opts.dataSource,
                 config: opts.config,
             })
-            await plugin.beforeQuery(opts)
             sql = modified.sql
             params = modified.params
         }
