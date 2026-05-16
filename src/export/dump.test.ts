@@ -22,6 +22,16 @@ vi.mock('../utils', () => ({
 let mockDataSource: DataSource
 let mockConfig: StarbaseDBConfiguration
 
+const tableColumns = (names: string[]) =>
+    names.map((name, index) => ({
+        cid: index,
+        name,
+        type: '',
+        notnull: 0,
+        dflt_value: null,
+        pk: name === 'id' ? 1 : 0,
+    }))
+
 beforeEach(() => {
     vi.clearAllMocks()
 
@@ -45,6 +55,8 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce(tableColumns(['id', 'name']))
             .mockResolvedValueOnce([
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
@@ -52,6 +64,8 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
+            .mockResolvedValueOnce([{ name: 'orders' }])
+            .mockResolvedValueOnce(tableColumns(['id', 'total']))
             .mockResolvedValueOnce([
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
@@ -71,13 +85,13 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
     it('should handle empty databases (no tables)', async () => {
@@ -99,6 +113,8 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce(tableColumns(['id', 'name']))
             .mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
@@ -117,6 +133,8 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce(tableColumns(['id', 'bio']))
             .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
@@ -124,7 +142,7 @@ describe('Database Dump Module', () => {
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            "INSERT INTO \"users\" VALUES (1, 'Alice''s adventure');"
         )
     })
 

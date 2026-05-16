@@ -1,7 +1,11 @@
-import { getTableData, createExportResponse } from './index'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
+import {
+    createStreamingExportResponse,
+    getTablePagePlan,
+    jsonTableChunks,
+} from './streaming'
 
 export async function exportTableToJsonRoute(
     tableName: string,
@@ -9,9 +13,9 @@ export async function exportTableToJsonRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        const pagePlan = await getTablePagePlan(tableName, dataSource, config)
 
-        if (data === null) {
+        if (!pagePlan) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,11 +23,8 @@ export async function exportTableToJsonRoute(
             )
         }
 
-        // Convert the result to JSON
-        const jsonData = JSON.stringify(data, null, 4)
-
-        return createExportResponse(
-            jsonData,
+        return createStreamingExportResponse(
+            jsonTableChunks(tableName, dataSource, config, pagePlan),
             `${tableName}_export.json`,
             'application/json'
         )
