@@ -1,7 +1,28 @@
-import { getTableData, createExportResponse } from './index'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
+import {
+    createStreamingExportResponse,
+    iterateTableRows,
+    tableExists,
+} from './streaming'
+
+async function* jsonTableChunks(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): AsyncGenerator<string> {
+    let isFirstRow = true
+
+    yield '['
+
+    for await (const row of iterateTableRows(tableName, dataSource, config)) {
+        yield `${isFirstRow ? '' : ','}\n${JSON.stringify(row, null, 4)}`
+        isFirstRow = false
+    }
+
+    yield isFirstRow ? ']' : '\n]'
+}
 
 export async function exportTableToJsonRoute(
     tableName: string,
@@ -9,9 +30,7 @@ export async function exportTableToJsonRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
-
-        if (data === null) {
+        if (!(await tableExists(tableName, dataSource, config))) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,11 +38,8 @@ export async function exportTableToJsonRoute(
             )
         }
 
-        // Convert the result to JSON
-        const jsonData = JSON.stringify(data, null, 4)
-
-        return createExportResponse(
-            jsonData,
+        return createStreamingExportResponse(
+            jsonTableChunks(tableName, dataSource, config),
             `${tableName}_export.json`,
             'application/json'
         )
