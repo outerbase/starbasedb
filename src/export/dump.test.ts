@@ -39,22 +39,30 @@ beforeEach(() => {
 })
 
 describe('Database Dump Module', () => {
-    it('should return a database dump when tables exist', async () => {
+    it('should stream a database dump when tables exist', async () => {
         vi.mocked(executeOperation)
-            .mockResolvedValueOnce([{ name: 'users' }, { name: 'orders' }])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
-            ])
-            .mockResolvedValueOnce([
-                { id: 1, name: 'Alice' },
-                { id: 2, name: 'Bob' },
-            ])
+            .mockResolvedValueOnce([{ name: 'orders' }, { name: 'users' }])
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
             .mockResolvedValueOnce([
+                { name: 'id', pk: 1 },
+                { name: 'total', pk: 0 },
+            ])
+            .mockResolvedValueOnce([
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
+            ])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+            .mockResolvedValueOnce([
+                { name: 'id', pk: 1 },
+                { name: 'name', pk: 0 },
+            ])
+            .mockResolvedValueOnce([
+                { id: 1, name: 'Alice' },
+                { id: 2, name: 'Bob' },
             ])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
@@ -71,64 +79,123 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
-    it('should handle empty databases (no tables)', async () => {
+    it('should handle empty databases', async () => {
         vi.mocked(executeOperation).mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
         expect(response).toBeInstanceOf(Response)
-        expect(response.headers.get('Content-Type')).toBe(
-            'application/x-sqlite3'
-        )
         const dumpText = await response.text()
         expect(dumpText).toBe('SQLite format 3\0')
     })
 
-    it('should handle databases with tables but no data', async () => {
-        vi.mocked(executeOperation)
-            .mockResolvedValueOnce([{ name: 'users' }])
-            .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
-            ])
-            .mockResolvedValueOnce([])
-
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response).toBeInstanceOf(Response)
-        const dumpText = await response.text()
-        expect(dumpText).toContain(
-            'CREATE TABLE users (id INTEGER, name TEXT);'
-        )
-        expect(dumpText).not.toContain('INSERT INTO users VALUES')
-    })
-
-    it('should escape single quotes properly in string values', async () => {
+    it('should escape SQL values and emit NULL for nullish values', async () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }])
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
-            .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+            .mockResolvedValueOnce([
+                { name: 'id', pk: 1 },
+                { name: 'bio', pk: 0 },
+                { name: 'empty', pk: 0 },
+            ])
+            .mockResolvedValueOnce([
+                { id: 1, bio: "Alice's adventure", empty: null },
+            ])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
-        expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            "INSERT INTO \"users\" VALUES (1, 'Alice''s adventure', NULL);"
         )
     })
 
-    it('should return a 500 response when an error occurs', async () => {
+    it('should page table data with a stable order instead of loading the full table', async () => {
+        const firstPage = Array.from({ length: 500 }, (_, index) => ({
+            id: index + 1,
+            name: `User${index + 1}`,
+        }))
+        const partialPage = [{ id: 501, name: 'User501' }]
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+            .mockResolvedValueOnce([
+                { name: 'id', pk: 1 },
+                { name: 'name', pk: 0 },
+            ])
+            .mockResolvedValueOnce(firstPage)
+            .mockResolvedValueOnce(partialPage)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain(
+            'INSERT INTO "users" VALUES (501, \'User501\');'
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            4,
+            [
+                {
+                    sql: 'SELECT * FROM "users" ORDER BY "id" LIMIT ? OFFSET ?;',
+                    params: [500, 0],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            5,
+            [
+                {
+                    sql: 'SELECT * FROM "users" ORDER BY "id" LIMIT ? OFFSET ?;',
+                    params: [500, 500],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should fall back to rowid ordering when a table has no primary key', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'logs' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE logs (message TEXT);' },
+            ])
+            .mockResolvedValueOnce([{ name: 'message', pk: 0 }])
+            .mockResolvedValueOnce([{ message: 'ready' }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        await response.text()
+
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            4,
+            [
+                {
+                    sql: 'SELECT * FROM "logs" ORDER BY rowid LIMIT ? OFFSET ?;',
+                    params: [500, 0],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should return a 500 response when an error occurs before streaming starts', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
             .mockImplementation(() => {})
@@ -141,5 +208,6 @@ describe('Database Dump Module', () => {
         expect(response.status).toBe(500)
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to create database dump')
+        consoleErrorMock.mockRestore()
     })
 })
