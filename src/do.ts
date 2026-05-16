@@ -72,6 +72,7 @@ export class StarbaseDBDurableObject extends DurableObject {
             deleteAlarm: this.deleteAlarm.bind(this),
             getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
+            executeTransaction: this.executeTransaction.bind(this),
         }
     }
 
@@ -260,7 +261,7 @@ export class StarbaseDBDurableObject extends DurableObject {
         }
     }
 
-    private async executeRawQuery<
+    private executeRawQuery<
         T extends Record<string, SqlStorageValue> = Record<
             string,
             SqlStorageValue
@@ -284,14 +285,11 @@ export class StarbaseDBDurableObject extends DurableObject {
         }
     }
 
-    public async executeQuery(opts: {
-        sql: string
-        params?: unknown[]
+    private formatQueryResult<T extends Record<string, SqlStorageValue>>(
+        cursor: SqlStorageCursor<T>,
         isRaw?: boolean
-    }) {
-        const cursor = await this.executeRawQuery(opts)
-
-        if (opts.isRaw) {
+    ) {
+        if (isRaw) {
             return {
                 columns: cursor.columnNames,
                 rows: Array.from(cursor.raw()),
@@ -305,20 +303,28 @@ export class StarbaseDBDurableObject extends DurableObject {
         return cursor.toArray()
     }
 
+    public async executeQuery(opts: {
+        sql: string
+        params?: unknown[]
+        isRaw?: boolean
+    }) {
+        const cursor = this.executeRawQuery(opts)
+        return this.formatQueryResult(cursor, opts.isRaw)
+    }
+
     public async executeTransaction(
         queries: { sql: string; params?: unknown[] }[],
         isRaw: boolean
     ): Promise<any[]> {
-        const results = []
-
         try {
-            for (const queryObj of queries) {
-                const { sql, params } = queryObj
-                const result = await this.executeQuery({ sql, params, isRaw })
-                results.push(result)
-            }
-
-            return results
+            return this.storage.transactionSync(() =>
+                queries.map(({ sql, params }) =>
+                    this.formatQueryResult(
+                        this.executeRawQuery({ sql, params }),
+                        isRaw
+                    )
+                )
+            )
         } catch (error) {
             console.error('Transaction Execution Error:', error)
             throw error

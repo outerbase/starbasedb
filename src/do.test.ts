@@ -74,6 +74,7 @@ const mockStorage = {
             rowsWritten: 1,
         }),
     },
+    transactionSync: vi.fn((closure: () => unknown) => closure()),
 }
 
 const mockDurableObjectState = {
@@ -114,6 +115,7 @@ describe('StarbaseDBDurableObject Tests', () => {
         ]
         const result = await instance.executeTransaction(queries, false)
 
+        expect(mockStorage.transactionSync).toHaveBeenCalledTimes(1)
         expect(mockStorage.sql.exec).toHaveBeenCalledTimes(2)
         expect(result.length).toBe(2)
     })

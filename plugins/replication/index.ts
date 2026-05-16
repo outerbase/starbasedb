@@ -10,6 +10,8 @@ const SQL_QUERIES = {
             table_name TEXT PRIMARY KEY,
             last_cursor_value TEXT,
             last_cursor_type TEXT,
+            last_cursor_tie_breaker_value TEXT,
+            last_cursor_tie_breaker_type TEXT,
             last_synced_at TEXT,
             total_rows_synced INTEGER NOT NULL DEFAULT 0,
             last_error TEXT
@@ -29,22 +31,24 @@ const SQL_QUERIES = {
         )
     `,
     SELECT_STATE: `
-        SELECT table_name, last_cursor_value, last_cursor_type, last_synced_at, total_rows_synced, last_error
+        SELECT table_name, last_cursor_value, last_cursor_type, last_cursor_tie_breaker_value, last_cursor_tie_breaker_type, last_synced_at, total_rows_synced, last_error
         FROM tmp_starbasedb_replication_state
         WHERE table_name = ?
     `,
     SELECT_ALL_STATE: `
-        SELECT table_name, last_cursor_value, last_cursor_type, last_synced_at, total_rows_synced, last_error
+        SELECT table_name, last_cursor_value, last_cursor_type, last_cursor_tie_breaker_value, last_cursor_tie_breaker_type, last_synced_at, total_rows_synced, last_error
         FROM tmp_starbasedb_replication_state
         ORDER BY table_name
     `,
     UPSERT_STATE: `
         INSERT INTO tmp_starbasedb_replication_state (
-            table_name, last_cursor_value, last_cursor_type, last_synced_at, total_rows_synced, last_error
-        ) VALUES (?, ?, ?, ?, ?, NULL)
+            table_name, last_cursor_value, last_cursor_type, last_cursor_tie_breaker_value, last_cursor_tie_breaker_type, last_synced_at, total_rows_synced, last_error
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)
         ON CONFLICT(table_name) DO UPDATE SET
             last_cursor_value = excluded.last_cursor_value,
             last_cursor_type = excluded.last_cursor_type,
+            last_cursor_tie_breaker_value = excluded.last_cursor_tie_breaker_value,
+            last_cursor_tie_breaker_type = excluded.last_cursor_tie_breaker_type,
             last_synced_at = excluded.last_synced_at,
             total_rows_synced = excluded.total_rows_synced,
             last_error = NULL
@@ -80,6 +84,8 @@ export interface ReplicationTableOptions {
     columns?: string[]
     cursorColumn?: string
     cursorValueType?: CursorValueType
+    cursorTieBreakerColumn?: string
+    cursorTieBreakerValueType?: CursorValueType
     primaryKey?: string | string[]
     where?: string
     batchSize?: number
@@ -110,6 +116,8 @@ export interface ReplicationResult {
     rowsWritten: number
     cursorStart?: string | null
     cursorEnd?: string | null
+    cursorTieBreakerStart?: string | null
+    cursorTieBreakerEnd?: string | null
     error?: string
 }
 
@@ -117,9 +125,28 @@ type ReplicationStateRow = QueryResult & {
     table_name: string
     last_cursor_value?: string | null
     last_cursor_type?: CursorValueType | null
+    last_cursor_tie_breaker_value?: string | null
+    last_cursor_tie_breaker_type?: CursorValueType | null
     last_synced_at?: string | null
     total_rows_synced?: number | string | null
     last_error?: string | null
+}
+
+type ReplicationStateBookmark = {
+    cursorEnd: unknown
+    cursorTieBreakerEnd: unknown
+}
+
+type InternalQuery = {
+    sql: string
+    params?: unknown[]
+}
+
+type InternalTransactionExecutor = {
+    executeTransaction(
+        queries: InternalQuery[],
+        isRaw: boolean
+    ): Promise<unknown[]>
 }
 
 type NormalizedTableOptions = Required<
@@ -172,12 +199,16 @@ export class ReplicationPlugin extends StarbasePlugin {
         })
 
         app.get(`${this.pathPrefix}/status`, async () => {
-            if (!this.dataSource) {
+            if (!this.dataSource || !this.config) {
                 return createResponse(
                     undefined,
                     'ReplicationPlugin has not been initialized.',
                     500
                 )
+            }
+
+            if (!this.isAdmin(this.config)) {
+                return createResponse(undefined, 'Unauthorized request', 400)
             }
 
             await this.ensureInitialized(this.dataSource)
@@ -209,6 +240,10 @@ export class ReplicationPlugin extends StarbasePlugin {
                 )
             }
 
+            if (!this.isAdmin(this.config)) {
+                return createResponse(undefined, 'Unauthorized request', 400)
+            }
+
             const body = await this.safeJson<{ tables?: string[] }>(c.req.raw)
             const result = await this.sync({
                 dataSource: this.dataSource,
@@ -217,7 +252,11 @@ export class ReplicationPlugin extends StarbasePlugin {
                 tableNames: body?.tables,
             })
 
-            return createResponse(result, undefined, this.hasError(result) ? 500 : 200)
+            return createResponse(
+                result,
+                undefined,
+                this.hasError(result) ? 500 : 200
+            )
         })
 
         app.post(`${this.pathPrefix}/pull/:tableName`, async (c) => {
@@ -229,6 +268,10 @@ export class ReplicationPlugin extends StarbasePlugin {
                 )
             }
 
+            if (!this.isAdmin(this.config)) {
+                return createResponse(undefined, 'Unauthorized request', 400)
+            }
+
             const tableName = c.req.param('tableName')
             const result = await this.sync({
                 dataSource: this.dataSource,
@@ -237,7 +280,11 @@ export class ReplicationPlugin extends StarbasePlugin {
                 tableNames: [tableName],
             })
 
-            return createResponse(result, undefined, this.hasError(result) ? 500 : 200)
+            return createResponse(
+                result,
+                undefined,
+                this.hasError(result) ? 500 : 200
+            )
         })
     }
 
@@ -347,23 +394,7 @@ export class ReplicationPlugin extends StarbasePlugin {
             ? (externalRows as Record<string, unknown>[])
             : []
         const transformedRows = await this.transformRows(table, rows)
-        const cursorEnd = this.findCursorEnd(table, rows, state)
-
-        for (const row of transformedRows) {
-            const insert = this.buildInsertQuery(table, row)
-            await dataSource.rpc.executeQuery({
-                sql: insert.sql,
-                params: insert.params,
-            })
-        }
-
-        await this.upsertState({
-            table,
-            dataSource,
-            state,
-            cursorEnd,
-            rowsWritten: transformedRows.length,
-        })
+        const bookmark = this.findStateBookmark(table, rows, state)
 
         const result: ReplicationResult = {
             table: this.tableKey(table),
@@ -373,14 +404,35 @@ export class ReplicationPlugin extends StarbasePlugin {
             rowsRead: rows.length,
             rowsWritten: transformedRows.length,
             cursorStart: state?.last_cursor_value ?? null,
-            cursorEnd: cursorEnd == null ? null : String(cursorEnd),
+            cursorEnd:
+                bookmark.cursorEnd == null ? null : String(bookmark.cursorEnd),
+            cursorTieBreakerStart: state?.last_cursor_tie_breaker_value ?? null,
+            cursorTieBreakerEnd:
+                bookmark.cursorTieBreakerEnd == null
+                    ? null
+                    : String(bookmark.cursorTieBreakerEnd),
         }
 
-        await this.recordRun(table, dataSource, {
-            ...result,
-            startedAt,
-            finishedAt: new Date().toISOString(),
-        })
+        const writeQueries: InternalQuery[] = transformedRows.map((row) =>
+            this.buildInsertQuery(table, row)
+        )
+        writeQueries.push(
+            this.buildUpsertStateQuery({
+                table,
+                state,
+                bookmark,
+                rowsWritten: transformedRows.length,
+            })
+        )
+        writeQueries.push(
+            this.buildRecordRunQuery(table, {
+                ...result,
+                startedAt,
+                finishedAt: new Date().toISOString(),
+            })
+        )
+
+        await this.executeInternalTransaction(dataSource, writeQueries)
 
         return result
     }
@@ -397,6 +449,14 @@ export class ReplicationPlugin extends StarbasePlugin {
                 sql: SQL_QUERIES.CREATE_STATE_TABLE,
                 params: [],
             })
+            await this.addStateColumnIfMissing(
+                dataSource,
+                'last_cursor_tie_breaker_value TEXT'
+            )
+            await this.addStateColumnIfMissing(
+                dataSource,
+                'last_cursor_tie_breaker_type TEXT'
+            )
             await dataSource.rpc.executeQuery({
                 sql: SQL_QUERIES.CREATE_RUNS_TABLE,
                 params: [],
@@ -421,6 +481,25 @@ export class ReplicationPlugin extends StarbasePlugin {
         }
     }
 
+    private async addStateColumnIfMissing(
+        dataSource: DataSource,
+        columnDefinition: string
+    ) {
+        try {
+            await dataSource.rpc.executeQuery({
+                sql: `ALTER TABLE tmp_starbasedb_replication_state ADD COLUMN ${columnDefinition}`,
+                params: [],
+            })
+        } catch (error) {
+            const message =
+                error instanceof Error ? error.message : String(error)
+
+            if (!/duplicate column|already exists/i.test(message)) {
+                throw error
+            }
+        }
+    }
+
     private buildSelectQuery(
         table: NormalizedTableOptions,
         state: ReplicationStateRow | undefined,
@@ -431,7 +510,9 @@ export class ReplicationPlugin extends StarbasePlugin {
                 ? dataSource.external.dialect
                 : 'sqlite'
         const columns = table.columns?.length
-            ? table.columns.map((column) => this.quoteIdentifier(column, quoteStyle)).join(', ')
+            ? table.columns
+                  .map((column) => this.quoteIdentifier(column, quoteStyle))
+                  .join(', ')
             : '*'
         const conditions: string[] = []
         const params: unknown[] = []
@@ -441,24 +522,64 @@ export class ReplicationPlugin extends StarbasePlugin {
         }
 
         if (table.cursorColumn && state?.last_cursor_value != null) {
-            conditions.push(
-                `${this.quoteIdentifier(table.cursorColumn, quoteStyle)} > ?`
+            const cursorIdentifier = this.quoteIdentifier(
+                table.cursorColumn,
+                quoteStyle
             )
-            params.push(this.deserializeCursorValue(state))
+            const cursorValue = this.deserializeCursorValue(state)
+
+            if (
+                this.usesCursorTieBreaker(table) &&
+                state.last_cursor_tie_breaker_value != null
+            ) {
+                const tieBreakerIdentifier = this.quoteIdentifier(
+                    table.cursorTieBreakerColumn as string,
+                    quoteStyle
+                )
+                conditions.push(
+                    `(${cursorIdentifier} > ? OR (${cursorIdentifier} = ? AND ${tieBreakerIdentifier} > ?))`
+                )
+                params.push(
+                    cursorValue,
+                    cursorValue,
+                    this.deserializeCursorTieBreakerValue(state)
+                )
+            } else {
+                conditions.push(`${cursorIdentifier} > ?`)
+                params.push(cursorValue)
+            }
         }
 
         const where = conditions.length
             ? ` WHERE ${conditions.join(' AND ')}`
             : ''
-        const orderBy = table.cursorColumn
-            ? ` ORDER BY ${this.quoteIdentifier(table.cursorColumn, quoteStyle)} ASC`
+        const orderByParts: string[] = []
+        if (table.cursorColumn) {
+            orderByParts.push(
+                this.quoteIdentifier(table.cursorColumn, quoteStyle)
+            )
+
+            if (this.usesCursorTieBreaker(table)) {
+                orderByParts.push(
+                    this.quoteIdentifier(
+                        table.cursorTieBreakerColumn as string,
+                        quoteStyle
+                    )
+                )
+            }
+        }
+        const orderBy = orderByParts.length
+            ? ` ORDER BY ${orderByParts
+                  .map((identifier) => `${identifier} ASC`)
+                  .join(', ')}`
             : ''
+        const limit = table.cursorColumn ? ` LIMIT ${table.batchSize}` : ''
 
         return {
             sql: `SELECT ${columns} FROM ${this.quoteQualifiedIdentifier(
                 table.sourceTable,
                 quoteStyle
-            )}${where}${orderBy} LIMIT ${table.batchSize}`,
+            )}${where}${orderBy}${limit}`,
             params,
         }
     }
@@ -554,27 +675,76 @@ export class ReplicationPlugin extends StarbasePlugin {
         return transformedRows
     }
 
-    private findCursorEnd(
+    private findStateBookmark(
         table: NormalizedTableOptions,
         rows: Record<string, unknown>[],
         state?: ReplicationStateRow
-    ): unknown {
+    ): ReplicationStateBookmark {
         if (!table.cursorColumn || rows.length === 0) {
-            return state?.last_cursor_value ?? null
+            return {
+                cursorEnd: state?.last_cursor_value ?? null,
+                cursorTieBreakerEnd:
+                    state?.last_cursor_tie_breaker_value ?? null,
+            }
         }
 
-        const cursorValues = rows
-            .map((row) => row[table.cursorColumn as string])
-            .filter((value) => value !== undefined && value !== null)
+        const cursorColumn = table.cursorColumn
+        const tieBreakerColumn = this.usesCursorTieBreaker(table)
+            ? table.cursorTieBreakerColumn
+            : undefined
+        const cursorRows = rows.filter(
+            (row) =>
+                row[cursorColumn] !== undefined &&
+                row[cursorColumn] !== null &&
+                (!tieBreakerColumn ||
+                    (row[tieBreakerColumn] !== undefined &&
+                        row[tieBreakerColumn] !== null))
+        )
 
-        if (!cursorValues.length) {
-            return state?.last_cursor_value ?? null
+        if (!cursorRows.length) {
+            return {
+                cursorEnd: state?.last_cursor_value ?? null,
+                cursorTieBreakerEnd:
+                    state?.last_cursor_tie_breaker_value ?? null,
+            }
         }
 
-        return cursorValues.reduce((max, value) =>
-            this.compareCursorValues(value, max, table.cursorValueType) > 0
-                ? value
-                : max
+        const lastRow = cursorRows.reduce((maxRow, row) =>
+            this.compareCursorRows(table, row, maxRow) > 0 ? row : maxRow
+        )
+
+        return {
+            cursorEnd: lastRow[cursorColumn],
+            cursorTieBreakerEnd: tieBreakerColumn
+                ? lastRow[tieBreakerColumn]
+                : null,
+        }
+    }
+
+    private compareCursorRows(
+        table: NormalizedTableOptions,
+        left: Record<string, unknown>,
+        right: Record<string, unknown>
+    ): number {
+        if (!table.cursorColumn) {
+            return 0
+        }
+
+        const cursorCompare = this.compareCursorValues(
+            left[table.cursorColumn],
+            right[table.cursorColumn],
+            table.cursorValueType
+        )
+
+        if (cursorCompare !== 0 || !this.usesCursorTieBreaker(table)) {
+            return cursorCompare
+        }
+
+        const tieBreakerColumn = table.cursorTieBreakerColumn as string
+        return this.compareCursorValues(
+            left[tieBreakerColumn],
+            right[tieBreakerColumn],
+            table.cursorTieBreakerValueType
         )
     }
 
@@ -605,16 +775,26 @@ export class ReplicationPlugin extends StarbasePlugin {
         return state.last_cursor_value
     }
 
-    private cursorTypeForValue(
-        table: NormalizedTableOptions,
-        value: unknown
-    ): CursorValueType | null {
-        if (value == null) {
-            return table.cursorValueType ?? null
+    private deserializeCursorTieBreakerValue(
+        state: ReplicationStateRow
+    ): unknown {
+        if (state.last_cursor_tie_breaker_type === 'number') {
+            return Number(state.last_cursor_tie_breaker_value)
         }
 
-        if (table.cursorValueType) {
-            return table.cursorValueType
+        return state.last_cursor_tie_breaker_value
+    }
+
+    private cursorTypeForValue(
+        value: unknown,
+        configuredType?: CursorValueType
+    ): CursorValueType | null {
+        if (value == null) {
+            return configuredType ?? null
+        }
+
+        if (configuredType) {
+            return configuredType
         }
 
         return typeof value === 'number' ? 'number' : 'string'
@@ -627,7 +807,7 @@ export class ReplicationPlugin extends StarbasePlugin {
         const rows = (await dataSource.rpc.executeQuery({
             sql: SQL_QUERIES.SELECT_STATE,
             params: [this.tableKey(table)],
-        })) as ReplicationStateRow[]
+        })) as unknown as ReplicationStateRow[]
 
         return rows[0]
     }
@@ -636,7 +816,7 @@ export class ReplicationPlugin extends StarbasePlugin {
         return (await dataSource.rpc.executeQuery({
             sql: SQL_QUERIES.SELECT_ALL_STATE,
             params: [],
-        })) as ReplicationStateRow[]
+        })) as unknown as ReplicationStateRow[]
     }
 
     private async isDue(
@@ -657,36 +837,45 @@ export class ReplicationPlugin extends StarbasePlugin {
         return Date.now() - lastSyncedAt >= table.intervalSeconds * 1000
     }
 
-    private async upsertState(opts: {
+    private buildUpsertStateQuery(opts: {
         table: NormalizedTableOptions
-        dataSource: DataSource
         state?: ReplicationStateRow
-        cursorEnd: unknown
+        bookmark: ReplicationStateBookmark
         rowsWritten: number
-    }) {
-        const { table, dataSource, state, cursorEnd, rowsWritten } = opts
+    }): InternalQuery {
+        const { table, state, bookmark, rowsWritten } = opts
         const totalRowsSynced =
             Number(state?.total_rows_synced ?? 0) + rowsWritten
-        const cursorType = this.cursorTypeForValue(table, cursorEnd)
+        const cursorType = this.cursorTypeForValue(
+            bookmark.cursorEnd,
+            table.cursorValueType
+        )
+        const tieBreakerType = this.cursorTypeForValue(
+            bookmark.cursorTieBreakerEnd,
+            table.cursorTieBreakerValueType
+        )
 
-        await dataSource.rpc.executeQuery({
+        return {
             sql: SQL_QUERIES.UPSERT_STATE,
             params: [
                 this.tableKey(table),
-                cursorEnd == null ? null : String(cursorEnd),
+                bookmark.cursorEnd == null ? null : String(bookmark.cursorEnd),
                 cursorType,
+                bookmark.cursorTieBreakerEnd == null
+                    ? null
+                    : String(bookmark.cursorTieBreakerEnd),
+                tieBreakerType,
                 new Date().toISOString(),
                 totalRowsSynced,
             ],
-        })
+        }
     }
 
-    private async recordRun(
+    private buildRecordRunQuery(
         table: NormalizedTableOptions,
-        dataSource: DataSource,
         result: ReplicationResult & { startedAt: string; finishedAt: string }
-    ) {
-        await dataSource.rpc.executeQuery({
+    ): InternalQuery {
+        return {
             sql: SQL_QUERIES.INSERT_RUN,
             params: [
                 this.tableKey(table),
@@ -698,7 +887,7 @@ export class ReplicationPlugin extends StarbasePlugin {
                 result.cursorEnd ?? null,
                 result.error ?? null,
             ],
-        })
+        }
     }
 
     private async recordError(
@@ -730,20 +919,39 @@ export class ReplicationPlugin extends StarbasePlugin {
         if (table.cursorColumn) {
             this.validateIdentifier(table.cursorColumn)
         }
+        if (table.cursorTieBreakerColumn) {
+            this.validateIdentifier(table.cursorTieBreakerColumn)
+        }
 
         const primaryKey = Array.isArray(table.primaryKey)
             ? table.primaryKey
             : table.primaryKey
               ? [table.primaryKey]
-              : table.cursorColumn
-                ? [table.cursorColumn]
-                : []
+              : []
         primaryKey.forEach((column) => this.validateIdentifier(column))
+        const cursorTieBreakerColumn = table.cursorColumn
+            ? (table.cursorTieBreakerColumn ?? primaryKey[0])
+            : undefined
+
+        if (table.cursorColumn && !cursorTieBreakerColumn) {
+            throw new Error(
+                `Replication table ${table.sourceTable} requires primaryKey or cursorTieBreakerColumn when cursorColumn is configured.`
+            )
+        }
+
+        if (table.columns?.length && table.cursorColumn) {
+            this.requireSelectedColumn(table, table.cursorColumn)
+
+            if (cursorTieBreakerColumn) {
+                this.requireSelectedColumn(table, cursorTieBreakerColumn)
+            }
+        }
 
         return {
             ...table,
             sourceTable: table.sourceTable,
             targetTable,
+            cursorTieBreakerColumn,
             primaryKey,
             batchSize: this.normalizePositiveInteger(
                 table.batchSize ?? pluginOptions.defaultBatchSize ?? 500,
@@ -811,8 +1019,29 @@ export class ReplicationPlugin extends StarbasePlugin {
         return table.targetTable
     }
 
+    private usesCursorTieBreaker(table: NormalizedTableOptions): boolean {
+        return Boolean(
+            table.cursorColumn &&
+                table.cursorTieBreakerColumn &&
+                table.cursorTieBreakerColumn !== table.cursorColumn
+        )
+    }
+
+    private async executeInternalTransaction(
+        dataSource: DataSource,
+        queries: InternalQuery[]
+    ) {
+        await (
+            dataSource.rpc as unknown as InternalTransactionExecutor
+        ).executeTransaction(queries, false)
+    }
+
     private hasError(result: ReplicationResult[]): boolean {
         return result.some((item) => item.error)
+    }
+
+    private isAdmin(config: StarbaseDBConfiguration): boolean {
+        return config.role === 'admin'
     }
 
     private async safeJson<T>(request: Request): Promise<T | undefined> {
@@ -853,6 +1082,17 @@ export class ReplicationPlugin extends StarbasePlugin {
         identifier.split('.').forEach((part) => this.validateIdentifier(part))
     }
 
+    private requireSelectedColumn(
+        table: ReplicationTableOptions,
+        column: string
+    ) {
+        if (!table.columns?.includes(column)) {
+            throw new Error(
+                `Replication table ${table.sourceTable} columns must include ${column}.`
+            )
+        }
+    }
+
     private normalizePositiveInteger(value: number, name: string): number {
         if (!Number.isInteger(value) || value <= 0) {
             throw new Error(`${name} must be a positive integer.`)
@@ -869,4 +1109,3 @@ export class ReplicationPlugin extends StarbasePlugin {
         return value
     }
 }
-
