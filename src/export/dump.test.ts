@@ -45,23 +45,41 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
-            .mockResolvedValueOnce([
-                { id: 1, name: 'Alice' },
-                { id: 2, name: 'Bob' },
-            ])
+            .mockResolvedValueOnce([{ name: 'id' }, { name: 'name' }])
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
+            .mockResolvedValueOnce([{ name: 'id' }, { name: 'total' }])
             .mockResolvedValueOnce([
-                { id: 1, total: 99.99 },
-                { id: 2, total: 49.5 },
+                {
+                    __starbasedb_export_cursor_rowid: 1,
+                    id: 1,
+                    name: 'Alice',
+                },
+                {
+                    __starbasedb_export_cursor_rowid: 2,
+                    id: 2,
+                    name: 'Bob',
+                },
+            ])
+            .mockResolvedValueOnce([
+                {
+                    __starbasedb_export_cursor_rowid: 1,
+                    id: 1,
+                    total: 99.99,
+                },
+                {
+                    __starbasedb_export_cursor_rowid: 2,
+                    id: 2,
+                    total: 49.5,
+                },
             ])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
         expect(response).toBeInstanceOf(Response)
         expect(response.headers.get('Content-Type')).toBe(
-            'application/x-sqlite3'
+            'application/sql; charset=utf-8'
         )
         expect(response.headers.get('Content-Disposition')).toBe(
             'attachment; filename="database_dump.sql"'
@@ -87,10 +105,12 @@ describe('Database Dump Module', () => {
 
         expect(response).toBeInstanceOf(Response)
         expect(response.headers.get('Content-Type')).toBe(
-            'application/x-sqlite3'
+            'application/sql; charset=utf-8'
         )
         const dumpText = await response.text()
-        expect(dumpText).toBe('SQLite format 3\0')
+        expect(dumpText).toBe(
+            'PRAGMA foreign_keys=OFF;\nBEGIN TRANSACTION;\nCOMMIT;\n'
+        )
     })
 
     it('should handle databases with tables but no data', async () => {
@@ -99,6 +119,7 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
+            .mockResolvedValueOnce([{ name: 'id' }, { name: 'name' }])
             .mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
@@ -117,19 +138,27 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
-            .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+            .mockResolvedValueOnce([{ name: 'id' }, { name: 'bio' }])
+            .mockResolvedValueOnce([
+                {
+                    __starbasedb_export_cursor_rowid: 1,
+                    id: 1,
+                    bio: "Alice's adventure",
+                },
+            ])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            'INSERT INTO "users" VALUES (1, \'Alice\'\'s adventure\');'
+            "INSERT INTO \"users\" VALUES (1, 'Alice''s adventure');"
         )
     })
 
     it('should page table data instead of loading a full table at once', async () => {
         const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+            __starbasedb_export_cursor_rowid: index + 1,
             id: index + 1,
             name: `User ${index + 1}`,
         }))
@@ -139,8 +168,15 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
+            .mockResolvedValueOnce([{ name: 'id' }, { name: 'name' }])
             .mockResolvedValueOnce(firstPage)
-            .mockResolvedValueOnce([{ id: 1001, name: 'Last User' }])
+            .mockResolvedValueOnce([
+                {
+                    __starbasedb_export_cursor_rowid: 1001,
+                    id: 1001,
+                    name: 'Last User',
+                },
+            ])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
         const dumpText = await response.text()
@@ -149,21 +185,21 @@ describe('Database Dump Module', () => {
             'INSERT INTO "users" VALUES (1001, \'Last User\');'
         )
         expect(executeOperation).toHaveBeenNthCalledWith(
-            3,
+            4,
             [
                 {
-                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
-                    params: [1000, 0],
+                    sql: 'SELECT rowid AS "__starbasedb_export_cursor_rowid", "id", "name" FROM "users" ORDER BY rowid LIMIT ?;',
+                    params: [1000],
                 },
             ],
             mockDataSource,
             mockConfig
         )
         expect(executeOperation).toHaveBeenNthCalledWith(
-            4,
+            5,
             [
                 {
-                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                    sql: 'SELECT rowid AS "__starbasedb_export_cursor_rowid", "id", "name" FROM "users" WHERE rowid > ? ORDER BY rowid LIMIT ?;',
                     params: [1000, 1000],
                 },
             ],
@@ -178,7 +214,14 @@ describe('Database Dump Module', () => {
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
-            .mockResolvedValueOnce([{ id: 1, bio: null }])
+            .mockResolvedValueOnce([{ name: 'id' }, { name: 'bio' }])
+            .mockResolvedValueOnce([
+                {
+                    __starbasedb_export_cursor_rowid: 1,
+                    id: 1,
+                    bio: null,
+                },
+            ])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
         const dumpText = await response.text()

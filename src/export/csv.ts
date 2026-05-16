@@ -4,22 +4,30 @@ import { StarbaseDBConfiguration } from '../handler'
 import {
     createStreamingExportResponse,
     formatCsvValue,
-    getTableColumns,
+    getTableExportPlan,
     iterateTableRows,
     tableExists,
+    TableExportPlan,
 } from './streaming'
 
 async function* csvTableChunks(
     tableName: string,
     columns: string[],
     dataSource: DataSource,
-    config: StarbaseDBConfiguration
+    config: StarbaseDBConfiguration,
+    exportPlan: TableExportPlan
 ): AsyncGenerator<string> {
     if (columns.length) {
         yield `${columns.map(formatCsvValue).join(',')}\n`
     }
 
-    for await (const row of iterateTableRows(tableName, dataSource, config)) {
+    for await (const row of iterateTableRows(
+        tableName,
+        dataSource,
+        config,
+        undefined,
+        exportPlan
+    )) {
         yield `${columns.map((column) => formatCsvValue(row[column])).join(',')}\n`
     }
 }
@@ -38,10 +46,15 @@ export async function exportTableToCsvRoute(
             )
         }
 
-        const columns = await getTableColumns(tableName, dataSource, config)
+        const exportPlan = await getTableExportPlan(
+            tableName,
+            dataSource,
+            config
+        )
+        const columns = exportPlan.columns
 
         return createStreamingExportResponse(
-            csvTableChunks(tableName, columns, dataSource, config),
+            csvTableChunks(tableName, columns, dataSource, config, exportPlan),
             `${tableName}_export.csv`,
             'text/csv'
         )

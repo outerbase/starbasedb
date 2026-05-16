@@ -50,6 +50,11 @@ describe('CSV Export Module', () => {
                 { name: 'age' },
             ])
             .mockResolvedValueOnce([
+                {
+                    sql: 'CREATE TABLE users (id INTEGER, name TEXT, age INTEGER);',
+                },
+            ])
+            .mockResolvedValueOnce([
                 { id: 1, name: 'Alice', age: 30 },
                 { id: 2, name: 'Bob', age: 25 },
             ])
@@ -90,6 +95,9 @@ describe('CSV Export Module', () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'empty_table' }])
             .mockResolvedValueOnce([{ name: 'id' }, { name: 'name' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE empty_table (id INTEGER, name TEXT);' },
+            ])
             .mockResolvedValueOnce([])
 
         const response = await exportTableToCsvRoute(
@@ -108,6 +116,11 @@ describe('CSV Export Module', () => {
                 { name: 'id' },
                 { name: 'name' },
                 { name: 'bio' },
+            ])
+            .mockResolvedValueOnce([
+                {
+                    sql: 'CREATE TABLE special_chars (id INTEGER, name TEXT, bio TEXT);',
+                },
             ])
             .mockResolvedValueOnce([
                 {
@@ -130,6 +143,7 @@ describe('CSV Export Module', () => {
 
     it('should page table data instead of loading the full table', async () => {
         const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+            __starbasedb_export_cursor_rowid: index + 1,
             id: index + 1,
             name: `User ${index + 1}`,
         }))
@@ -137,8 +151,17 @@ describe('CSV Export Module', () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }])
             .mockResolvedValueOnce([{ name: 'id' }, { name: 'name' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
             .mockResolvedValueOnce(firstPage)
-            .mockResolvedValueOnce([{ id: 1001, name: 'Last User' }])
+            .mockResolvedValueOnce([
+                {
+                    __starbasedb_export_cursor_rowid: 1001,
+                    id: 1001,
+                    name: 'Last User',
+                },
+            ])
 
         const response = await exportTableToCsvRoute(
             'users',
@@ -150,21 +173,21 @@ describe('CSV Export Module', () => {
 
         expect(csv).toContain('1001,Last User\n')
         expect(executeOperation).toHaveBeenNthCalledWith(
-            3,
+            4,
             [
                 {
-                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
-                    params: [1000, 0],
+                    sql: 'SELECT rowid AS "__starbasedb_export_cursor_rowid", "id", "name" FROM "users" ORDER BY rowid LIMIT ?;',
+                    params: [1000],
                 },
             ],
             mockDataSource,
             mockConfig
         )
         expect(executeOperation).toHaveBeenNthCalledWith(
-            4,
+            5,
             [
                 {
-                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                    sql: 'SELECT rowid AS "__starbasedb_export_cursor_rowid", "id", "name" FROM "users" WHERE rowid > ? ORDER BY rowid LIMIT ?;',
                     params: [1000, 1000],
                 },
             ],
@@ -177,7 +200,9 @@ describe('CSV Export Module', () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
             .mockImplementation(() => {})
-        vi.mocked(executeOperation).mockRejectedValue(new Error('Database Error'))
+        vi.mocked(executeOperation).mockRejectedValue(
+            new Error('Database Error')
+        )
 
         const response = await exportTableToCsvRoute(
             'users',

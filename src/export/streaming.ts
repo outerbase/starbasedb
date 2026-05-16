@@ -8,8 +8,39 @@ type SchedulerWithWait = {
     wait?: (duration: number) => Promise<void>
 }
 
+type TableInfoRow = {
+    name?: unknown
+    pk?: unknown
+}
+
+export type TableExportPlan = {
+    columns: string[]
+    orderBy: string
+    usesRowIdCursor: boolean
+    rowIdExpression?: string
+    cursorAlias?: string
+}
+
 export function quoteSqlIdentifier(identifier: string): string {
     return `"${identifier.replace(/"/g, '""')}"`
+}
+
+function chooseHiddenRowIdExpression(columns: string[]): string | undefined {
+    const columnNames = new Set(columns.map((column) => column.toLowerCase()))
+    return ['rowid', '_rowid_', 'oid'].find((name) => !columnNames.has(name))
+}
+
+function chooseExportCursorAlias(columns: string[]): string {
+    const columnNames = new Set(columns.map((column) => column.toLowerCase()))
+    let alias = '__starbasedb_export_cursor_rowid'
+    let suffix = 2
+
+    while (columnNames.has(alias.toLowerCase())) {
+        alias = `__starbasedb_export_cursor_rowid_${suffix}`
+        suffix += 1
+    }
+
+    return alias
 }
 
 function bytesToHex(value: Uint8Array): string {
@@ -108,6 +139,14 @@ export async function getTableColumns(
     dataSource: DataSource,
     config: StarbaseDBConfiguration
 ): Promise<string[]> {
+    return (await getTableExportPlan(tableName, dataSource, config)).columns
+}
+
+async function getTableInfo(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): Promise<TableInfoRow[]> {
     const result = await executeOperation(
         [
             {
@@ -118,31 +157,148 @@ export async function getTableColumns(
         config
     )
 
-    return result
-        .map((column: any) => column.name)
-        .filter((name: unknown): name is string => typeof name === 'string')
+    return result as TableInfoRow[]
+}
+
+async function getTableSql(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): Promise<string> {
+    const result = await executeOperation(
+        [
+            {
+                sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
+                params: [tableName],
+            },
+        ],
+        dataSource,
+        config
+    )
+
+    const rows = Array.isArray(result) ? result : []
+
+    return typeof rows[0]?.sql === 'string' ? rows[0].sql : ''
+}
+
+export async function getTableExportPlan(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration,
+    schemaSql?: string
+): Promise<TableExportPlan> {
+    const tableInfo = await getTableInfo(tableName, dataSource, config)
+    const columns = tableInfo
+        .map((column) => column.name)
+        .filter((name): name is string => typeof name === 'string')
+    const resolvedSchemaSql =
+        schemaSql ?? (await getTableSql(tableName, dataSource, config))
+    const withoutRowId = /\bWITHOUT\s+ROWID\b/i.test(resolvedSchemaSql)
+    const rowIdExpression = withoutRowId
+        ? undefined
+        : chooseHiddenRowIdExpression(columns)
+
+    if (rowIdExpression) {
+        return {
+            columns,
+            orderBy: rowIdExpression,
+            usesRowIdCursor: true,
+            rowIdExpression,
+            cursorAlias: chooseExportCursorAlias(columns),
+        }
+    }
+
+    const primaryKeyColumns = tableInfo
+        .filter((column) => Number(column.pk ?? 0) > 0)
+        .sort((left, right) => Number(left.pk ?? 0) - Number(right.pk ?? 0))
+        .map((column) => column.name)
+        .filter((name): name is string => typeof name === 'string')
+    const orderColumns = primaryKeyColumns.length ? primaryKeyColumns : columns
+
+    return {
+        columns,
+        orderBy: orderColumns.map(quoteSqlIdentifier).join(', '),
+        usesRowIdCursor: false,
+    }
+}
+
+function copyExportColumns(row: Record<string, unknown>, columns: string[]) {
+    return Object.fromEntries(columns.map((column) => [column, row[column]]))
 }
 
 export async function* iterateTableRows(
     tableName: string,
     dataSource: DataSource,
     config: StarbaseDBConfiguration,
-    pageSize = DEFAULT_EXPORT_PAGE_SIZE
+    pageSize = DEFAULT_EXPORT_PAGE_SIZE,
+    exportPlan?: TableExportPlan
 ): AsyncGenerator<Record<string, unknown>> {
     const quotedTableName = quoteSqlIdentifier(tableName)
+    const tableExportPlan =
+        exportPlan ?? (await getTableExportPlan(tableName, dataSource, config))
+    const selectedColumns = tableExportPlan.columns.length
+        ? tableExportPlan.columns.map(quoteSqlIdentifier).join(', ')
+        : '*'
+
+    if (tableExportPlan.usesRowIdCursor) {
+        let lastRowId: number | null = null
+        const rowIdExpression = tableExportPlan.rowIdExpression ?? 'rowid'
+        const cursorAlias =
+            tableExportPlan.cursorAlias ?? chooseExportCursorAlias([])
+
+        while (true) {
+            const cursorFilter =
+                lastRowId == null ? '' : ` WHERE ${rowIdExpression} > ?`
+            const params =
+                lastRowId == null ? [pageSize] : [lastRowId, pageSize]
+            const result = await executeOperation(
+                [
+                    {
+                        sql: `SELECT ${rowIdExpression} AS ${quoteSqlIdentifier(
+                            cursorAlias
+                        )}, ${selectedColumns} FROM ${quotedTableName}${cursorFilter} ORDER BY ${
+                            tableExportPlan.orderBy
+                        } LIMIT ?;`,
+                        params,
+                    },
+                ],
+                dataSource,
+                config
+            )
+            const rows = Array.isArray(result) ? result : []
+
+            if (!rows.length) {
+                return
+            }
+
+            for (const row of rows) {
+                yield copyExportColumns(row, tableExportPlan.columns)
+            }
+
+            lastRowId = Number(rows.at(-1)?.[cursorAlias])
+
+            if (rows.length < pageSize || !Number.isFinite(lastRowId)) {
+                return
+            }
+
+            await yieldToRuntime()
+        }
+    }
+
     let offset = 0
 
     while (true) {
-        const rows = await executeOperation(
+        const result = await executeOperation(
             [
                 {
-                    sql: `SELECT * FROM ${quotedTableName} LIMIT ? OFFSET ?;`,
+                    sql: `SELECT ${selectedColumns} FROM ${quotedTableName} ORDER BY ${tableExportPlan.orderBy} LIMIT ? OFFSET ?;`,
                     params: [pageSize, offset],
                 },
             ],
             dataSource,
             config
         )
+        const rows = Array.isArray(result) ? result : []
 
         if (!rows.length) {
             return

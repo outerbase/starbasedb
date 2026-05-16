@@ -3,20 +3,29 @@ import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
 import {
     createStreamingExportResponse,
+    getTableExportPlan,
     iterateTableRows,
     tableExists,
+    TableExportPlan,
 } from './streaming'
 
 async function* jsonTableChunks(
     tableName: string,
     dataSource: DataSource,
-    config: StarbaseDBConfiguration
+    config: StarbaseDBConfiguration,
+    exportPlan: TableExportPlan
 ): AsyncGenerator<string> {
     let isFirstRow = true
 
     yield '['
 
-    for await (const row of iterateTableRows(tableName, dataSource, config)) {
+    for await (const row of iterateTableRows(
+        tableName,
+        dataSource,
+        config,
+        undefined,
+        exportPlan
+    )) {
         yield `${isFirstRow ? '' : ','}\n${JSON.stringify(row, null, 4)}`
         isFirstRow = false
     }
@@ -38,8 +47,14 @@ export async function exportTableToJsonRoute(
             )
         }
 
+        const exportPlan = await getTableExportPlan(
+            tableName,
+            dataSource,
+            config
+        )
+
         return createStreamingExportResponse(
-            jsonTableChunks(tableName, dataSource, config),
+            jsonTableChunks(tableName, dataSource, config, exportPlan),
             `${tableName}_export.json`,
             'application/json'
         )

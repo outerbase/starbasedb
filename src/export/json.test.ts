@@ -61,6 +61,10 @@ describe('JSON Export Module', () => {
 
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([{ name: 'id' }, { name: 'name' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
             .mockResolvedValueOnce(mockData)
 
         const response = await exportTableToJsonRoute(
@@ -79,6 +83,10 @@ describe('JSON Export Module', () => {
     it('should return an empty JSON array when table has no data', async () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'empty_table' }])
+            .mockResolvedValueOnce([{ name: 'id' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE empty_table (id INTEGER);' },
+            ])
             .mockResolvedValueOnce([])
 
         const response = await exportTableToJsonRoute(
@@ -98,6 +106,14 @@ describe('JSON Export Module', () => {
 
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'special_chars' }])
+            .mockResolvedValueOnce([
+                { name: 'id' },
+                { name: 'name' },
+                { name: 'description' },
+            ])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE special_chars (id INTEGER, name TEXT);' },
+            ])
             .mockResolvedValueOnce(specialCharsData)
 
         const response = await exportTableToJsonRoute(
@@ -111,13 +127,20 @@ describe('JSON Export Module', () => {
 
     it('should page table data instead of loading the full table', async () => {
         const firstPage = Array.from({ length: 1000 }, (_, index) => ({
+            __starbasedb_export_cursor_rowid: index + 1,
             id: index + 1,
         }))
 
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([{ name: 'id' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER);' },
+            ])
             .mockResolvedValueOnce(firstPage)
-            .mockResolvedValueOnce([{ id: 1001 }])
+            .mockResolvedValueOnce([
+                { __starbasedb_export_cursor_rowid: 1001, id: 1001 },
+            ])
 
         const response = await exportTableToJsonRoute(
             'users',
@@ -127,21 +150,21 @@ describe('JSON Export Module', () => {
 
         await expect(response.json()).resolves.toHaveLength(1001)
         expect(executeOperation).toHaveBeenNthCalledWith(
-            2,
+            4,
             [
                 {
-                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
-                    params: [1000, 0],
+                    sql: 'SELECT rowid AS "__starbasedb_export_cursor_rowid", "id" FROM "users" ORDER BY rowid LIMIT ?;',
+                    params: [1000],
                 },
             ],
             mockDataSource,
             mockConfig
         )
         expect(executeOperation).toHaveBeenNthCalledWith(
-            3,
+            5,
             [
                 {
-                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                    sql: 'SELECT rowid AS "__starbasedb_export_cursor_rowid", "id" FROM "users" WHERE rowid > ? ORDER BY rowid LIMIT ?;',
                     params: [1000, 1000],
                 },
             ],
@@ -154,7 +177,9 @@ describe('JSON Export Module', () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
             .mockImplementation(() => {})
-        vi.mocked(executeOperation).mockRejectedValue(new Error('Database Error'))
+        vi.mocked(executeOperation).mockRejectedValue(
+            new Error('Database Error')
+        )
 
         const response = await exportTableToJsonRoute(
             'users',
