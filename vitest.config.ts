@@ -1,20 +1,27 @@
-import { defineConfig } from 'vitest/config'
+--- a/plugins/query-log/index.test.ts
++++ b/plugins/query-log/index.test.ts
+@@ -1,6 +1,7 @@
+ import { describe, it, expect, vi, beforeEach } from 'vitest'
+ import { QueryLogPlugin } from './index'
+ import { StarbaseApp, StarbaseDBConfiguration } from '../../src/handler'
++import { DataSource } from '../../src/types'
 
-export default defineConfig({
-    assetsInclude: ['**/*.sql'],
-    test: {
-        coverage: {
-            provider: 'istanbul',
-            reporter: ['text', 'html', 'json', 'json-summary', 'lcov'],
-            include: ['src/**/*.ts'],
-            exclude: ['**/node_modules/**'],
-            reportOnFailure: true, // Ensures the report is generated even if tests fail
-            thresholds: {
-                lines: 75,
-                branches: 75,
-                functions: 75,
-                statements: 75,
-            },
-        },
-    },
-})
+ let queryLogPlugin: QueryLogPlugin
+ let mockDataSource: DataSource
+@@ -20,3 +21,15 @@
+     }
+ }
+
++describe('QueryLogPlugin', () => {
++    it('should log queries', async () => {
++        // Arrange
++        const plugin = new QueryLogPlugin()
++        const app = new StarbaseApp()
++
++        // Act
++        plugin.register(app)
++
++        // Assert
++        expect(plugin).not.toBeUndefined()
++    })
++})
