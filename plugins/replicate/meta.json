@@ -1,0 +1,5 @@
+{
+    "name": "replicate",
+    "description": "Pull data from an external data source into the internal Durable Object SQLite database so the instance can serve as a close-to-edge read replica.",
+    "version": "0.0.1"
+}
