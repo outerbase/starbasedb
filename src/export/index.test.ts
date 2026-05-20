@@ -83,6 +83,57 @@ describe('Database Operations Module', () => {
             ])
         })
 
+        it('should quote table names that require identifiers in data queries', async () => {
+            vi.mocked(executeTransaction)
+                .mockResolvedValueOnce([{ name: "kid's profiles" }])
+                .mockResolvedValueOnce([{ id: 1, name: 'Alice' }])
+
+            const result = await getTableData(
+                "kid's profiles",
+                mockDataSource,
+                mockConfig
+            )
+
+            expect(executeTransaction).toHaveBeenNthCalledWith(1, {
+                queries: [
+                    {
+                        sql: "SELECT name FROM sqlite_master WHERE type='table' AND name=?;",
+                        params: ["kid's profiles"],
+                    },
+                ],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
+            expect(executeTransaction).toHaveBeenNthCalledWith(2, {
+                queries: [{ sql: 'SELECT * FROM "kid\'s profiles";' }],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
+            expect(result).toEqual([{ id: 1, name: 'Alice' }])
+        })
+
+        it('should quote reserved table names in data queries', async () => {
+            vi.mocked(executeTransaction)
+                .mockResolvedValueOnce([{ name: 'order' }])
+                .mockResolvedValueOnce([{ id: 1 }])
+
+            const result = await getTableData(
+                'order',
+                mockDataSource,
+                mockConfig
+            )
+
+            expect(executeTransaction).toHaveBeenNthCalledWith(2, {
+                queries: [{ sql: 'SELECT * FROM "order";' }],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
+            expect(result).toEqual([{ id: 1 }])
+        })
+
         it('should return null if table does not exist', async () => {
             vi.mocked(executeTransaction).mockResolvedValueOnce([])
 

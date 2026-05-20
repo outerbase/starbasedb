@@ -2,6 +2,36 @@ import { DataSource } from '../types'
 import { executeTransaction } from '../operation'
 import { StarbaseDBConfiguration } from '../handler'
 
+const sqliteKeywords = new Set([
+    'select',
+    'from',
+    'where',
+    'table',
+    'index',
+    'insert',
+    'values',
+    'order',
+    'group',
+    'by',
+    'limit',
+    'offset',
+    'join',
+    'on',
+    'and',
+    'or',
+])
+
+function formatIdentifier(identifier: string) {
+    if (
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier) &&
+        !sqliteKeywords.has(identifier.toLowerCase())
+    ) {
+        return identifier
+    }
+
+    return `"${identifier.replace(/"/g, '""')}"`
+}
+
 export async function executeOperation(
     queries: { sql: string; params?: any[] }[],
     dataSource: DataSource,
@@ -43,7 +73,7 @@ export async function getTableData(
 
         // Get table data
         const dataResult = await executeOperation(
-            [{ sql: `SELECT * FROM ${tableName};` }],
+            [{ sql: `SELECT * FROM ${formatIdentifier(tableName)};` }],
             dataSource,
             config
         )
