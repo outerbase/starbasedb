@@ -3,6 +3,40 @@ import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
 
+const sqliteKeywords = new Set([
+    'select',
+    'from',
+    'where',
+    'table',
+    'index',
+    'insert',
+    'values',
+    'order',
+    'group',
+    'by',
+    'limit',
+    'offset',
+    'join',
+    'on',
+    'and',
+    'or',
+])
+
+function quoteSqlString(value: string) {
+    return `'${value.replace(/'/g, "''")}'`
+}
+
+function formatIdentifier(identifier: string) {
+    if (
+        /^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier) &&
+        !sqliteKeywords.has(identifier.toLowerCase())
+    ) {
+        return identifier
+    }
+
+    return `"${identifier.replace(/"/g, '""')}"`
+}
+
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
     config: StarbaseDBConfiguration
@@ -24,7 +58,7 @@ export async function dumpDatabaseRoute(
             const schemaResult = await executeOperation(
                 [
                     {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
+                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=${quoteSqlString(table)};`,
                     },
                 ],
                 dataSource,
@@ -38,7 +72,7 @@ export async function dumpDatabaseRoute(
 
             // Get table data
             const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
+                [{ sql: `SELECT * FROM ${formatIdentifier(table)};` }],
                 dataSource,
                 config
             )
@@ -49,7 +83,7 @@ export async function dumpDatabaseRoute(
                         ? `'${value.replace(/'/g, "''")}'`
                         : value
                 )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+                dumpContent += `INSERT INTO ${formatIdentifier(table)} VALUES (${values.join(', ')});\n`
             }
 
             dumpContent += '\n'
