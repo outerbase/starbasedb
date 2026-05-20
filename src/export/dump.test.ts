@@ -128,6 +128,44 @@ describe('Database Dump Module', () => {
         )
     })
 
+    it('should quote table identifiers in schema lookups, reads, and INSERT rows', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: "kid's profiles" }])
+            .mockResolvedValueOnce([
+                {
+                    sql: 'CREATE TABLE "kid\'s profiles" (id INTEGER, name TEXT);',
+                },
+            ])
+            .mockResolvedValueOnce([{ id: 1, name: 'Alice' }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            2,
+            [
+                {
+                    sql: "SELECT sql FROM sqlite_master WHERE type='table' AND name='kid''s profiles';",
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            3,
+            [{ sql: 'SELECT * FROM "kid\'s profiles";' }],
+            mockDataSource,
+            mockConfig
+        )
+
+        const dumpText = await response.text()
+        expect(dumpText).toContain(
+            'CREATE TABLE "kid\'s profiles" (id INTEGER, name TEXT);'
+        )
+        expect(dumpText).toContain(
+            "INSERT INTO \"kid's profiles\" VALUES (1, 'Alice');"
+        )
+    })
+
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
