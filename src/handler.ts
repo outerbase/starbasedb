@@ -9,6 +9,7 @@ import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
 import { dumpDatabaseRoute } from './export/dump'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
+import { resolveExportBatchSize } from './export'
 import { importDumpRoute } from './import/dump'
 import { importTableFromJsonRoute } from './import/json'
 import { importTableFromCsvRoute } from './import/csv'
@@ -120,8 +121,10 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
-            this.app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
+            this.app.get('/export/dump', this.isInternalSource, async (c) => {
+                return dumpDatabaseRoute(this.dataSource, this.config, {
+                    batchSize: resolveExportBatchSize(c.req.query('batchSize')),
+                })
             })
 
             this.app.get(
@@ -130,10 +133,14 @@ export class StarbaseDB {
                 this.hasTableName,
                 async (c) => {
                     const tableName = c.req.valid('param').tableName
+                    const batchSize = resolveExportBatchSize(
+                        c.req.query('batchSize')
+                    )
                     return exportTableToJsonRoute(
                         tableName,
                         this.dataSource,
-                        this.config
+                        this.config,
+                        { batchSize }
                     )
                 }
             )
@@ -144,10 +151,14 @@ export class StarbaseDB {
                 this.hasTableName,
                 async (c) => {
                     const tableName = c.req.valid('param').tableName
+                    const batchSize = resolveExportBatchSize(
+                        c.req.query('batchSize')
+                    )
                     return exportTableToCsvRoute(
                         tableName,
                         this.dataSource,
-                        this.config
+                        this.config,
+                        { batchSize }
                     )
                 }
             )

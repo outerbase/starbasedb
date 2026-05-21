@@ -1,5 +1,14 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { executeOperation, getTableData, createExportResponse } from './index'
+import {
+    createExportResponse,
+    executeOperation,
+    formatCsvValue,
+    formatSqlValue,
+    getTableData,
+    getTableDataPage,
+    quoteSqlIdentifier,
+    resolveExportBatchSize,
+} from './index'
 import { executeTransaction } from '../operation'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
@@ -106,6 +115,61 @@ describe('Database Operations Module', () => {
             await expect(
                 getTableData('users', mockDataSource, mockConfig)
             ).rejects.toThrow('Database Error')
+        })
+    })
+
+    describe('getTableDataPage', () => {
+        it('should query a bounded page with a quoted table name', async () => {
+            vi.mocked(executeTransaction).mockResolvedValueOnce([
+                [{ id: 1, name: 'Alice' }],
+            ])
+
+            const result = await getTableDataPage(
+                'user data',
+                mockDataSource,
+                mockConfig,
+                100,
+                200
+            )
+
+            expect(executeTransaction).toHaveBeenCalledWith({
+                queries: [
+                    {
+                        sql: 'SELECT * FROM "user data" LIMIT ? OFFSET ?;',
+                        params: [100, 200],
+                    },
+                ],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
+            expect(result).toEqual([{ id: 1, name: 'Alice' }])
+        })
+    })
+
+    describe('export formatting helpers', () => {
+        it('should clamp batch sizes to safe defaults', () => {
+            expect(resolveExportBatchSize()).toBe(500)
+            expect(resolveExportBatchSize('2')).toBe(2)
+            expect(resolveExportBatchSize(0)).toBe(500)
+            expect(resolveExportBatchSize(6000)).toBe(5000)
+        })
+
+        it('should quote SQL identifiers safely', () => {
+            expect(quoteSqlIdentifier('users')).toBe('"users"')
+            expect(quoteSqlIdentifier('weird"name')).toBe('"weird""name"')
+        })
+
+        it('should format SQL values safely', () => {
+            expect(formatSqlValue("Alice's note")).toBe("'Alice''s note'")
+            expect(formatSqlValue(null)).toBe('NULL')
+            expect(formatSqlValue(true)).toBe('1')
+        })
+
+        it('should format CSV values safely', () => {
+            expect(formatCsvValue('plain')).toBe('plain')
+            expect(formatCsvValue('hello, "world"')).toBe('"hello, ""world"""')
+            expect(formatCsvValue(null)).toBe('')
         })
     })
 

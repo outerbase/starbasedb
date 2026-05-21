@@ -1,17 +1,50 @@
-import { getTableData, createExportResponse } from './index'
+import {
+    createExportResponse,
+    createTextStream,
+    formatCsvValue,
+    getTableColumns,
+    getTableDataPage,
+    iterateTableRows,
+    resolveExportBatchSize,
+    tableExists,
+    type ExportOptions,
+    type ExportRow,
+} from './index'
 import { createResponse } from '../utils'
-import { DataSource } from '../types'
-import { StarbaseDBConfiguration } from '../handler'
+import type { DataSource } from '../types'
+import type { StarbaseDBConfiguration } from '../handler'
+
+async function* createCsvExportIterator(opts: {
+    tableName: string
+    dataSource: DataSource
+    config: StarbaseDBConfiguration
+    batchSize: number
+    columns: string[]
+    firstPage: ExportRow[]
+}): AsyncGenerator<string> {
+    const { columns } = opts
+
+    if (columns.length) {
+        yield columns.map(formatCsvValue).join(',') + '\n'
+    }
+
+    for await (const row of iterateTableRows(opts)) {
+        yield columns.map((column) => formatCsvValue(row[column])).join(',') +
+            '\n'
+    }
+}
 
 export async function exportTableToCsvRoute(
     tableName: string,
     dataSource: DataSource,
-    config: StarbaseDBConfiguration
+    config: StarbaseDBConfiguration,
+    options: ExportOptions = {}
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        const batchSize = resolveExportBatchSize(options.batchSize)
+        const exists = await tableExists(tableName, dataSource, config)
 
-        if (data === null) {
+        if (!exists) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,33 +52,25 @@ export async function exportTableToCsvRoute(
             )
         }
 
-        // Convert the result to CSV
-        let csvContent = ''
-        if (data.length > 0) {
-            // Add headers
-            csvContent += Object.keys(data[0]).join(',') + '\n'
-
-            // Add data rows
-            data.forEach((row: any) => {
-                csvContent +=
-                    Object.values(row)
-                        .map((value) => {
-                            if (
-                                typeof value === 'string' &&
-                                (value.includes(',') ||
-                                    value.includes('"') ||
-                                    value.includes('\n'))
-                            ) {
-                                return `"${value.replace(/"/g, '""')}"`
-                            }
-                            return value
-                        })
-                        .join(',') + '\n'
-            })
-        }
+        const [columnsResult, firstPage] = await Promise.all([
+            getTableColumns(tableName, dataSource, config),
+            getTableDataPage(tableName, dataSource, config, batchSize, 0),
+        ])
+        const columns = columnsResult.length
+            ? columnsResult
+            : Object.keys(firstPage[0] ?? {})
 
         return createExportResponse(
-            csvContent,
+            createTextStream(
+                createCsvExportIterator({
+                    tableName,
+                    dataSource,
+                    config,
+                    batchSize,
+                    columns,
+                    firstPage,
+                })
+            ),
             `${tableName}_export.csv`,
             'text/csv'
         )
