@@ -7,6 +7,7 @@ import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
 import { dumpDatabaseRoute } from './export/dump'
+import { getExportStatus, downloadExport } from './export/dump-streaming'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
@@ -47,16 +48,20 @@ export class StarbaseDB {
     private plugins: StarbasePlugin[]
     private initialized: boolean = false
     private app: StarbaseApp
+    private r2Bucket?: R2Bucket
 
     constructor(options: {
         dataSource: DataSource
         config: StarbaseDBConfiguration
         plugins?: StarbasePlugin[]
+        /** Optional R2 bucket for streaming large database exports */
+        r2Bucket?: R2Bucket
     }) {
         this.dataSource = options.dataSource
         this.config = options.config
         this.liteREST = new LiteREST(this.dataSource, this.config)
         this.plugins = options.plugins || []
+        this.r2Bucket = options.r2Bucket
         this.app = new Hono<HonoContext>()
 
         if (
@@ -120,9 +125,46 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
-            this.app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
+            this.app.get('/export/dump', this.isInternalSource, async (c) => {
+                const callbackUrl =
+                    c.req.query('callbackUrl') ?? undefined
+                return dumpDatabaseRoute(this.dataSource, this.config, {
+                    r2Bucket: this.r2Bucket,
+                    callbackUrl,
+                })
             })
+
+            this.app.get(
+                '/export/status/:exportId',
+                this.isInternalSource,
+                async (c) => {
+                    const exportId = c.req.param('exportId')
+                    return getExportStatus({
+                        dataSource: this.dataSource,
+                        exportId,
+                    })
+                }
+            )
+
+            this.app.get(
+                '/export/download/:exportId',
+                this.isInternalSource,
+                async (c) => {
+                    if (!this.r2Bucket) {
+                        return createResponse(
+                            undefined,
+                            'R2 bucket is not configured. Set the EXPORT_BUCKET binding in wrangler.toml.',
+                            501
+                        )
+                    }
+                    const exportId = c.req.param('exportId')
+                    return downloadExport({
+                        dataSource: this.dataSource,
+                        exportId,
+                        r2Bucket: this.r2Bucket,
+                    })
+                }
+            )
 
             this.app.get(
                 '/export/json/:tableName',

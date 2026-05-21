@@ -78,3 +78,14 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# R2 bucket for streaming large database exports (issue #59).
+# To enable:
+#   1. Create a bucket: `wrangler r2 bucket create starbasedb-exports`
+#   2. Uncomment the block below and replace <YOUR_BUCKET_NAME> with the name
+#      you chose above.
+#   3. Redeploy: `wrangler deploy`
+#
+# [[r2_buckets]]
+# binding = "EXPORT_BUCKET"
+# bucket_name = "<YOUR_BUCKET_NAME>"

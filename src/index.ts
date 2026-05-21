@@ -56,6 +56,12 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    /**
+     * Optional R2 bucket for streaming large database exports.
+     * Uncomment and configure the [[r2_buckets]] binding in wrangler.toml to enable.
+     */
+    EXPORT_BUCKET?: R2Bucket
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -232,6 +238,7 @@ export default {
                 dataSource,
                 config,
                 plugins,
+                r2Bucket: env.EXPORT_BUCKET,
             })
 
             const preAuthRequest = await starbase.handlePreAuth(request, ctx)

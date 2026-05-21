@@ -2,11 +2,27 @@ import { executeOperation } from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
+import { startStreamingDump } from './dump-streaming'
 
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
-    config: StarbaseDBConfiguration
+    config: StarbaseDBConfiguration,
+    opts?: {
+        r2Bucket?: R2Bucket
+        callbackUrl?: string
+    }
 ): Promise<Response> {
+    // ── Streaming path: R2 binding is available ───────────────────────────────
+    if (opts?.r2Bucket) {
+        return startStreamingDump({
+            dataSource,
+            config,
+            r2Bucket: opts.r2Bucket,
+            callbackUrl: opts.callbackUrl,
+        })
+    }
+
+    // ── Legacy path: no R2 binding, load everything into memory ──────────────
     try {
         // Get all table names
         const tablesResult = await executeOperation(

@@ -1,4 +1,5 @@
 import { DurableObject } from 'cloudflare:workers'
+import { continueExportFromAlarm } from './export/dump-streaming'
 
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
@@ -9,6 +10,8 @@ export class StarbaseDBDurableObject extends DurableObject {
     public connections = new Map<string, WebSocket>()
     // Store the client auth token for requests back to our Worker
     private clientAuthToken: string
+    // R2 bucket binding for export operations (optional)
+    private r2Bucket?: R2Bucket
 
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
@@ -22,6 +25,8 @@ export class StarbaseDBDurableObject extends DurableObject {
         this.clientAuthToken = env.CLIENT_AUTHORIZATION_TOKEN
         this.sql = ctx.storage.sql
         this.storage = ctx.storage
+        // Attach R2 bucket if the binding is configured in wrangler.toml
+        this.r2Bucket = (env as any).EXPORT_BUCKET as R2Bucket | undefined
 
         // Install default necessary `tmp_` tables for various features here.
         const cacheStatement = `
@@ -105,6 +110,36 @@ export class StarbaseDBDurableObject extends DurableObject {
     }
 
     async alarm() {
+        // ── Export continuation ───────────────────────────────────────────────
+        // If there is a streaming export in progress, continue it first.
+        // We do this before the cron check so that a large export doesn't block
+        // the cron scheduler indefinitely; once the export is complete or no
+        // export is found the cron logic proceeds normally.
+        if (this.r2Bucket) {
+            try {
+                const pendingExport = (await this.executeQuery({
+                    sql: `SELECT export_id FROM tmp_export_state WHERE value LIKE '%"status":"running"%' LIMIT 1;`,
+                    isRaw: false,
+                })) as Record<string, SqlStorageValue>[]
+
+                if (pendingExport.length) {
+                    await continueExportFromAlarm({
+                        dataSource: {
+                            rpc: this.init(),
+                            source: 'internal',
+                        },
+                        config: { role: 'admin' },
+                        r2Bucket: this.r2Bucket,
+                    })
+                    // Re-schedule in case the export needs more iterations
+                    return
+                }
+            } catch (exportErr) {
+                console.error('Error checking for pending export in alarm:', exportErr)
+            }
+        }
+
+        // ── Cron tasks ────────────────────────────────────────────────────────
         try {
             // Fetch all the tasks that are marked to emit an event for this cycle.
             const task = (await this.executeQuery({
