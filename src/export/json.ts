@@ -1,17 +1,51 @@
-import { getTableData, createExportResponse } from './index'
+import {
+    createExportResponse,
+    createTextStream,
+    iterateTableRows,
+    getTableDataPage,
+    resolveExportBatchSize,
+    tableExists,
+    type ExportOptions,
+    type ExportRow,
+} from './index'
 import { createResponse } from '../utils'
-import { DataSource } from '../types'
-import { StarbaseDBConfiguration } from '../handler'
+import type { DataSource } from '../types'
+import type { StarbaseDBConfiguration } from '../handler'
+
+async function* createJsonExportIterator(opts: {
+    tableName: string
+    dataSource: DataSource
+    config: StarbaseDBConfiguration
+    batchSize: number
+    firstPage: ExportRow[]
+}): AsyncGenerator<string> {
+    let hasRows = false
+
+    yield '['
+
+    for await (const row of iterateTableRows(opts)) {
+        yield `${hasRows ? ',' : ''}\n    ${JSON.stringify(row)}`
+        hasRows = true
+    }
+
+    if (hasRows) {
+        yield '\n'
+    }
+
+    yield ']'
+}
 
 export async function exportTableToJsonRoute(
     tableName: string,
     dataSource: DataSource,
-    config: StarbaseDBConfiguration
+    config: StarbaseDBConfiguration,
+    options: ExportOptions = {}
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        const batchSize = resolveExportBatchSize(options.batchSize)
+        const exists = await tableExists(tableName, dataSource, config)
 
-        if (data === null) {
+        if (!exists) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,11 +53,24 @@ export async function exportTableToJsonRoute(
             )
         }
 
-        // Convert the result to JSON
-        const jsonData = JSON.stringify(data, null, 4)
+        const firstPage = await getTableDataPage(
+            tableName,
+            dataSource,
+            config,
+            batchSize,
+            0
+        )
 
         return createExportResponse(
-            jsonData,
+            createTextStream(
+                createJsonExportIterator({
+                    tableName,
+                    dataSource,
+                    config,
+                    batchSize,
+                    firstPage,
+                })
+            ),
             `${tableName}_export.json`,
             'application/json'
         )
