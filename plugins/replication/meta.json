@@ -1,0 +1,23 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_replication_config": "Stores per-table replication configuration (cursor column, sync interval)",
+            "tmp_replication_state": "Tracks last-synced cursor value, last sync timestamp, and total row count per table"
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {
+            "EXTERNAL_DB_TYPE": "Required — the type of external data source to replicate from (e.g. postgresql, mysql)",
+            "EXTERNAL_DB_HOST": "Required — hostname of the external database",
+            "EXTERNAL_DB_PORT": "Required — port of the external database",
+            "EXTERNAL_DB_USER": "Required — username for the external database",
+            "EXTERNAL_DB_PASS": "Required — password for the external database",
+            "EXTERNAL_DB_DATABASE": "Required — database name on the external source"
+        }
+    }
+}
