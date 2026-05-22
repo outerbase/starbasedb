@@ -71,13 +71,13 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'Alice');")
-        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'Bob');")
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (1, \'Alice\');')
+        expect(dumpText).toContain('INSERT INTO "users" VALUES (2, \'Bob\');')
         expect(dumpText).toContain(
             'CREATE TABLE orders (id INTEGER, total REAL);'
         )
-        expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
-        expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (1, 99.99);')
+        expect(dumpText).toContain('INSERT INTO "orders" VALUES (2, 49.5);')
     })
 
     it('should handle empty databases (no tables)', async () => {
@@ -108,7 +108,7 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             'CREATE TABLE users (id INTEGER, name TEXT);'
         )
-        expect(dumpText).not.toContain('INSERT INTO users VALUES')
+        expect(dumpText).not.toContain('INSERT INTO "users" VALUES')
     })
 
     it('should escape single quotes properly in string values', async () => {
@@ -124,7 +124,55 @@ describe('Database Dump Module', () => {
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            "INSERT INTO \"users\" VALUES (1, 'Alice''s adventure');"
+        )
+    })
+
+    it('should export table rows in batches without loading the whole table at once', async () => {
+        const firstBatch = Array.from({ length: 500 }, (_, index) => ({
+            id: index + 1,
+            name: `User ${index + 1}`,
+        }))
+        const secondBatch = [{ id: 501, name: 'User 501' }]
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+            .mockResolvedValueOnce(firstBatch)
+            .mockResolvedValueOnce(secondBatch)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain(
+            'INSERT INTO "users" VALUES (1, \'User 1\');'
+        )
+        expect(dumpText).toContain(
+            'INSERT INTO "users" VALUES (501, \'User 501\');'
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            3,
+            [
+                {
+                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                    params: [500, 0],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            4,
+            [
+                {
+                    sql: 'SELECT * FROM "users" LIMIT ? OFFSET ?;',
+                    params: [500, 500],
+                },
+            ],
+            mockDataSource,
+            mockConfig
         )
     })
 
