@@ -277,6 +277,102 @@ describe('executeQuery', () => {
         expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
     })
 
+    it('should apply registry beforeQuery before cache lookup and execution', async () => {
+        const registry = {
+            beforeQuery: vi.fn(async ({ sql, params }) => ({
+                sql: `${sql} WHERE active = ?`,
+                params: [...(params ?? []), true],
+            })),
+        }
+        mockDataSource.registry = registry as any
+
+        await executeQuery({
+            sql: 'SELECT * FROM users',
+            params: [],
+            isRaw: false,
+            dataSource: mockDataSource,
+            config: mockConfig,
+        })
+
+        expect(registry.beforeQuery).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sql: 'SELECT * FROM users',
+                params: [],
+            })
+        )
+        expect(beforeQueryCache).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sql: 'SELECT * FROM users WHERE active = ?',
+                params: [true],
+            })
+        )
+        expect(mockDataSource.rpc.executeQuery).toHaveBeenCalledWith({
+            sql: 'SELECT * FROM users WHERE active = ?',
+            params: [true],
+            isRaw: false,
+        })
+    })
+
+    it('should pass query results through registry afterQuery', async () => {
+        const registry = {
+            beforeQuery: vi.fn(async ({ sql, params }) => ({ sql, params })),
+            afterQuery: vi.fn(async ({ result }) =>
+                result.map((row: any) => ({ ...row, source: 'registry' }))
+            ),
+        }
+        mockDataSource.registry = registry as any
+
+        const result = await executeQuery({
+            sql: 'SELECT * FROM users',
+            params: undefined,
+            isRaw: false,
+            dataSource: mockDataSource,
+            config: mockConfig,
+        })
+
+        expect(registry.afterQuery).toHaveBeenCalledWith(
+            expect.objectContaining({
+                sql: 'SELECT * FROM users',
+                result: [
+                    { id: 1, name: 'Alice' },
+                    { id: 2, name: 'Bob' },
+                ],
+                isRaw: false,
+            })
+        )
+        expect(result).toEqual([
+            { id: 1, name: 'Alice', source: 'registry' },
+            { id: 2, name: 'Bob', source: 'registry' },
+        ])
+    })
+
+    it('should skip cache hooks and preserve raw query response shape', async () => {
+        const rawResult = {
+            columns: ['id', 'name'],
+            rows: [
+                [1, 'Alice'],
+                [2, 'Bob'],
+            ],
+            meta: {
+                rows_read: 2,
+                rows_written: 0,
+            },
+        }
+        mockDataSource.rpc.executeQuery = vi.fn().mockResolvedValue(rawResult)
+
+        const result = await executeQuery({
+            sql: 'SELECT * FROM users',
+            params: undefined,
+            isRaw: true,
+            dataSource: mockDataSource,
+            config: mockConfig,
+        })
+
+        expect(beforeQueryCache).not.toHaveBeenCalled()
+        expect(afterQueryCache).not.toHaveBeenCalled()
+        expect(result).toEqual(rawResult)
+    })
+
     it('should return an empty array if the data source is missing', async () => {
         const result = await executeQuery({
             sql: 'SELECT * FROM users',
