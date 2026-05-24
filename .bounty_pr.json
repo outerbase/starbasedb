@@ -1,0 +1,18 @@
+{
+  "status": "ready",
+  "commit_message": "fix(export): stream and paginate database dumps to support large databases",
+  "pr_title": "fix(export): stream and paginate /export/dump for large databases",
+  "pr_body": "## Purpose\n\nFixes #59 — `/export/dump` previously failed on large databases because it loaded **every row of every table** into a single in-memory string before responding. On any non-trivial database this exceeds the Worker's memory budget and/or wall-clock and the dump never completes.\n\n## Changes\n\n- `src/export/dump.ts`: response is now produced via a `ReadableStream`, so chunks are flushed to the client as they are generated instead of being concatenated in memory.\n- Per-table data is paged with `SELECT * FROM <table> LIMIT 1000 OFFSET <n>` and the loop stops as soon as a page returns fewer rows than the page size. This keeps peak memory bounded to one page (~1000 rows) regardless of table size.\n- Small correctness improvement in value serialization: `NULL`/`undefined` are now emitted as the SQL `NULL` keyword (previously they were stringified to the literal text `null`, which only parsed correctly by accident).\n- All existing test cases continue to pass unchanged; added two new tests:\n  - paginates across multiple `LIMIT/OFFSET` queries when a table is larger than the page size\n  - serializes `NULL` values as the `NULL` keyword\n\nThe public route, headers, and dump format are unchanged — this is a drop-in fix.\n\n## Tasks\n\n- [x] Stream the dump response instead of buffering it\n- [x] Page through table rows instead of `SELECT *` in one shot\n- [x] Preserve existing dump format and test expectations\n- [x] Add tests for pagination and NULL handling\n\n## Verify\n\n- `npx vitest run src/export/` → 25 passed (4 files)\n- `npx vitest run src/export/dump.test.ts` → 7 passed (5 original + 2 new)\n- `npx tsc --noEmit` introduces no new errors in `src/export/dump.ts` (only pre-existing errors in unrelated files remain).\n\nCloses #59",
+  "branch": "fix/issue-59-starbasedb-database-dumps-do-not",
+  "tests_run": [
+    "npx vitest run src/export/dump.test.ts",
+    "npx vitest run src/export/",
+    "npx tsc --noEmit"
+  ],
+  "tests_passed": true,
+  "files_changed": [
+    "src/export/dump.ts",
+    "src/export/dump.test.ts"
+  ],
+  "notes": "Minimum-change fix scoped to the dump route only. I intentionally did NOT adopt the prior-analysis suggestion of R2 multipart uploads + Durable Object alarms — that is a much larger feature and a significant architectural decision that the maintainer should drive, not a bounty hunter. Streaming + pagination resolves the OOM root cause described in the issue while keeping the existing /export/dump API, headers, and format byte-compatible. The bogus 'SQLite format 3\\0' header at the top of a text SQL dump is preserved unchanged because removing it would change the dump format and existing tests depend on it. Pre-existing TypeScript errors in plugins/cdc, src/cache, src/do, and src/operation are unrelated to this change."
+}

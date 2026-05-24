@@ -128,6 +128,57 @@ describe('Database Dump Module', () => {
         )
     })
 
+    it('should paginate large tables across multiple queries', async () => {
+        const firstPage = Array.from({ length: 1000 }, (_, i) => ({
+            id: i + 1,
+            name: `User${i + 1}`,
+        }))
+        const secondPage = [{ id: 1001, name: 'User1001' }]
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+            .mockResolvedValueOnce(firstPage)
+            .mockResolvedValueOnce(secondPage)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'User1');")
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (1000, 'User1000');"
+        )
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (1001, 'User1001');"
+        )
+
+        const issuedSql = vi
+            .mocked(executeOperation)
+            .mock.calls.map((c) => (c[0] as any)[0].sql)
+        expect(issuedSql).toContain(
+            'SELECT * FROM users LIMIT 1000 OFFSET 0;'
+        )
+        expect(issuedSql).toContain(
+            'SELECT * FROM users LIMIT 1000 OFFSET 1000;'
+        )
+    })
+
+    it('should serialize NULL values as the NULL keyword', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+            .mockResolvedValueOnce([{ id: 1, name: null }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain('INSERT INTO users VALUES (1, NULL);')
+    })
+
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
