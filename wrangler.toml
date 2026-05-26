@@ -33,6 +33,13 @@ class_name = "StarbaseDBDurableObject"
 tag = "v1"
 new_sqlite_classes = ["StarbaseDBDurableObject"]
 
+# R2 bucket used to stream large database dumps. Required for /export/dump on
+# databases that exceed the inline 30-second / 1GB synchronous limits.
+# Create the bucket with: `wrangler r2 bucket create starbasedb-dumps`
+[[r2_buckets]]
+binding = "DATABASE_DUMPS"
+bucket_name = "starbasedb-dumps"
+
 [vars]
 # Use this in your Authorization header for full database access
 ADMIN_AUTHORIZATION_TOKEN = "ABC123"

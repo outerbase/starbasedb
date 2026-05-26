@@ -6,7 +6,13 @@ import { DataSource } from './types'
 import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
-import { dumpDatabaseRoute } from './export/dump'
+import {
+    cancelDumpJobRoute,
+    downloadDumpJobRoute,
+    dumpDatabaseRoute,
+    getDumpJobStatusRoute,
+    startStreamingDumpRoute,
+} from './export/dump'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
@@ -120,9 +126,53 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
+            // Legacy synchronous dump — still works for small databases that
+            // can finish within the 30s worker budget.
             this.app.get('/export/dump', this.isInternalSource, async () => {
                 return dumpDatabaseRoute(this.dataSource, this.config)
             })
+
+            // Streaming dump: kicks off a background job whose output is
+            // written to R2 over potentially many DO alarm ticks. Returns 202
+            // with a jobId the client uses to poll status and download.
+            this.app.post('/export/dump', this.isInternalSource, async (c) => {
+                return startStreamingDumpRoute(
+                    c.req.raw,
+                    this.dataSource,
+                    this.config
+                )
+            })
+
+            this.app.get(
+                '/export/dump/status/:jobId',
+                this.isInternalSource,
+                async (c) => {
+                    const jobId = c.req.param('jobId')
+                    return getDumpJobStatusRoute(
+                        jobId,
+                        c.req.raw,
+                        this.dataSource
+                    )
+                }
+            )
+
+            this.app.get(
+                '/export/dump/download/:jobId',
+                this.isInternalSource,
+                async (c) => {
+                    const jobId = c.req.param('jobId')
+                    return downloadDumpJobRoute(jobId, this.dataSource)
+                }
+            )
+
+            this.app.delete(
+                '/export/dump/:jobId',
+                this.isInternalSource,
+                async (c) => {
+                    const jobId = c.req.param('jobId')
+                    return cancelDumpJobRoute(jobId, this.dataSource)
+                }
+            )
 
             this.app.get(
                 '/export/json/:tableName',

@@ -243,6 +243,54 @@ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
 </code>
 </pre>
 
+<h4>Streaming SQL dumps for large databases</h4>
+The synchronous endpoint above buffers the whole dump in memory and is bounded by the 30-second Worker timeout. For databases that exceed that budget, switch to the streaming variant — it paginates rows, writes them straight into R2 over (potentially many) Durable Object alarm ticks, and lets you download the finished artifact when ready.
+
+Add an R2 binding called `DATABASE_DUMPS` to your `wrangler.toml`:
+
+<pre>
+<code>
+[[r2_buckets]]
+binding = "DATABASE_DUMPS"
+bucket_name = "starbasedb-dumps"
+</code>
+</pre>
+
+Kick off the job (returns 202 with a `jobId`):
+
+<pre>
+<code>
+curl -X POST 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
+--header 'Authorization: Bearer ABC123' \
+--header 'Content-Type: application/json' \
+--data '{ "format": "sql", "callbackUrl": "https://hooks.example.com/dump-done" }'
+</code>
+</pre>
+
+`format` may be `sql`, `csv`, or `json`. Optional fields: `callbackUrl` (POSTed the status view on completion), `table` (export a single table only), `chunkSize` (rows per SELECT batch; default 1000).
+
+Poll the status, then download once it reads `completed`:
+
+<pre>
+<code>
+curl 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/status/JOB_ID' \
+--header 'Authorization: Bearer ABC123'
+
+curl 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/download/JOB_ID' \
+--header 'Authorization: Bearer ABC123' \
+--output database_dump.sql
+</code>
+</pre>
+
+To cancel an in-flight job:
+
+<pre>
+<code>
+curl -X DELETE 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump/JOB_ID' \
+--header 'Authorization: Bearer ABC123'
+</code>
+</pre>
+
 <h3>JSON Data Export</h3>
 <pre>
 <code>
