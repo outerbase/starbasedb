@@ -56,6 +56,11 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    // Optional R2 bucket used to persist long-running database dumps so they
+    // can survive the 30 second Worker / DO request limit. When unbound the
+    // /export/dump endpoint falls back to the original synchronous behavior.
+    DATABASE_DUMPS?: R2Bucket
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
