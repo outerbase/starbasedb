@@ -74,7 +74,7 @@ export default {
             const isWebSocket = request.headers.get('Upgrade') === 'websocket'
 
             let role: StarbaseDBConfiguration['role'] = 'client'
-            let context = {}
+            let context: Record<string, unknown> = {}
 
             // Authorize the request with CORS rules before proceeding.
             if (request.method === 'OPTIONS') {
@@ -309,6 +309,7 @@ export default {
 
             try {
                 await authenticate(authenticationToken)
+                dataSource.context = { ...context }
             } catch (error: any) {
                 return createResponse(
                     undefined,
