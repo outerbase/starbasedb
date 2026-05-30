@@ -62,14 +62,12 @@ export async function dumpDatabaseRoute(
                     }
 
                     // Stream table data in chunks
-                    let hasData = false
                     for await (const chunk of getTableDataChunked(
                         table,
                         dataSource,
                         config,
                         1000
                     )) {
-                        hasData = true
                         let batchContent = ''
 
                         for (const row of chunk) {
