@@ -179,3 +179,4 @@ public/*
 
 .dev.vars
 .wrangler/
+package-lock.json
