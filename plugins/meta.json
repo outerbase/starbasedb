@@ -1,0 +1,5 @@
+{
+  "name": "Data Replicator",
+  "description": "A plugin to replicate data from an external source to the internal database via a scheduled job.",
+  "version": "0.1.0"
+}
