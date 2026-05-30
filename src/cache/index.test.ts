@@ -78,6 +78,34 @@ describe('Cache Module', () => {
             expect(result).toEqual([{ id: 1, name: 'John' }])
         })
 
+        it('should return null if cached result JSON is malformed', async () => {
+            const consoleSpy = vi
+                .spyOn(console, 'error')
+                .mockImplementation(() => {})
+            const cachedData = {
+                timestamp: new Date().toISOString(),
+                ttl: 300,
+                results: '{"id":',
+            }
+
+            vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
+                cachedData,
+            ])
+
+            const result = await beforeQueryCache({
+                sql: 'SELECT * FROM users',
+                params: [],
+                dataSource: mockDataSource,
+            })
+
+            expect(result).toBeNull()
+            expect(consoleSpy).toHaveBeenCalledWith(
+                'Error parsing cached query results:',
+                expect.any(SyntaxError)
+            )
+            consoleSpy.mockRestore()
+        })
+
         it('should return null if cache is expired', async () => {
             const expiredCache = {
                 timestamp: new Date(Date.now() - 1000 * 3600).toISOString(), // 1 hour old

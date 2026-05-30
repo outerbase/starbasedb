@@ -72,7 +72,12 @@ export async function beforeQueryCache(opts: {
         const expirationTime = new Date(timestamp).getTime() + ttl * 1000
 
         if (Date.now() < expirationTime) {
-            return JSON.parse(results)
+            try {
+                return JSON.parse(results)
+            } catch (error) {
+                console.error('Error parsing cached query results:', error)
+                return null
+            }
         }
     }
 
