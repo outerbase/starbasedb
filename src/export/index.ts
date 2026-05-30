@@ -2,6 +2,8 @@ import { DataSource } from '../types'
 import { executeTransaction } from '../operation'
 import { StarbaseDBConfiguration } from '../handler'
 
+const CHUNK_SIZE = 1000
+
 export async function executeOperation(
     queries: { sql: string; params?: any[] }[],
     dataSource: DataSource,
@@ -54,6 +56,45 @@ export async function getTableData(
     }
 }
 
+/**
+ * Async generator that yields rows from a table in chunks using LIMIT/OFFSET.
+ * This avoids loading the entire table into memory and prevents 30-second
+ * Durable Objects timeout on large databases.
+ */
+export async function* getTableDataChunked(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration,
+    chunkSize: number = CHUNK_SIZE
+): AsyncGenerator<any[]> {
+    let offset = 0
+
+    while (true) {
+        const chunk = await executeOperation(
+            [
+                {
+                    sql: `SELECT * FROM ${tableName} LIMIT ${chunkSize} OFFSET ${offset};`,
+                },
+            ],
+            dataSource,
+            config
+        )
+
+        if (!chunk || chunk.length === 0) {
+            break
+        }
+
+        yield chunk
+
+        if (chunk.length < chunkSize) {
+            // Fetched fewer rows than the chunk size — we are done
+            break
+        }
+
+        offset += chunkSize
+    }
+}
+
 export function createExportResponse(
     data: any,
     fileName: string,
@@ -67,4 +108,43 @@ export function createExportResponse(
     })
 
     return new Response(blob, { headers })
+}
+
+/**
+ * Creates a streaming HTTP response by consuming an async generator of
+ * string chunks.  Each yielded string is encoded and enqueued into a
+ * TransformStream so the response body is flushed incrementally rather
+ * than buffered in memory.
+ */
+export function createStreamingExportResponse(
+    fileName: string,
+    contentType: string,
+    generator: AsyncGenerator<string>
+): Response {
+    const { readable, writable } = new TransformStream<string, Uint8Array>({
+        transform(chunk, controller) {
+            controller.enqueue(new TextEncoder().encode(chunk))
+        },
+    })
+
+    // Write asynchronously in the background; the readable side streams to
+    // the client as data becomes available.
+    const writer = writable.getWriter()
+    ;(async () => {
+        try {
+            for await (const chunk of generator) {
+                await writer.write(chunk)
+            }
+        } finally {
+            await writer.close()
+        }
+    })()
+
+    const headers = new Headers({
+        'Content-Type': contentType,
+        'Content-Disposition': `attachment; filename="${fileName}"`,
+        'Transfer-Encoding': 'chunked',
+    })
+
+    return new Response(readable as any, { headers })
 }

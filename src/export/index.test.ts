@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { executeOperation, getTableData, createExportResponse } from './index'
+import {
+    executeOperation,
+    getTableData,
+    getTableDataChunked,
+    createExportResponse,
+    createStreamingExportResponse,
+} from './index'
 import { executeTransaction } from '../operation'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
@@ -109,6 +115,69 @@ describe('Database Operations Module', () => {
         })
     })
 
+    describe('getTableDataChunked', () => {
+        it('should yield rows in chunks using LIMIT/OFFSET', async () => {
+            // First page: full chunk
+            vi.mocked(executeTransaction)
+                .mockResolvedValueOnce([
+                    Array.from({ length: 1000 }, (_, i) => ({ id: i + 1 })),
+                ])
+                // Second page: partial chunk — signals end of data
+                .mockResolvedValueOnce([
+                    Array.from({ length: 42 }, (_, i) => ({ id: 1001 + i })),
+                ])
+
+            const allRows: any[] = []
+            for await (const chunk of getTableDataChunked(
+                'big_table',
+                mockDataSource,
+                mockConfig,
+                1000
+            )) {
+                allRows.push(...chunk)
+            }
+
+            expect(allRows).toHaveLength(1042)
+            expect(executeTransaction).toHaveBeenCalledTimes(2)
+        })
+
+        it('should stop when the first chunk is empty', async () => {
+            vi.mocked(executeTransaction).mockResolvedValueOnce([[]])
+
+            const allRows: any[] = []
+            for await (const chunk of getTableDataChunked(
+                'empty_table',
+                mockDataSource,
+                mockConfig
+            )) {
+                allRows.push(...chunk)
+            }
+
+            expect(allRows).toHaveLength(0)
+        })
+
+        it('should handle exactly one full chunk with no more pages', async () => {
+            vi.mocked(executeTransaction)
+                .mockResolvedValueOnce([
+                    Array.from({ length: 1000 }, (_, i) => ({ id: i + 1 })),
+                ])
+                .mockResolvedValueOnce([[]])
+
+            const chunks: any[][] = []
+            for await (const chunk of getTableDataChunked(
+                'table',
+                mockDataSource,
+                mockConfig,
+                1000
+            )) {
+                chunks.push(chunk)
+            }
+
+            expect(chunks).toHaveLength(1)
+            expect(chunks[0]).toHaveLength(1000)
+        })
+    })
+
     describe('createExportResponse', () => {
         it('should create a valid response for a CSV file', () => {
             const response = createExportResponse(
@@ -153,6 +222,42 @@ describe('Database Operations Module', () => {
             expect(response.headers.get('Content-Disposition')).toBe(
                 'attachment; filename="notes.txt"'
             )
+        })
+    })
+
+    describe('createStreamingExportResponse', () => {
+        it('should return a Response with correct Content-Type and Content-Disposition', () => {
+            async function* gen(): AsyncGenerator<string> {
+                yield 'hello'
+            }
+
+            const response = createStreamingExportResponse(
+                'output.csv',
+                'text/csv',
+                gen()
+            )
+
+            expect(response.headers.get('Content-Type')).toBe('text/csv')
+            expect(response.headers.get('Content-Disposition')).toBe(
+                'attachment; filename="output.csv"'
+            )
+        })
+
+        it('should stream all generator chunks into the response body', async () => {
+            async function* gen(): AsyncGenerator<string> {
+                yield 'id,name\n'
+                yield '1,Alice\n'
+                yield '2,Bob\n'
+            }
+
+            const response = createStreamingExportResponse(
+                'users.csv',
+                'text/csv',
+                gen()
+            )
+
+            const text = await response.text()
+            expect(text).toBe('id,name\n1,Alice\n2,Bob\n')
         })
     })
 })

@@ -68,5 +68,11 @@
         "*.{js,jsx,ts,tsx,json,css,md}": [
             "prettier --write"
         ]
+    },
+    "pnpm": {
+        "onlyBuiltDependencies": [
+            "esbuild",
+            "workerd"
+        ]
     }
 }
