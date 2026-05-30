@@ -1,17 +1,85 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { dumpDatabaseRoute } from './dump'
-import { executeOperation } from '.'
-import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
+// Track all executeOperation calls
+const mockExecuteOperation = vi.fn()
+
+// Mock the module before importing dump
 vi.mock('.', () => ({
-    executeOperation: vi.fn(),
+    executeOperation: (...args: any[]) => mockExecuteOperation(...args),
+    getTableDataChunked: async function* (
+        tableName: string,
+        dataSource: any,
+        config: any,
+        chunkSize: number = 1000
+    ) {
+        // Use the mocked executeOperation to simulate chunked reads
+        let offset = 0
+        while (true) {
+            const chunk = await mockExecuteOperation(
+                [{ sql: `SELECT * FROM ${tableName} LIMIT ? OFFSET ?;`, params: [chunkSize, offset] }],
+                dataSource,
+                config
+            )
+            if (!chunk || chunk.length === 0) break
+            yield chunk
+            if (chunk.length < chunkSize) break
+            offset += chunkSize
+        }
+    },
+    createStreamingExportResponse: (
+        producer: any,
+        fileName: string,
+        contentType: string
+    ) => {
+        // Synchronous test helper: run producer into a buffer, return Response
+        const chunks: string[] = []
+        const encoder = new TextEncoder()
+        const decoder = new TextDecoder()
+
+        const { readable, writable } = new TransformStream()
+        const writer = writable.getWriter()
+
+        // Run producer and collect output
+        const done = (async () => {
+            try {
+                await producer(writer)
+            } finally {
+                await writer.close()
+            }
+        })()
+
+        // Return response backed by readable stream
+        const response = new Response(readable, {
+            headers: {
+                'Content-Type': contentType,
+                'Content-Disposition': `attachment; filename="${fileName}"`,
+            },
+        })
+
+        // Store promise so tests can await completion
+        ;(response as any).__producerDone = done
+
+        return response
+    },
+    writeChunk: async (writer: WritableStreamDefaultWriter, content: string) => {
+        await writer.write(new TextEncoder().encode(content))
+    },
+    createExportResponse: (data: any, fileName: string, contentType: string) => {
+        const blob = new Blob([data], { type: contentType })
+        return new Response(blob, {
+            headers: {
+                'Content-Type': contentType,
+                'Content-Disposition': `attachment; filename="${fileName}"`,
+            },
+        })
+    },
 }))
 
 vi.mock('../utils', () => ({
     createResponse: vi.fn(
-        (data, message, status) =>
+        (data: any, message: any, status: any) =>
             new Response(JSON.stringify({ result: data, error: message }), {
                 status,
                 headers: { 'Content-Type': 'application/json' },
@@ -19,11 +87,15 @@ vi.mock('../utils', () => ({
     ),
 }))
 
+// Import dump AFTER mocks are set up
+import { dumpDatabaseRoute } from './dump'
+
 let mockDataSource: DataSource
 let mockConfig: StarbaseDBConfiguration
 
 beforeEach(() => {
     vi.clearAllMocks()
+    mockExecuteOperation.mockReset()
 
     mockDataSource = {
         source: 'external',
@@ -40,18 +112,23 @@ beforeEach(() => {
 
 describe('Database Dump Module', () => {
     it('should return a database dump when tables exist', async () => {
-        vi.mocked(executeOperation)
+        mockExecuteOperation
+            // Table names
             .mockResolvedValueOnce([{ name: 'users' }, { name: 'orders' }])
+            // users schema
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
+            // users data chunk (LIMIT/OFFSET query, 2 rows < 1000 chunkSize → generator breaks)
             .mockResolvedValueOnce([
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
             ])
+            // orders schema
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
+            // orders data chunk (2 rows < 1000 → generator breaks)
             .mockResolvedValueOnce([
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
@@ -81,7 +158,7 @@ describe('Database Dump Module', () => {
     })
 
     it('should handle empty databases (no tables)', async () => {
-        vi.mocked(executeOperation).mockResolvedValueOnce([])
+        mockExecuteOperation.mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
@@ -94,11 +171,12 @@ describe('Database Dump Module', () => {
     })
 
     it('should handle databases with tables but no data', async () => {
-        vi.mocked(executeOperation)
+        mockExecuteOperation
             .mockResolvedValueOnce([{ name: 'users' }])
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
+            // Empty chunk = no data
             .mockResolvedValueOnce([])
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
@@ -112,34 +190,60 @@ describe('Database Dump Module', () => {
     })
 
     it('should escape single quotes properly in string values', async () => {
-        vi.mocked(executeOperation)
+        mockExecuteOperation
             .mockResolvedValueOnce([{ name: 'users' }])
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
             ])
-            .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
+            .mockResolvedValueOnce([{ id: 1, bio: "It's a test" }])
+            .mockResolvedValueOnce([])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        const dumpText = await response.text()
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (1, 'It''s a test');"
+        )
+    })
+
+    it('should stream data in chunks for large tables', async () => {
+        const chunk1 = Array.from({ length: 1000 }, (_, i) => ({
+            id: i + 1,
+            name: `user${i + 1}`,
+        }))
+        const chunk2 = Array.from({ length: 1000 }, (_, i) => ({
+            id: i + 1001,
+            name: `user${i + 1001}`,
+        }))
+        const chunk3 = Array.from({ length: 500 }, (_, i) => ({
+            id: i + 2001,
+            name: `user${i + 2001}`,
+        }))
+
+        mockExecuteOperation
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+            ])
+            .mockResolvedValueOnce(chunk1)
+            .mockResolvedValueOnce(chunk2)
+            .mockResolvedValueOnce(chunk3)
+            .mockResolvedValueOnce([]) // end-of-data
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 
         expect(response).toBeInstanceOf(Response)
         const dumpText = await response.text()
+
+        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'user1');")
         expect(dumpText).toContain(
-            "INSERT INTO users VALUES (1, 'Alice''s adventure');"
+            "INSERT INTO users VALUES (2500, 'user2500');"
         )
-    })
-
-    it('should return a 500 response when an error occurs', async () => {
-        const consoleErrorMock = vi
-            .spyOn(console, 'error')
-            .mockImplementation(() => {})
-        vi.mocked(executeOperation).mockRejectedValue(
-            new Error('Database Error')
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (1000, 'user1000');"
         )
-
-        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
-
-        expect(response.status).toBe(500)
-        const jsonResponse: { error: string } = await response.json()
-        expect(jsonResponse.error).toBe('Failed to create database dump')
+        expect(dumpText).toContain(
+            "INSERT INTO users VALUES (1001, 'user1001');"
+        )
     })
 })

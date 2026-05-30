@@ -1,7 +1,14 @@
-import { getTableData, createExportResponse } from './index'
+import {
+    getTableDataChunked,
+    executeOperation,
+    createStreamingExportResponse,
+    writeChunk,
+} from './index'
 import { createResponse } from '../utils'
 import { DataSource } from '../types'
 import { StarbaseDBConfiguration } from '../handler'
+
+const BREATHE_MS = 10
 
 export async function exportTableToJsonRoute(
     tableName: string,
@@ -9,9 +16,19 @@ export async function exportTableToJsonRoute(
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
-        const data = await getTableData(tableName, dataSource, config)
+        // Verify table exists
+        const tableExistsResult = await executeOperation(
+            [
+                {
+                    sql: `SELECT name FROM sqlite_master WHERE type='table' AND name=?;`,
+                    params: [tableName],
+                },
+            ],
+            dataSource,
+            config
+        )
 
-        if (data === null) {
+        if (!tableExistsResult || tableExistsResult.length === 0) {
             return createResponse(
                 undefined,
                 `Table '${tableName}' does not exist.`,
@@ -19,11 +36,34 @@ export async function exportTableToJsonRoute(
             )
         }
 
-        // Convert the result to JSON
-        const jsonData = JSON.stringify(data, null, 4)
+        return createStreamingExportResponse(
+            async (writer) => {
+                await writeChunk(writer, '[\n')
 
-        return createExportResponse(
-            jsonData,
+                let isFirst = true
+                for await (const chunk of getTableDataChunked(
+                    tableName,
+                    dataSource,
+                    config,
+                    1000
+                )) {
+                    for (const row of chunk) {
+                        const prefix = isFirst ? '    ' : ',\n    '
+                        isFirst = false
+                        await writeChunk(
+                            writer,
+                            prefix + JSON.stringify(row)
+                        )
+                    }
+
+                    // Breathing interval
+                    if (BREATHE_MS > 0) {
+                        await new Promise((r) => setTimeout(r, BREATHE_MS))
+                    }
+                }
+
+                await writeChunk(writer, '\n]')
+            },
             `${tableName}_export.json`,
             'application/json'
         )

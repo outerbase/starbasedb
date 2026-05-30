@@ -1,7 +1,13 @@
-import { executeOperation } from '.'
+import { executeOperation, getTableDataChunked, createStreamingExportResponse, writeChunk } from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
+
+/**
+ * Breathing interval between chunks (ms).
+ * Allows other DO requests to be processed between export batches.
+ */
+const BREATHE_MS = 10
 
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
@@ -16,54 +22,81 @@ export async function dumpDatabaseRoute(
         )
 
         const tables = tablesResult.map((row: any) => row.name)
-        let dumpContent = 'SQLite format 3\0' // SQLite file header
 
-        // Iterate through all tables
-        for (const table of tables) {
-            // Get table schema
-            const schemaResult = await executeOperation(
-                [
-                    {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
-                    },
-                ],
-                dataSource,
-                config
+        if (tables.length === 0) {
+            // Empty database — return header only
+            return createStreamingExportResponse(
+                async (writer) => {
+                    await writeChunk(writer, 'SQLite format 3\0')
+                },
+                'database_dump.sql',
+                'application/x-sqlite3'
             )
-
-            if (schemaResult.length) {
-                const schema = schemaResult[0].sql
-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
-            }
-
-            // Get table data
-            const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
-                dataSource,
-                config
-            )
-
-            for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
-                        ? `'${value.replace(/'/g, "''")}'`
-                        : value
-                )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
-            }
-
-            dumpContent += '\n'
         }
 
-        // Create a Blob from the dump content
-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
+        return createStreamingExportResponse(
+            async (writer) => {
+                // Write SQLite header
+                await writeChunk(writer, 'SQLite format 3\0')
 
-        const headers = new Headers({
-            'Content-Type': 'application/x-sqlite3',
-            'Content-Disposition': 'attachment; filename="database_dump.sql"',
-        })
+                // Iterate through all tables
+                for (const table of tables) {
+                    // Get table schema
+                    const schemaResult = await executeOperation(
+                        [
+                            {
+                                sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
+                                params: [table],
+                            },
+                        ],
+                        dataSource,
+                        config
+                    )
 
-        return new Response(blob, { headers })
+                    if (schemaResult.length) {
+                        const schema = schemaResult[0].sql
+                        await writeChunk(
+                            writer,
+                            `\n-- Table: ${table}\n${schema};\n\n`
+                        )
+                    }
+
+                    // Stream table data in chunks
+                    let hasData = false
+                    for await (const chunk of getTableDataChunked(
+                        table,
+                        dataSource,
+                        config,
+                        1000
+                    )) {
+                        hasData = true
+                        let batchContent = ''
+
+                        for (const row of chunk) {
+                            const values = Object.values(row).map((value) =>
+                                typeof value === 'string'
+                                    ? `'${value.replace(/'/g, "''")}'`
+                                    : value
+                            )
+                            batchContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+                        }
+
+                        await writeChunk(writer, batchContent)
+
+                        // Breathing interval — let other DO requests through
+                        if (BREATHE_MS > 0) {
+                            await new Promise((r) =>
+                                setTimeout(r, BREATHE_MS)
+                            )
+                        }
+                    }
+
+                    await writeChunk(writer, '\n')
+                }
+            },
+            'database_dump.sql',
+            'application/x-sqlite3'
+        )
     } catch (error: any) {
         console.error('Database Dump Error:', error)
         return createResponse(undefined, 'Failed to create database dump', 500)
