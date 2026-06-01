@@ -10,13 +10,6 @@ export class StarbaseDBDurableObject extends DurableObject {
     // Store the client auth token for requests back to our Worker
     private clientAuthToken: string
 
-    /**
-     * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
-     * 	`DurableObjectStub::get` for a given identifier (no-op constructors can be omitted)
-     *
-     * @param ctx - The interface for interacting with Durable Object state
-     * @param env - The interface to reference bindings declared in wrangler.toml
-     */
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env)
         this.clientAuthToken = env.CLIENT_AUTHORIZATION_TOKEN
