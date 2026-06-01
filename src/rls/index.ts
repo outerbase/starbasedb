@@ -234,7 +234,8 @@ function applyRLSToAst(ast: any): void {
 
     const tablesWithRules: Record<string, string[]> = {}
     policies.forEach((policy) => {
-        const tbl = normalizeIdentifier(policy.condition.left.table)
+        let tbl = normalizeIdentifier(policy.condition.left.table)
+        if (tbl.includes('.')) tbl = tbl.split('.')[1]
         if (!tablesWithRules[tbl]) {
             tablesWithRules[tbl] = []
         }
@@ -264,13 +265,15 @@ function applyRLSToAst(ast: any): void {
     } else {
         // SELECT or DELETE
         tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
-                }
-                return tableName
-            }) || []
+            ast.from
+                ?.filter((fromTable: any) => fromTable.table != null)
+                .map((fromTable: any) => {
+                    let tableName = normalizeIdentifier(fromTable.table)
+                    if (tableName?.includes('.')) {
+                        tableName = tableName.split('.')[1]
+                    }
+                    return tableName
+                }) || []
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
@@ -278,7 +281,10 @@ function applyRLSToAst(ast: any): void {
     for (const table of tables) {
         if (restrictedTables.includes(table)) {
             const allowedActions = tablesWithRules[table]
-            if (!allowedActions.includes(statementType)) {
+            if (
+                !allowedActions.includes(statementType) &&
+                !allowedActions.includes('*')
+            ) {
                 throw new Error(
                     `Unauthorized access: No matching rules for ${statementType} on restricted table ${table}`
                 )
@@ -291,7 +297,9 @@ function applyRLSToAst(ast: any): void {
             (policy) => policy.action === statementType || policy.action === '*'
         )
         .forEach(({ action, condition }) => {
-            const targetTable = normalizeIdentifier(condition.left.table)
+            let targetTable = normalizeIdentifier(condition.left.table)
+            if (targetTable.includes('.'))
+                targetTable = targetTable.split('.')[1]
             const isTargetTable = tables.includes(targetTable)
 
             if (!isTargetTable) return
