@@ -128,6 +128,29 @@ describe('Database Dump Module', () => {
         )
     })
 
+    it('streams large tables in bounded batches (constant memory)', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'logs' }]) // tables
+            .mockResolvedValueOnce([{ sql: 'CREATE TABLE logs (id INTEGER);' }]) // schema
+            .mockResolvedValueOnce([{ id: 1 }, { id: 2 }]) // batch 1 (full)
+            .mockResolvedValueOnce([{ id: 3 }]) // batch 2 (partial -> stop)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, 2)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain('INSERT INTO logs VALUES (1);')
+        expect(dumpText).toContain('INSERT INTO logs VALUES (2);')
+        expect(dumpText).toContain('INSERT INTO logs VALUES (3);')
+
+        // A second batch must have been requested with OFFSET advanced by batchSize.
+        const issuedOffsetQuery = vi
+            .mocked(executeOperation)
+            .mock.calls.some((args: any[]) =>
+                args[0]?.[0]?.sql?.includes('OFFSET 2')
+            )
+        expect(issuedOffsetQuery).toBe(true)
+    })
+
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
