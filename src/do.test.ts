@@ -96,6 +96,79 @@ describe('StarbaseDBDurableObject Tests', () => {
         expect(instance.storage).toBeDefined()
     })
 
+    it('should bootstrap internal temporary tables during construction', () => {
+        vi.clearAllMocks()
+
+        new StarbaseDBDurableObject(mockDurableObjectState, mockEnv)
+
+        const executedSql = mockStorage.sql.exec.mock.calls.map(([sql]) => sql)
+        expect(executedSql).toHaveLength(4)
+        expect(executedSql[0]).toContain('CREATE TABLE IF NOT EXISTS tmp_cache')
+        expect(executedSql[1]).toContain(
+            'CREATE TABLE IF NOT EXISTS tmp_allowlist_queries'
+        )
+        expect(executedSql[2]).toContain(
+            'CREATE TABLE IF NOT EXISTS tmp_allowlist_rejections'
+        )
+        expect(executedSql[3]).toContain(
+            'CREATE TABLE IF NOT EXISTS tmp_rls_policies'
+        )
+    })
+
+    it('should expose bound Durable Object helper methods from init()', async () => {
+        const getAlarm = vi.fn().mockResolvedValue(123)
+        const setAlarm = vi.fn().mockResolvedValue(undefined)
+        const deleteAlarm = vi.fn().mockResolvedValue(undefined)
+        const storage = {
+            ...mockStorage,
+            getAlarm,
+            setAlarm,
+            deleteAlarm,
+        }
+        const initialized = new StarbaseDBDurableObject(
+            { storage, getTags: vi.fn().mockReturnValue([]) } as any,
+            mockEnv
+        ).init()
+
+        await expect(initialized.getAlarm()).resolves.toBe(123)
+        await initialized.setAlarm(Date.now() + 2000)
+        await initialized.deleteAlarm()
+        await expect(
+            initialized.executeQuery({ sql: 'SELECT * FROM users' })
+        ).resolves.toEqual([
+            { id: 1, name: 'Alice' },
+            { id: 2, name: 'Bob' },
+        ])
+
+        expect(getAlarm).toHaveBeenCalledOnce()
+        expect(setAlarm).toHaveBeenCalledOnce()
+        expect(deleteAlarm).toHaveBeenCalledOnce()
+    })
+
+    it('should execute a raw query with params and return cursor metadata', async () => {
+        const result = await instance.executeQuery({
+            sql: 'SELECT * FROM users WHERE id = ?',
+            params: [1],
+            isRaw: true,
+        })
+
+        expect(mockStorage.sql.exec).toHaveBeenCalledWith(
+            'SELECT * FROM users WHERE id = ?',
+            1
+        )
+        expect(result).toEqual({
+            columns: ['id', 'name'],
+            rows: [
+                [1, 'Alice'],
+                [2, 'Bob'],
+            ],
+            meta: {
+                rows_read: 2,
+                rows_written: 1,
+            },
+        })
+    })
+
     it('should execute a query and return results', async () => {
         const sql = 'SELECT * FROM users'
         const result = await instance.executeQuery({ sql })
