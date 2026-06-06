@@ -59,10 +59,24 @@ export class StarbaseDBDurableObject extends DurableObject {
             "operator" TEXT DEFAULT '='
         )`
 
+        const exportJobsStatement = `
+        CREATE TABLE IF NOT EXISTS tmp_export_jobs (
+            id TEXT PRIMARY KEY,
+            status TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            current_table TEXT,
+            current_row INTEGER,
+            total_tables INTEGER,
+            file_name TEXT NOT NULL,
+            error TEXT
+        )`
+
         this.executeQuery({ sql: cacheStatement })
         this.executeQuery({ sql: allowlistStatement })
         this.executeQuery({ sql: allowlistRejectedStatement })
         this.executeQuery({ sql: rlsStatement })
+        this.executeQuery({ sql: exportJobsStatement })
     }
 
     init() {

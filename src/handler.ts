@@ -9,6 +9,7 @@ import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
 import { dumpDatabaseRoute } from './export/dump'
 import { exportTableToJsonRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
+import { getExportJob } from './export/job'
 import { importDumpRoute } from './import/dump'
 import { importTableFromJsonRoute } from './import/json'
 import { importTableFromCsvRoute } from './import/csv'
@@ -151,6 +152,54 @@ export class StarbaseDB {
                     )
                 }
             )
+
+            // Get export job status
+            this.app.get('/export/job/:jobId', this.isInternalSource, async (c) => {
+                try {
+                    const jobId = c.req.param('jobId')
+                    const job = await getExportJob(this.dataSource, jobId)
+
+                    if (!job) {
+                        return createResponse(undefined, 'Export job not found', 404)
+                    }
+
+                    return createResponse(job, undefined, 200)
+                } catch (error: any) {
+                    console.error('Get export job error:', error)
+                    return createResponse(undefined, 'Failed to get export job status', 500)
+                }
+            })
+
+            // Download export file from R2
+            this.app.get('/export/download/:fileName', this.isInternalSource, async (c) => {
+                try {
+                    const fileName = c.req.param('fileName')
+
+                    if (!this.dataSource.exportBucket) {
+                        return createResponse(
+                            undefined,
+                            'R2 bucket not configured',
+                            500
+                        )
+                    }
+
+                    const file = await this.dataSource.exportBucket.get(fileName)
+
+                    if (!file) {
+                        return createResponse(undefined, 'Export file not found', 404)
+                    }
+
+                    const headers = new Headers({
+                        'Content-Type': 'application/x-sqlite3',
+                        'Content-Disposition': `attachment; filename="${fileName}"`,
+                    })
+
+                    return new Response(file.body, { headers })
+                } catch (error: any) {
+                    console.error('Download export file error:', error)
+                    return createResponse(undefined, 'Failed to download export file', 500)
+                }
+            })
         }
 
         if (this.getFeature('import')) {

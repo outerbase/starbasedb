@@ -55,6 +55,7 @@ export interface Env {
     AUTH_JWKS_ENDPOINT?: string
 
     HYPERDRIVE: Hyperdrive
+    EXPORT_BUCKET?: R2Bucket
 
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
@@ -121,6 +122,7 @@ export default {
                     ...context,
                 },
                 executionContext: ctx,
+                exportBucket: env.EXPORT_BUCKET,
             }
 
             if (env.EXTERNAL_DB_TYPE === 'postgresql') {

@@ -2,12 +2,17 @@ import { executeOperation } from '.'
 import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
+import { streamDatabaseDumpToR2 } from './dump-streaming'
 
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
     config: StarbaseDBConfiguration
 ): Promise<Response> {
     try {
+        // Use streaming export to R2 if bucket is configured
+        if (dataSource.exportBucket) {
+            return streamDatabaseDumpToR2(dataSource, config)
+        }
         // Get all table names
         const tablesResult = await executeOperation(
             [{ sql: "SELECT name FROM sqlite_master WHERE type='table';" }],
