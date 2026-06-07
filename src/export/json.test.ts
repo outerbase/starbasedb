@@ -76,7 +76,9 @@ describe('JSON Export Module', () => {
         expect(getTableData).toHaveBeenCalledWith(
             'users',
             mockDataSource,
-            mockConfig
+            mockConfig,
+            undefined,
+            undefined
         )
         expect(createExportResponse).toHaveBeenCalledWith(
             JSON.stringify(mockData, null, 4),
@@ -101,6 +103,13 @@ describe('JSON Export Module', () => {
             mockConfig
         )
 
+        expect(getTableData).toHaveBeenCalledWith(
+            'empty_table',
+            mockDataSource,
+            mockConfig,
+            undefined,
+            undefined
+        )
         expect(createExportResponse).toHaveBeenCalledWith(
             '[]',
             'empty_table_export.json',
@@ -128,6 +137,13 @@ describe('JSON Export Module', () => {
             mockConfig
         )
 
+        expect(getTableData).toHaveBeenCalledWith(
+            'special_chars',
+            mockDataSource,
+            mockConfig,
+            undefined,
+            undefined
+        )
         expect(createExportResponse).toHaveBeenCalledWith(
             JSON.stringify(specialCharsData, null, 4),
             'special_chars_export.json',

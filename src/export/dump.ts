@@ -22,6 +22,9 @@ export async function dumpDatabaseRoute(
         const stream = new ReadableStream({
             async start(controller) {
                 try {
+                    // SQLite file header
+                    controller.enqueue(new TextEncoder().encode('SQLite format 3\0'))
+
                     for (const table of tables) {
                         // Get table schema
                         const schemaResult = await executeOperation(
@@ -30,7 +33,7 @@ export async function dumpDatabaseRoute(
                             config
                         )
 
-                        if (schemaResult.length) {
+                        if (schemaResult && schemaResult.length > 0) {
                             const schema = schemaResult[0].sql
                             controller.enqueue(new TextEncoder().encode(`\n-- Table: ${table}\n${schema};\n\n`))
                         }
