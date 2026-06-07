@@ -11,6 +11,7 @@ import { ChangeDataCapturePlugin } from '../plugins/cdc'
 import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
+import { ReplicationPlugin } from '../plugins/replication'
 import { InterfacePlugin } from '../plugins/interface'
 
 export { StarbaseDBDurableObject } from './do'
@@ -195,6 +196,9 @@ export default {
 
             const webSocketPlugin = new WebSocketPlugin()
             const cronPlugin = new CronPlugin()
+            const replicationPlugin = new ReplicationPlugin({
+                cron: cronPlugin,
+            })
             const cdcPlugin = new ChangeDataCapturePlugin({
                 stub,
                 broadcastAllEvents: false,
@@ -208,6 +212,14 @@ export default {
             cronPlugin.onEvent(async ({ name, cron_tab, payload }) => {
                 // Include cron event code here
             }, ctx)
+
+            // Run replication syncs when their cron tasks fire. The data source is
+            // captured here from the request scope because the cron callback runs
+            // on a separate request where the replication middleware has not run.
+            cronPlugin.onEvent(
+                (event) => replicationPlugin.handleCronEvent(event, dataSource),
+                ctx
+            )
 
             const interfacePlugin = new InterfacePlugin()
 
@@ -224,6 +236,7 @@ export default {
                 new QueryLogPlugin({ ctx }),
                 cdcPlugin,
                 cronPlugin,
+                replicationPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
             ] satisfies StarbasePlugin[]
