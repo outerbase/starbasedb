@@ -1,0 +1,41 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_replication_jobs": [
+                "name",
+                "source_config",
+                "table_name",
+                "tracking_col",
+                "tracking_type",
+                "last_value",
+                "cron_tab",
+                "target_table",
+                "columns",
+                "primary_key",
+                "batch_size",
+                "is_active",
+                "last_run_at",
+                "last_error",
+                "rows_synced",
+                "created_at",
+                "updated_at"
+            ]
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {
+            "tmp_cron_tasks": [
+                "name",
+                "cron_tab",
+                "payload",
+                "callback_host",
+                "is_active"
+            ]
+        },
+        "secrets": {},
+        "variables": {}
+    }
+}

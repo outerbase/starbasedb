@@ -467,6 +467,18 @@ export async function executeSDKQuery(opts: {
 
     await connection.connect()
 
-    const { data } = await connection.raw(opts.sql, opts.params)
-    return data
+    try {
+        const { data } = await connection.raw(opts.sql, opts.params)
+        return data
+    } finally {
+        // Close the underlying driver connection to avoid leaking it. When an
+        // ExecutionContext is available we close in the background (mirroring the
+        // Hyperdrive branch in executeQuery above); otherwise we await it.
+        const cleanup = connection.disconnect()
+        if (opts.dataSource?.executionContext) {
+            opts.dataSource.executionContext.waitUntil(cleanup)
+        } else {
+            await cleanup
+        }
+    }
 }
