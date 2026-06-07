@@ -7,7 +7,7 @@ import { LiteREST } from './literest'
 import { executeQuery, executeTransaction } from './operation'
 import { createResponse, QueryRequest, QueryTransactionRequest } from './utils'
 import { dumpDatabaseRoute } from './export/dump'
-import { exportTableToJsonRoute } from './export/json'
+import { exportTableToJsonRoute, exportTableToJsonStreamRoute } from './export/json'
 import { exportTableToCsvRoute } from './export/csv'
 import { importDumpRoute } from './import/dump'
 import { importTableFromJsonRoute } from './import/json'
@@ -131,6 +131,20 @@ export class StarbaseDB {
                 async (c) => {
                     const tableName = c.req.valid('param').tableName
                     return exportTableToJsonRoute(
+                        tableName,
+                        this.dataSource,
+                        this.config
+                    )
+                }
+            )
+
+            this.app.get(
+                '/export/json-stream/:tableName',
+                this.isInternalSource,
+                this.hasTableName,
+                async (c) => {
+                    const tableName = c.req.valid('param').tableName
+                    return exportTableToJsonStreamRoute(
                         tableName,
                         this.dataSource,
                         this.config

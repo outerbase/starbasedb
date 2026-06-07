@@ -39,8 +39,7 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Run tests
-        run: pnpm vitest --coverage.enabled true --coverage.reportOnFailure --coverage.reportsDirectory ./coverage || true
-        continue-on-error: true
+        run: pnpm vitest --coverage.enabled true --coverage.reportOnFailure --coverage.reportsDirectory ./coverage
 
       - name: Report Coverage
         uses: davelosert/vitest-coverage-report-action@v2

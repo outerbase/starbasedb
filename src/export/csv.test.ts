@@ -63,7 +63,9 @@ describe('CSV Export Module', () => {
         expect(getTableData).toHaveBeenCalledWith(
             'users',
             mockDataSource,
-            mockConfig
+            mockConfig,
+            undefined,
+            undefined
         )
         expect(createExportResponse).toHaveBeenCalledWith(
             'id,name,age\n1,Alice,30\n2,Bob,25\n',
@@ -85,7 +87,9 @@ describe('CSV Export Module', () => {
         expect(getTableData).toHaveBeenCalledWith(
             'non_existent_table',
             mockDataSource,
-            mockConfig
+            mockConfig,
+            undefined,
+            undefined
         )
         expect(response.status).toBe(404)
 
@@ -113,7 +117,9 @@ describe('CSV Export Module', () => {
         expect(getTableData).toHaveBeenCalledWith(
             'empty_table',
             mockDataSource,
-            mockConfig
+            mockConfig,
+            undefined,
+            undefined
         )
         expect(createExportResponse).toHaveBeenCalledWith(
             '',

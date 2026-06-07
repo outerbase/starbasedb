@@ -42,6 +42,7 @@ describe('Database Dump Module', () => {
     it('should return a database dump when tables exist', async () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }, { name: 'orders' }])
+            // Users table
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
             ])
@@ -49,6 +50,8 @@ describe('Database Dump Module', () => {
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
             ])
+            .mockResolvedValueOnce([]) // End of users data
+            // Orders table
             .mockResolvedValueOnce([
                 { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
             ])
@@ -56,6 +59,7 @@ describe('Database Dump Module', () => {
                 { id: 1, total: 99.99 },
                 { id: 2, total: 49.5 },
             ])
+            .mockResolvedValueOnce([]) // End of orders data
 
         const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
 

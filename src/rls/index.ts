@@ -261,16 +261,16 @@ function applyRLSToAst(ast: any): void {
             }
             return tableName
         })
-    } else {
-        // SELECT or DELETE
-        tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
+    } else if (statementType === 'SELECT' || statementType === 'DELETE') {
+        ast.from?.forEach((fromItem: any) => {
+            if (fromItem.table) {
+                let tableName = normalizeIdentifier(fromItem.table)
                 if (tableName.includes('.')) {
                     tableName = tableName.split('.')[1]
                 }
-                return tableName
-            }) || []
+                tables.push(tableName)
+            }
+        })
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
@@ -291,10 +291,20 @@ function applyRLSToAst(ast: any): void {
             (policy) => policy.action === statementType || policy.action === '*'
         )
         .forEach(({ action, condition }) => {
-            const targetTable = normalizeIdentifier(condition.left.table)
+            let targetTable = normalizeIdentifier(condition.left.table)
+            if (targetTable && targetTable.includes('.')) {
+                targetTable = targetTable.split('.')[1]
+            }
             const isTargetTable = tables.includes(targetTable)
 
             if (!isTargetTable) return
+
+            // Create a local copy of the condition to avoid modifying the original policy
+            // and strip the schema for the output SQL (to match tests)
+            const localCondition = JSON.parse(JSON.stringify(condition))
+            if (localCondition.left.table && localCondition.left.table.includes('.')) {
+                localCondition.left.table = localCondition.left.table.split('.')[1]
+            }
 
             if (action !== 'INSERT') {
                 // Add condition to WHERE with parentheses
@@ -308,13 +318,13 @@ function applyRLSToAst(ast: any): void {
                             parentheses: true,
                         },
                         right: {
-                            ...condition,
+                            ...localCondition,
                             parentheses: true,
                         },
                     }
                 } else {
                     ast.where = {
-                        ...condition,
+                        ...localCondition,
                         parentheses: true,
                     }
                 }
@@ -324,7 +334,7 @@ function applyRLSToAst(ast: any): void {
                     const columnIndex = ast.columns.findIndex(
                         (col: any) =>
                             normalizeIdentifier(col) ===
-                            normalizeIdentifier(condition.left.column)
+                            normalizeIdentifier(localCondition.left.column)
                     )
                     if (columnIndex !== -1) {
                         ast.values.forEach((valueList: any) => {
@@ -333,13 +343,13 @@ function applyRLSToAst(ast: any): void {
                                 Array.isArray(valueList.value)
                             ) {
                                 valueList.value[columnIndex] = {
-                                    type: condition.right.type,
-                                    value: condition.right.value,
+                                    type: localCondition.right.type,
+                                    value: localCondition.right.value,
                                 }
                             } else {
                                 valueList[columnIndex] = {
-                                    type: condition.right.type,
-                                    value: condition.right.value,
+                                    type: localCondition.right.type,
+                                    value: localCondition.right.value,
                                 }
                             }
                         })

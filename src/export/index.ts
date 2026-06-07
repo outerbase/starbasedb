@@ -22,7 +22,9 @@ export async function executeOperation(
 export async function getTableData(
     tableName: string,
     dataSource: DataSource,
-    config: StarbaseDBConfiguration
+    config: StarbaseDBConfiguration,
+    limit?: number,
+    offset?: number
 ): Promise<any[] | null> {
     try {
         // Verify if the table exists
@@ -41,9 +43,22 @@ export async function getTableData(
             return null
         }
 
+        // Build query with optional pagination
+        let query = `SELECT * FROM ${tableName}`
+        const params: any[] = []
+        if (limit !== undefined) {
+            query += ` LIMIT ?`
+            params.push(limit)
+        }
+        if (offset !== undefined) {
+            query += ` OFFSET ?`
+            params.push(offset)
+        }
+        query += `;`
+
         // Get table data
         const dataResult = await executeOperation(
-            [{ sql: `SELECT * FROM ${tableName};` }],
+            [{ sql: query, params: params.length > 0 ? params : undefined }],
             dataSource,
             config
         )
