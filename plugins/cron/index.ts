@@ -173,8 +173,13 @@ export class CronPlugin extends StarbasePlugin {
         cronTab: string,
         name: string,
         payload: Record<string, any> = {},
-        callbackHost: string
+        callbackHost: string,
+        dataSource?: DataSource
     ) {
+        // Allow callers (e.g. other plugins) to supply the data source directly so
+        // they don't have to depend on this plugin's middleware having run first.
+        if (dataSource) this.dataSource = dataSource
+
         if (!this.dataSource)
             throw new Error('CronPlugin not properly initialized')
 
@@ -184,6 +189,21 @@ export class CronPlugin extends StarbasePlugin {
         })
 
         // Reschedule alarms after adding new task
+        await this.scheduleNextAlarm()
+    }
+
+    public async removeEvent(name: string, dataSource?: DataSource) {
+        if (dataSource) this.dataSource = dataSource
+
+        if (!this.dataSource)
+            throw new Error('CronPlugin not properly initialized')
+
+        await this.dataSource.rpc.executeQuery({
+            sql: SQL_QUERIES.DELETE_TASK,
+            params: [name],
+        })
+
+        // Reschedule alarms after removing the task
         await this.scheduleNextAlarm()
     }
 
