@@ -1,0 +1,13 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
