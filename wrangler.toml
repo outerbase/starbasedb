@@ -45,8 +45,8 @@ REGION = "auto"
 
 # Uncomment the section below to create a user for logging into your database UI.
 # You can access the Studio UI at: https://your_endpoint/studio
-# STUDIO_USER = "admin"
-# STUDIO_PASS = "123456"
+STUDIO_USER = "admin"
+STUDIO_PASS = "123456"
 
 # Toggle to enable default features 
 ENABLE_ALLOWLIST = 0
@@ -62,6 +62,10 @@ ENABLE_RLS = 0
 # EXTERNAL_DB_PASS = ""
 # EXTERNAL_DB_DATABASE = ""
 # EXTERNAL_DB_DEFAULT_SCHEMA = "public"
+
+# EXTERNAL_DB_TABLES_TO_TRACK = "users,posts,comments"
+# EXTERNAL_DB_POLLING_INTERVAL = "*/1 * * * *"
+# EXTERNAL_DB_BATCH_SIZE = 500
 
 # EXTERNAL_DB_MONGODB_URI = ""
 # EXTERNAL_DB_TURSO_URI = ""

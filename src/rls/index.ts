@@ -249,36 +249,47 @@ function applyRLSToAst(ast: any): void {
     let tables: string[] = []
     if (statementType === 'INSERT') {
         let tableName = normalizeIdentifier(ast.table[0].table)
-        if (tableName.includes('.')) {
+        if (tableName && tableName.includes('.')) {
             tableName = tableName.split('.')[1]
         }
-        tables = [tableName]
+        tables = tableName ? [tableName] : []
     } else if (statementType === 'UPDATE') {
-        tables = ast.table.map((tableRef: any) => {
-            let tableName = normalizeIdentifier(tableRef.table)
-            if (tableName.includes('.')) {
-                tableName = tableName.split('.')[1]
-            }
-            return tableName
-        })
-    } else {
-        // SELECT or DELETE
-        tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
+        tables = ast.table
+            .map((tableRef: any) => {
+                let tableName = normalizeIdentifier(tableRef.table)
+                if (tableName && tableName.includes('.')) {
                     tableName = tableName.split('.')[1]
                 }
                 return tableName
-            }) || []
+            })
+            .filter(Boolean)
+    } else {
+        // SELECT or DELETE
+        tables =
+            ast.from
+                ?.map((fromTable: any) => {
+                    let tableName = normalizeIdentifier(fromTable.table)
+                    if (tableName && tableName.includes('.')) {
+                        tableName = tableName.split('.')[1]
+                    }
+                    return tableName
+                })
+                .filter(Boolean) || []
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
 
     for (const table of tables) {
-        if (restrictedTables.includes(table)) {
-            const allowedActions = tablesWithRules[table]
-            if (!allowedActions.includes(statementType)) {
+        const matchingKey = restrictedTables.find(
+            (rt) =>
+                rt === table || (rt.includes('.') && rt.split('.')[1] === table)
+        )
+        if (matchingKey) {
+            const allowedActions = tablesWithRules[matchingKey]
+            if (
+                !allowedActions.includes(statementType) &&
+                !allowedActions.includes('*')
+            ) {
                 throw new Error(
                     `Unauthorized access: No matching rules for ${statementType} on restricted table ${table}`
                 )
@@ -292,11 +303,16 @@ function applyRLSToAst(ast: any): void {
         )
         .forEach(({ action, condition }) => {
             const targetTable = normalizeIdentifier(condition.left.table)
-            const isTargetTable = tables.includes(targetTable)
+            const targetTableWithoutSchema = targetTable.includes('.')
+                ? targetTable.split('.')[1]
+                : targetTable
+            const isTargetTable =
+                tables.includes(targetTable) ||
+                tables.includes(targetTableWithoutSchema)
 
             if (!isTargetTable) return
 
-            if (action !== 'INSERT') {
+            if (statementType !== 'INSERT') {
                 // Add condition to WHERE with parentheses
                 if (ast.where) {
                     ast.where = {
@@ -349,8 +365,15 @@ function applyRLSToAst(ast: any): void {
         })
 
     ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
-            applyRLSToAst(fromItem.expr)
+        if (fromItem.expr) {
+            if (fromItem.expr.type === 'select') {
+                applyRLSToAst(fromItem.expr)
+            } else if (
+                fromItem.expr.ast &&
+                fromItem.expr.ast.type === 'select'
+            ) {
+                applyRLSToAst(fromItem.expr.ast)
+            }
         }
 
         // Handle both single join and array of joins
@@ -359,8 +382,15 @@ function applyRLSToAst(ast: any): void {
                 ? fromItem.join
                 : [fromItem]
             joins.forEach((joinItem: any) => {
-                if (joinItem.expr && joinItem.expr.type === 'select') {
-                    applyRLSToAst(joinItem.expr)
+                if (joinItem.expr) {
+                    if (joinItem.expr.type === 'select') {
+                        applyRLSToAst(joinItem.expr)
+                    } else if (
+                        joinItem.expr.ast &&
+                        joinItem.expr.ast.type === 'select'
+                    ) {
+                        applyRLSToAst(joinItem.expr.ast)
+                    }
                 }
             })
         }
@@ -371,8 +401,12 @@ function applyRLSToAst(ast: any): void {
     }
 
     ast.columns?.forEach((column: any) => {
-        if (column.expr && column.expr.type === 'select') {
-            applyRLSToAst(column.expr)
+        if (column.expr) {
+            if (column.expr.type === 'select') {
+                applyRLSToAst(column.expr)
+            } else if (column.expr.ast && column.expr.ast.type === 'select') {
+                applyRLSToAst(column.expr.ast)
+            }
         }
     })
 }
@@ -381,6 +415,8 @@ function traverseWhere(node: any): void {
     if (!node) return
     if (node.type === 'select') {
         applyRLSToAst(node)
+    } else if (node.ast && node.ast.type === 'select') {
+        applyRLSToAst(node.ast)
     }
     if (node.left) traverseWhere(node.left)
     if (node.right) traverseWhere(node.right)

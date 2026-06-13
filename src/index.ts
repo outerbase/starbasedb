@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { ReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -50,6 +51,10 @@ export interface Env {
     EXTERNAL_DB_CLOUDFLARE_API_KEY?: string
     EXTERNAL_DB_CLOUDFLARE_ACCOUNT_ID?: string
     EXTERNAL_DB_CLOUDFLARE_DATABASE_ID?: string
+
+    EXTERNAL_DB_TABLES_TO_TRACK?: string
+    EXTERNAL_DB_POLLING_INTERVAL?: string
+    EXTERNAL_DB_BATCH_SIZE?: number
 
     AUTH_ALGORITHM?: string
     AUTH_JWKS_ENDPOINT?: string
@@ -209,6 +214,8 @@ export default {
                 // Include cron event code here
             }, ctx)
 
+            const replicationPlugin = new ReplicationPlugin({ cronPlugin })
+
             const interfacePlugin = new InterfacePlugin()
 
             const plugins = [
@@ -224,6 +231,7 @@ export default {
                 new QueryLogPlugin({ ctx }),
                 cdcPlugin,
                 cronPlugin,
+                replicationPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
             ] satisfies StarbasePlugin[]
