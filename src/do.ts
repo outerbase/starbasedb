@@ -72,6 +72,7 @@ export class StarbaseDBDurableObject extends DurableObject {
             deleteAlarm: this.deleteAlarm.bind(this),
             getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
+            executeTransaction: this.executeTransaction.bind(this),
         }
     }
 

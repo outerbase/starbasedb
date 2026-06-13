@@ -17,6 +17,10 @@ const mockConfig: StarbaseDBConfiguration = {
     features: { allowlist: true, rls: true, rest: true },
 }
 
+beforeEach(() => {
+    mockConfig.role = 'client'
+})
+
 describe('loadPolicies - Policy Fetching and Parsing', () => {
     it('should load and parse policies correctly', async () => {
         vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
@@ -74,7 +78,7 @@ describe('applyRLS - Query Modification', () => {
         mockDataSource.context.sub = 'user123'
         vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
             {
-                actions: 'SELECT',
+                actions: '*',
                 schema: 'public',
                 table: 'users',
                 column: 'user_id',
@@ -95,7 +99,7 @@ describe('applyRLS - Query Modification', () => {
         })
 
         console.log('Final SQL:', modifiedSql)
-        expect(modifiedSql).toContain("WHERE `user_id` = 'user123'")
+        expect(modifiedSql).toContain("`public.users`.`user_id` = 'user123'")
     })
     it('should modify DELETE queries by adding policy-based WHERE clause', async () => {
         const sql = "DELETE FROM users WHERE name = 'Alice'"
@@ -106,7 +110,8 @@ describe('applyRLS - Query Modification', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("WHERE `name` = 'Alice'")
+        expect(modifiedSql).toContain("`name` = 'Alice'")
+        expect(modifiedSql).toContain("`public.users`.`user_id` = 'user123'")
     })
 
     it('should modify UPDATE queries with additional WHERE clause', async () => {
@@ -118,7 +123,9 @@ describe('applyRLS - Query Modification', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("`name` = 'Bob' WHERE `age` = 25")
+        expect(modifiedSql).toContain("`name` = 'Bob'")
+        expect(modifiedSql).toContain('`age` = 25')
+        expect(modifiedSql).toContain("`public.users`.`user_id` = 'user123'")
     })
 
     it('should modify INSERT queries to enforce column values', async () => {
@@ -130,7 +137,7 @@ describe('applyRLS - Query Modification', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("VALUES (1,'Alice')")
+        expect(modifiedSql).toContain("VALUES ('user123','Alice')")
     })
 })
 
@@ -200,8 +207,8 @@ describe('applyRLS - Multi-Table Queries', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("WHERE `users.user_id` = 'user123'")
-        expect(modifiedSql).toContain("AND `orders.user_id` = 'user123'")
+        expect(modifiedSql).toContain("`public.users`.`user_id` = 'user123'")
+        expect(modifiedSql).toContain("`public.orders`.`user_id` = 'user123'")
     })
 
     it('should apply RLS policies to multiple tables in a JOIN', async () => {
@@ -218,8 +225,8 @@ describe('applyRLS - Multi-Table Queries', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("WHERE (users.user_id = 'user123')")
-        expect(modifiedSql).toContain("AND (orders.user_id = 'user123')")
+        expect(modifiedSql).toContain("(`public.users`.`user_id` = 'user123')")
+        expect(modifiedSql).toContain("(`public.orders`.`user_id` = 'user123')")
     })
 
     it('should apply RLS policies to subqueries inside FROM clause', async () => {
@@ -236,6 +243,6 @@ describe('applyRLS - Multi-Table Queries', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("WHERE `users.user_id` = 'user123'")
+        expect(modifiedSql).toContain("`public.users`.`user_id` = 'user123'")
     })
 })

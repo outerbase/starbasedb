@@ -270,6 +270,23 @@ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/import/dump' \
 </code>
 </pre>
 
+<h3>Database Replication</h3>
+<p>
+  StarbaseDB includes an automated data replication plugin to synchronize data from external databases (such as PostgreSQL or MySQL) into StarbaseDB's internal SQLite. It runs as a scheduled background job, utilizing Cloudflare Durable Object Alarms.
+</p>
+<p>
+  Configure the following variables in your <code>wrangler.toml</code> to enable replication:
+</p>
+<pre>
+<code>
+[vars]
+EXTERNAL_DB_TYPE = "postgresql"
+EXTERNAL_DB_TABLES_TO_TRACK = "users,posts,comments" # Comma-separated list of tables to track
+EXTERNAL_DB_POLLING_INTERVAL = "*/1 * * * *"         # Polling interval (CRON expression)
+EXTERNAL_DB_BATCH_SIZE = 500                         # Number of rows per batch
+</code>
+</pre>
+
 <br />
 <h2>Contributing</h2>
 <p>We welcome contributions! Please refer to our <a href="./CONTRIBUTING.md">Contribution Guide</a> for more details.</p>
