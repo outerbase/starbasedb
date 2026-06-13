@@ -47,6 +47,15 @@ function normalizeIdentifier(name: string): string {
     return name
 }
 
+function getBaseTableName(name: string): string {
+    if (!name) return name
+    const normalized = normalizeIdentifier(name)
+    if (normalized.includes('.')) {
+        return normalized.split('.')[1]
+    }
+    return normalized
+}
+
 export async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
     try {
         const statement =
@@ -142,7 +151,16 @@ export async function applyRLS(opts: {
         return sql
     }
 
-    policies = await loadPolicies(dataSource)
+    policies = (await loadPolicies(dataSource)).map((p) => ({
+        ...p,
+        condition: {
+            ...p.condition,
+            left: {
+                ...p.condition.left,
+                table: getBaseTableName(p.condition.left.table),
+            },
+        },
+    }))
 
     const dialect =
         dataSource.source === 'external'
@@ -264,13 +282,16 @@ function applyRLSToAst(ast: any): void {
     } else {
         // SELECT or DELETE
         tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
-                }
-                return tableName
-            }) || []
+            ast.from
+                ?.map((fromTable: any) => {
+                    if (!fromTable.table) return undefined
+                    let tableName = normalizeIdentifier(fromTable.table)
+                    if (tableName.includes('.')) {
+                        tableName = tableName.split('.')[1]
+                    }
+                    return tableName
+                })
+                .filter(Boolean) || []
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
@@ -349,8 +370,15 @@ function applyRLSToAst(ast: any): void {
         })
 
     ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
-            applyRLSToAst(fromItem.expr)
+        if (fromItem.expr) {
+            if (fromItem.expr.type === 'select') {
+                applyRLSToAst(fromItem.expr)
+            } else if (
+                fromItem.expr.ast &&
+                fromItem.expr.ast.type === 'select'
+            ) {
+                applyRLSToAst(fromItem.expr.ast)
+            }
         }
 
         // Handle both single join and array of joins
@@ -359,8 +387,15 @@ function applyRLSToAst(ast: any): void {
                 ? fromItem.join
                 : [fromItem]
             joins.forEach((joinItem: any) => {
-                if (joinItem.expr && joinItem.expr.type === 'select') {
-                    applyRLSToAst(joinItem.expr)
+                if (joinItem.expr) {
+                    if (joinItem.expr.type === 'select') {
+                        applyRLSToAst(joinItem.expr)
+                    } else if (
+                        joinItem.expr.ast &&
+                        joinItem.expr.ast.type === 'select'
+                    ) {
+                        applyRLSToAst(joinItem.expr.ast)
+                    }
                 }
             })
         }
@@ -371,8 +406,12 @@ function applyRLSToAst(ast: any): void {
     }
 
     ast.columns?.forEach((column: any) => {
-        if (column.expr && column.expr.type === 'select') {
-            applyRLSToAst(column.expr)
+        if (column.expr) {
+            if (column.expr.type === 'select') {
+                applyRLSToAst(column.expr)
+            } else if (column.expr.ast && column.expr.ast.type === 'select') {
+                applyRLSToAst(column.expr.ast)
+            }
         }
     })
 }

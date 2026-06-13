@@ -56,6 +56,10 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    EXPORT_BUCKET?: R2Bucket
+    EXPORT_CALLBACK_URL?: string
+    EXPORT_CHUNK_SIZE?: number
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -190,6 +194,11 @@ export default {
                 features: {
                     allowlist: env.ENABLE_ALLOWLIST,
                     rls: env.ENABLE_RLS,
+                },
+                export: {
+                    bucket: env.EXPORT_BUCKET,
+                    callbackUrl: env.EXPORT_CALLBACK_URL,
+                    chunkSize: env.EXPORT_CHUNK_SIZE,
                 },
             }
 

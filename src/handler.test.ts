@@ -117,7 +117,11 @@ describe('StarbaseDB Middleware & Request Handling', () => {
         const request = new Request('https://example.com/api/test')
         const response = await instance.handle(request, mockExecutionContext)
 
-        expect(instance['app'].fetch).toHaveBeenCalledWith(request)
+        expect(instance['app'].fetch).toHaveBeenCalledWith(
+            request,
+            undefined,
+            mockExecutionContext
+        )
         expect(response).toBeDefined()
     })
 })

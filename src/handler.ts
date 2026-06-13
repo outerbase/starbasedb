@@ -27,6 +27,11 @@ export interface StarbaseDBConfiguration {
         export?: boolean
         import?: boolean
     }
+    export?: {
+        bucket?: R2Bucket
+        callbackUrl?: string
+        chunkSize?: number
+    }
 }
 
 type HonoContext = {
@@ -120,8 +125,13 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
-            this.app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
+            this.app.get('/export/dump', this.isInternalSource, async (c) => {
+                return dumpDatabaseRoute(
+                    c.req.raw,
+                    this.dataSource,
+                    this.config,
+                    (c.executionCtx as any) || this.dataSource.executionContext
+                )
             })
 
             this.app.get(
@@ -232,7 +242,7 @@ export class StarbaseDB {
         })
 
         if (authlessPlugin) {
-            return this.app.fetch(request)
+            return this.app.fetch(request, undefined, ctx)
         }
 
         return undefined
@@ -253,7 +263,7 @@ export class StarbaseDB {
             return corsPreflight()
         }
 
-        return this.app.fetch(request)
+        return this.app.fetch(request, undefined, ctx)
     }
 
     /**
