@@ -368,19 +368,22 @@ export class ReplicationPlugin extends StarbasePlugin {
             return { sql: insertSQL, params }
         })
 
-        await this.dataSource!.rpc.executeTransaction(insertQueries, false)
+        await (this.dataSource!.rpc as any).executeTransaction(
+            insertQueries,
+            false
+        )
 
         // 6. Update replication watermark state
         let nextSyncedId = lastSyncedId
         let nextSyncedAt = lastSyncedAt
 
-        const lastRow = rows[rows.length - 1]
+        const lastRow = rows[rows.length - 1] as any
         if (pkCol && lastRow[pkCol] !== undefined) {
             nextSyncedId = String(lastRow[pkCol])
         }
         if (hasUpdatedAt && lastRow.updated_at !== undefined) {
             const val = lastRow.updated_at
-            nextSyncedAt = val ? new Date(val).toISOString() : null
+            nextSyncedAt = val ? new Date(val as any).toISOString() : null
         }
 
         await this.dataSource!.rpc.executeQuery({
