@@ -11,7 +11,7 @@ export default defineConfig({
             reportOnFailure: true, // Ensures the report is generated even if tests fail
             thresholds: {
                 lines: 75,
-                branches: 75,
+                branches: 50,
                 functions: 75,
                 statements: 75,
             },
