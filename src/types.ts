@@ -64,6 +64,8 @@ export type DataSource = {
     cacheTTL?: number
     registry?: StarbasePluginRegistry
     executionContext?: ExecutionContext
+    // Optional R2 bucket used to offload large database dumps.
+    dumpBucket?: R2Bucket
 }
 
 export enum RegionLocationHint {
