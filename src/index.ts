@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { ReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -211,6 +212,17 @@ export default {
 
             const interfacePlugin = new InterfacePlugin()
 
+            // Pull-based replication from the external data source into the
+            // internal DO SQLite so the instance can serve as a close-to-edge
+            // replica. Configure the tables to replicate (and an optional cron
+            // schedule) below; with no tables configured the plugin is inert.
+            const replicationPlugin = new ReplicationPlugin({
+                cron: cronPlugin,
+                config: {
+                    tables: [],
+                },
+            })
+
             const plugins = [
                 webSocketPlugin,
                 new StudioPlugin({
@@ -224,6 +236,7 @@ export default {
                 new QueryLogPlugin({ ctx }),
                 cdcPlugin,
                 cronPlugin,
+                replicationPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
             ] satisfies StarbasePlugin[]

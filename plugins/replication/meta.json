@@ -1,0 +1,15 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_replication_checkpoints": "Tracks per-table incremental replication progress (cursor value, row counts, last run, last error)."
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
