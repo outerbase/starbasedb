@@ -78,3 +78,13 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# Optional R2 bucket used to offload large database dumps. When bound, calling
+# `/export/dump?location=r2` streams the dump into an R2 object named
+# `dump_YYYYMMDD-HHMMSS.sql` instead of returning it in the response, which
+# removes the 30 second request limit for very large databases. Provide an
+# optional `&callback=<url>` to be notified when the upload completes.
+# Docs: https://developers.cloudflare.com/r2/buckets/
+# [[r2_buckets]]
+# binding = "DATABASE_DUMP_BUCKET"
+# bucket_name = "starbasedb-dumps"

@@ -120,8 +120,12 @@ export class StarbaseDB {
         }
 
         if (this.getFeature('export')) {
-            this.app.get('/export/dump', this.isInternalSource, async () => {
-                return dumpDatabaseRoute(this.dataSource, this.config)
+            this.app.get('/export/dump', this.isInternalSource, async (c) => {
+                return dumpDatabaseRoute(
+                    this.dataSource,
+                    this.config,
+                    c.req.raw
+                )
             })
 
             this.app.get(

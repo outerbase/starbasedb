@@ -233,13 +233,22 @@ window.onload = connectWebSocket
 ```
 
 <h3>SQL Dump</h3>
-You can request a `database_dump.sql` file that exports your database schema and data into a single file.
+You can request a `database_dump.sql` file that exports your database schema and data into a single file. The dump is generated and streamed page-by-page, so the database is never buffered into memory all at once and tables of any size can be exported.
 
 <pre>
 <code>
 curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
 --header 'Authorization: Bearer ABC123' \
 --output database_dump.sql
+</code>
+</pre>
+
+For very large databases the export can exceed the 30 second request limit. Bind an R2 bucket as `DATABASE_DUMP_BUCKET` (see `wrangler.toml`) and pass `?location=r2` to stream the dump into an R2 object named `dump_YYYYMMDD-HHMMSS.sql` instead of returning it in the response. The request returns immediately with the object key while the upload finishes in the background. Provide an optional `&callback=<url>` to receive a `POST` notification once the file is ready.
+
+<pre>
+<code>
+curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump?location=r2&callback=https://example.com/notify' \
+--header 'Authorization: Bearer ABC123'
 </code>
 </pre>
 

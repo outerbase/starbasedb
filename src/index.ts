@@ -56,6 +56,9 @@ export interface Env {
 
     HYPERDRIVE: Hyperdrive
 
+    // Optional R2 bucket binding used to offload large database dumps.
+    DATABASE_DUMP_BUCKET?: R2Bucket
+
     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
 }
 
@@ -182,6 +185,10 @@ export default {
                     dialect: 'postgresql',
                     connectionString: env.HYPERDRIVE.connectionString,
                 }
+            }
+
+            if (env.DATABASE_DUMP_BUCKET) {
+                dataSource.dumpBucket = env.DATABASE_DUMP_BUCKET
             }
 
             const config: StarbaseDBConfiguration = {
