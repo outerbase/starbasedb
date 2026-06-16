@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+// import { ReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -211,6 +212,15 @@ export default {
 
             const interfacePlugin = new InterfacePlugin()
 
+            // Pulls data from the configured external data source into the internal
+            // Durable Object SQLite database so the instance acts as a close-to-edge
+            // replica. Provide the tables (and the append-only column to track) you
+            // want replicated and uncomment it in the `plugins` array below.
+            // const replicationPlugin = new ReplicationPlugin({
+            //     tables: [{ name: 'users', trackBy: 'id', schema: 'public' }],
+            //     intervalSeconds: 300,
+            // })
+
             const plugins = [
                 webSocketPlugin,
                 new StudioPlugin({
@@ -226,6 +236,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                // replicationPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
