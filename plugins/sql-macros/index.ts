@@ -59,7 +59,8 @@ export class SqlMacrosPlugin extends StarbasePlugin {
 
     private checkSelectStar(sql: string, params?: unknown[]): string {
         try {
-            const ast = parser.astify(sql)[0]
+            const parsed = parser.astify(sql)
+            const ast = Array.isArray(parsed) ? parsed[0] : parsed
 
             // Only check SELECT statements
             if (ast.type === 'select') {
