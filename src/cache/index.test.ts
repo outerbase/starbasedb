@@ -58,6 +58,16 @@ describe('Cache Module', () => {
             expect(result).toBeNull()
         })
 
+        it('should not read from cache when a SQL batch contains a modifying statement', async () => {
+            const result = await beforeQueryCache({
+                sql: 'SELECT * FROM users; DELETE FROM users WHERE id = 1',
+                dataSource: mockDataSource,
+            })
+
+            expect(result).toBeNull()
+            expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
+        })
+
         it('should return cached result if present and valid', async () => {
             const cachedData = {
                 timestamp: new Date().toISOString(),
@@ -115,6 +125,17 @@ describe('Cache Module', () => {
             await afterQueryCache({
                 sql: 'UPDATE users SET name = "John" WHERE id = 1',
                 params: [],
+                result: [{ id: 1, name: 'John' }],
+                dataSource: mockDataSource,
+            })
+
+            expect(mockDataSource.rpc.executeQuery).not.toHaveBeenCalled()
+        })
+
+        it('should not write to cache when a SQL batch contains a modifying statement', async () => {
+            await afterQueryCache({
+                sql: 'SELECT * FROM users; DELETE FROM users WHERE id = 1',
+                params: undefined,
                 result: [{ id: 1, name: 'John' }],
                 dataSource: mockDataSource,
             })
