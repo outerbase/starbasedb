@@ -12,6 +12,7 @@ import GET_USER_INFORMATION from './sql/get-user-information.sql'
 import DELETE_USER from './sql/delete-user.sql'
 import UPSERT_SESSION from './sql/upsert-session.sql'
 import DELETE_SESSION from './sql/delete-session.sql'
+import DELETE_USER_SESSIONS from './sql/delete-user-sessions.sql'
 import GET_SESSION from './sql/get-session.sql'
 
 type ClerkEvent = {
@@ -35,7 +36,11 @@ type ClerkEvent = {
           data: { id: string }
       }
     | {
-          type: 'session.created' | 'session.ended' | 'session.removed' | 'session.revoked'
+          type:
+              | 'session.created'
+              | 'session.ended'
+              | 'session.removed'
+              | 'session.revoked'
           data: {
               id: string
               user_id: string
@@ -51,6 +56,7 @@ const SQL_QUERIES = {
     DELETE_USER,
     UPSERT_SESSION,
     DELETE_SESSION,
+    DELETE_USER_SESSIONS,
     GET_SESSION,
 }
 
@@ -130,14 +136,14 @@ export class ClerkPlugin extends StarbasePlugin {
                     'svix-signature': svix_signature,
                 }) as ClerkEvent
 
-                if (this.clerkInstanceId && 'instance_id' in event && event.instance_id !== this.clerkInstanceId) {
-                    return createResponse(
-                        undefined,
-                        'Invalid instance ID',
-                        401
-                    )
+                if (
+                    this.clerkInstanceId &&
+                    'instance_id' in event &&
+                    event.instance_id !== this.clerkInstanceId
+                ) {
+                    return createResponse(undefined, 'Invalid instance ID', 401)
                 }
-                
+
                 if (event.type === 'user.deleted') {
                     const { id } = event.data
 
@@ -146,12 +152,21 @@ export class ClerkPlugin extends StarbasePlugin {
                         params: [id],
                     })
 
-                    // todo if user is deleted, delete all sessions for that user
+                    await this.dataSource?.rpc.executeQuery({
+                        sql: SQL_QUERIES.DELETE_USER_SESSIONS,
+                        params: [id],
+                    })
                 } else if (
                     event.type === 'user.updated' ||
                     event.type === 'user.created'
                 ) {
-                    const { id, first_name, last_name, email_addresses, primary_email_address_id } = event.data
+                    const {
+                        id,
+                        first_name,
+                        last_name,
+                        email_addresses,
+                        primary_email_address_id,
+                    } = event.data
 
                     const email = email_addresses.find(
                         (email: any) => email.id === primary_email_address_id
@@ -168,7 +183,11 @@ export class ClerkPlugin extends StarbasePlugin {
                         sql: SQL_QUERIES.UPSERT_SESSION,
                         params: [id, user_id],
                     })
-                } else if (event.type === 'session.ended' || event.type === 'session.removed' || event.type === 'session.revoked') {
+                } else if (
+                    event.type === 'session.ended' ||
+                    event.type === 'session.removed' ||
+                    event.type === 'session.revoked'
+                ) {
                     const { id, user_id } = event.data
 
                     await this.dataSource?.rpc.executeQuery({
@@ -196,32 +215,46 @@ export class ClerkPlugin extends StarbasePlugin {
      * @param token The token to authenticate.
      * @returns {JWTPayload | false} The decoded payload if authenticated, false if not.
      */
-    public async authenticate({ cookie, token: tokenCrossOrigin }: { cookie?: string | null, token?: string }) {
+    public async authenticate({
+        cookie,
+        token: tokenCrossOrigin,
+    }: {
+        cookie?: string | null
+        token?: string
+    }) {
         if (!this.verifySessions || !this.clerkSessionPublicKey) {
             console.error('Public key or session verification is not enabled.')
             return false
         }
 
-        const COOKIE_NAME = "__session"
+        const COOKIE_NAME = '__session'
         const tokenSameOrigin = cookie ? parse(cookie)[COOKIE_NAME] : undefined
         if (!tokenSameOrigin && !tokenCrossOrigin) return false
 
         try {
-            const publicKey = await importSPKI(this.clerkSessionPublicKey, 'RS256')
+            const publicKey = await importSPKI(
+                this.clerkSessionPublicKey,
+                'RS256'
+            )
             const token = tokenSameOrigin || tokenCrossOrigin
-            const decoded = await jwtVerify<{ sid: string; sub: string }>(token!, publicKey)
+            const decoded = await jwtVerify<{ sid: string; sub: string }>(
+                token!,
+                publicKey
+            )
 
             const currentTime = Math.floor(Date.now() / 1000)
             if (
-                (decoded.payload.exp && decoded.payload.exp < currentTime)
-                || (decoded.payload.nbf && decoded.payload.nbf > currentTime)
+                (decoded.payload.exp && decoded.payload.exp < currentTime) ||
+                (decoded.payload.nbf && decoded.payload.nbf > currentTime)
             ) {
                 console.error('Token is expired or not yet valid')
                 return false
             }
 
-            if (this.permittedOrigins.length > 0 && decoded.payload.azp
-                && !this.permittedOrigins.includes(decoded.payload.azp as string)
+            if (
+                this.permittedOrigins.length > 0 &&
+                decoded.payload.azp &&
+                !this.permittedOrigins.includes(decoded.payload.azp as string)
             ) {
                 console.error("Invalid 'azp' claim")
                 return false
@@ -229,7 +262,7 @@ export class ClerkPlugin extends StarbasePlugin {
 
             const sessionExists = await this.sessionExistsInDb(decoded.payload)
             if (!sessionExists) {
-                console.error("Session not found")
+                console.error('Session not found')
                 return false
             }
 
@@ -247,13 +280,16 @@ export class ClerkPlugin extends StarbasePlugin {
      * @param dataSource The data source to use for the check.
      * @returns {boolean} True if the session exists, false if not.
      */
-    public async sessionExistsInDb(payload: { sub: string, sid: string }): Promise<boolean> {        
+    public async sessionExistsInDb(payload: {
+        sub: string
+        sid: string
+    }): Promise<boolean> {
         try {
             const result: any = await this.dataSource?.rpc.executeQuery({
                 sql: SQL_QUERIES.GET_SESSION,
                 params: [payload.sid, payload.sub],
             })
-            
+
             return result?.length > 0
         } catch (error) {
             console.error('db error while fetching session:', error)
