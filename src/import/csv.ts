@@ -110,7 +110,7 @@ export async function importTableFromCsvRoute(
     }
 }
 
-function parseCSV(csv: string): Record<string, string>[] {
+export function parseCSV(csv: string): Record<string, string>[] {
     const lines = csv.split('\n')
     const headers = lines[0].split(',').map((header) => header.trim())
     const records: Record<string, string>[] = []
@@ -129,7 +129,7 @@ function parseCSV(csv: string): Record<string, string>[] {
     return records
 }
 
-function mapRecord(record: any, columnMapping: ColumnMapping): any {
+export function mapRecord(record: any, columnMapping: ColumnMapping): any {
     const mappedRecord: any = {}
     for (const [key, value] of Object.entries(record)) {
         const mappedKey = columnMapping[key] || key
