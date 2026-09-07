@@ -47,6 +47,40 @@ function normalizeIdentifier(name: string): string {
     return name
 }
 
+function tableNamesMatch(sqlTable: string, policyTable: string): boolean {
+    const sql = normalizeIdentifier(sqlTable)
+    const policy = normalizeIdentifier(policyTable)
+    if (!sql || !policy) return false
+    if (sql === policy) return true
+
+    const sqlParts = sql.split('.')
+    const policyParts = policy.split('.')
+    const sqlName = sqlParts[sqlParts.length - 1]
+    const policyName = policyParts[policyParts.length - 1]
+
+    if (sqlName !== policyName) return false
+
+    // Both schema-qualified with different schemas must not match.
+    if (sqlParts.length > 1 && policyParts.length > 1) {
+        return sqlParts[0] === policyParts[0]
+    }
+
+    return true
+}
+
+function extractSqlTableName(tableRef: any): string | undefined {
+    if (!tableRef?.table) return undefined
+
+    let tableName = normalizeIdentifier(tableRef.table)
+    const schema = tableRef.db ? normalizeIdentifier(tableRef.db) : undefined
+
+    if (tableName.includes('.')) {
+        return tableName
+    }
+
+    return schema ? `${schema}.${tableName}` : tableName
+}
+
 export async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
     try {
         const statement =
@@ -84,10 +118,13 @@ export async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
                 // value = `${value}::INT`
             }
 
-            let tableName = row.schema
-                ? `${row.schema}.${row.table}`
-                : row.table
-            tableName = normalizeIdentifier(tableName)
+            const schemaName = row.schema
+                ? normalizeIdentifier(row.schema)
+                : undefined
+            const rawTable = normalizeIdentifier(row.table)
+            const tableName = schemaName
+                ? `${schemaName}.${rawTable}`
+                : rawTable
             const columnName = normalizeIdentifier(row.column)
 
             // If the policy value is context.id(), use a placeholder
@@ -248,36 +285,28 @@ function applyRLSToAst(ast: any): void {
 
     let tables: string[] = []
     if (statementType === 'INSERT') {
-        let tableName = normalizeIdentifier(ast.table[0].table)
-        if (tableName.includes('.')) {
-            tableName = tableName.split('.')[1]
-        }
-        tables = [tableName]
+        const tableName = extractSqlTableName(ast.table?.[0])
+        tables = tableName ? [tableName] : []
     } else if (statementType === 'UPDATE') {
-        tables = ast.table.map((tableRef: any) => {
-            let tableName = normalizeIdentifier(tableRef.table)
-            if (tableName.includes('.')) {
-                tableName = tableName.split('.')[1]
-            }
-            return tableName
-        })
+        tables = (ast.table ?? [])
+            .map((tableRef: any) => extractSqlTableName(tableRef))
+            .filter(Boolean)
     } else {
         // SELECT or DELETE
         tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
-                }
-                return tableName
-            }) || []
+            ast.from
+                ?.map((fromTable: any) => extractSqlTableName(fromTable))
+                .filter(Boolean) || []
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
 
     for (const table of tables) {
-        if (restrictedTables.includes(table)) {
-            const allowedActions = tablesWithRules[table]
+        const matchedPolicyTable = restrictedTables.find((policyTable) =>
+            tableNamesMatch(table, policyTable)
+        )
+        if (matchedPolicyTable) {
+            const allowedActions = tablesWithRules[matchedPolicyTable]
             if (!allowedActions.includes(statementType)) {
                 throw new Error(
                     `Unauthorized access: No matching rules for ${statementType} on restricted table ${table}`
@@ -292,7 +321,9 @@ function applyRLSToAst(ast: any): void {
         )
         .forEach(({ action, condition }) => {
             const targetTable = normalizeIdentifier(condition.left.table)
-            const isTargetTable = tables.includes(targetTable)
+            const isTargetTable = tables.some((table) =>
+                tableNamesMatch(table, targetTable)
+            )
 
             if (!isTargetTable) return
 
@@ -349,8 +380,9 @@ function applyRLSToAst(ast: any): void {
         })
 
     ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
-            applyRLSToAst(fromItem.expr)
+        const nestedSelect = fromItem.expr?.ast ?? fromItem.expr
+        if (nestedSelect && nestedSelect.type === 'select') {
+            applyRLSToAst(nestedSelect)
         }
 
         // Handle both single join and array of joins
@@ -359,8 +391,9 @@ function applyRLSToAst(ast: any): void {
                 ? fromItem.join
                 : [fromItem]
             joins.forEach((joinItem: any) => {
-                if (joinItem.expr && joinItem.expr.type === 'select') {
-                    applyRLSToAst(joinItem.expr)
+                const joinSelect = joinItem.expr?.ast ?? joinItem.expr
+                if (joinSelect && joinSelect.type === 'select') {
+                    applyRLSToAst(joinSelect)
                 }
             })
         }

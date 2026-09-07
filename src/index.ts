@@ -276,6 +276,10 @@ export default {
                         }
 
                         context = payload
+                        dataSource.context = {
+                            ...dataSource.context,
+                            ...payload,
+                        }
                     } else {
                         // If no JWT secret or JWKS endpoint is provided, then the request has no authorization.
                         throw new Error('Unauthorized request')
