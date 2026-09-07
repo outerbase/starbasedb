@@ -7,7 +7,7 @@ export default defineConfig({
             provider: 'istanbul',
             reporter: ['text', 'html', 'json', 'json-summary', 'lcov'],
             include: ['src/**/*.ts'],
-            exclude: ['**/node_modules/**'],
+            exclude: ['**/node_modules/**', 'src/**/*.test.ts'],
             reportOnFailure: true, // Ensures the report is generated even if tests fail
             thresholds: {
                 lines: 75,

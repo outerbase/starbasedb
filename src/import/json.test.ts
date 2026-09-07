@@ -83,6 +83,67 @@ describe('JSON Import Module', () => {
         expect(jsonResponse.error).toContain('Invalid JSON format')
     })
 
+    it('should import a multipart JSON file', async () => {
+        vi.mocked(executeOperation).mockResolvedValue([])
+        const formData = new FormData()
+        formData.append(
+            'file',
+            new File(
+                [JSON.stringify({ data: [{ id: 4, name: 'Eve' }] })],
+                'users.json',
+                { type: 'application/json' }
+            )
+        )
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: formData,
+        })
+
+        const response = await importTableFromJsonRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(200)
+        expect(executeOperation).toHaveBeenCalledWith(
+            [
+                {
+                    sql: 'INSERT INTO users (id, name) VALUES (?, ?)',
+                    params: [4, 'Eve'],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should return 400 if a multipart file is not valid JSON', async () => {
+        const formData = new FormData()
+        formData.append(
+            'file',
+            new File(['not-json'], 'users.json', { type: 'application/json' })
+        )
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: formData,
+        })
+
+        const response = await importTableFromJsonRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(400)
+        const jsonResponse = (await response.json()) as { error?: string }
+        expect(jsonResponse.error).toBe('Invalid file upload')
+    })
+
     it('should return 400 if no file is uploaded in multipart form-data', async () => {
         const formData = new FormData()
 

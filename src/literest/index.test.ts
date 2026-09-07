@@ -24,6 +24,12 @@ vi.mocked(executeTransaction).mockImplementation(async ({ queries }) => {
     return [{ id: 1, name: 'Alice' }]
 })
 
+function restoreTransactionMock() {
+    vi.mocked(executeTransaction).mockImplementation(async () => {
+        return [{ id: 1, name: 'Alice' }]
+    })
+}
+
 let mockDataSource: DataSource
 let mockConfig: StarbaseDBConfiguration
 let liteRest: LiteREST
@@ -40,6 +46,7 @@ beforeEach(() => {
             executeQuery: vi.fn(),
         },
     } as any
+    restoreTransactionMock()
 
     mockConfig = {
         outerbaseApiKey: 'mock-api-key',
@@ -74,6 +81,72 @@ describe('LiteREST', () => {
     })
 
     describe('handleRequest', () => {
+        it('throws when the table name is omitted from the path', async () => {
+            const request = new Request('http://localhost/rest', {
+                method: 'GET',
+            })
+
+            await expect(liteRest.handleRequest(request)).rejects.toThrow(
+                'Expected a table name in the path'
+            )
+        })
+
+        it('should still query a fake table name after sanitizing it', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([])
+            const request = new Request(
+                'http://localhost/rest/main/not_a_real_table!!',
+                { method: 'GET' }
+            )
+
+            const response = await liteRest.handleRequest(request)
+            expect(response.status).toBe(200)
+            expect(executeTransaction).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    queries: [
+                        expect.objectContaining({
+                            sql: expect.stringContaining(
+                                'FROM main.not_a_real_table'
+                            ),
+                        }),
+                    ],
+                })
+            )
+        })
+
+        it('should look up postgres primary keys for external sources', async () => {
+            mockDataSource.source = 'external'
+            mockDataSource.external = { dialect: 'postgresql' } as any
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id' }])
+            vi.mocked(executeTransaction).mockResolvedValue([])
+
+            const request = new Request(
+                'http://localhost/rest/public/users/9',
+                { method: 'GET' }
+            )
+            const response = await liteRest.handleRequest(request)
+
+            expect(response.status).toBe(200)
+            expect(executeQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sql: expect.stringContaining(
+                        'information_schema.table_constraints'
+                    ),
+                })
+            )
+        })
+
+        it('should return 400 for empty POST objects', async () => {
+            const request = new Request('http://localhost/rest/main/users', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({}),
+            })
+            const response = await liteRest.handleRequest(request)
+            expect(response.status).toBe(400)
+            const jsonResponse = (await response.json()) as { error: string }
+            expect(jsonResponse.error).toBe('No data provided')
+        })
+
         it('should return 405 for unsupported methods', async () => {
             const request = new Request('http://localhost/rest/main/users', {
                 method: 'OPTIONS',
@@ -471,6 +544,28 @@ describe('LiteREST', () => {
 
             expect(query).not.toContain('LIMIT ? OFFSET ?')
             expect(params).toEqual([])
+        })
+
+        it('should apply equality and IN filters from query params', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([])
+
+            // @ts-expect-error: Testing private method
+            const { query, params } = await liteRest.buildSelectQuery(
+                'users',
+                'main',
+                undefined,
+                new URLSearchParams({
+                    'status.eq': 'active',
+                    'id.in': '1,2,3',
+                    'age.gte': '21',
+                })
+            )
+
+            expect(query).toContain('FROM main.users')
+            expect(query).toContain('status = ?')
+            expect(query).toContain('id IN (?, ?, ?)')
+            expect(query).toContain('age >= ?')
+            expect(params).toEqual(['active', '1', '2', '3', '21'])
         })
 
         it('should ignore invalid sort_by parameter', async () => {
