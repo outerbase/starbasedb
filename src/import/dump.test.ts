@@ -211,4 +211,56 @@ describe('Import Dump Module', () => {
 
         expect(response.status).toBe(207)
     })
+    it('should strip SQLite format header and import remaining statements', async () => {
+        vi.mocked(executeOperation).mockResolvedValue([{ ok: 1 }] as any)
+
+        const sqlFile = new File(
+            ['SQLite format 3\x00extra-header-bytes\nCREATE TABLE users (id INT);'],
+            'dump.sql',
+            { type: 'application/sql' }
+        )
+
+        const request = await createFormDataRequest(sqlFile)
+        const response = await importDumpRoute(request, mockDataSource, mockConfig)
+
+        expect(response.status).toBe(200)
+        expect(vi.mocked(executeOperation)).toHaveBeenCalledTimes(1)
+        expect(vi.mocked(executeOperation).mock.calls[0][0]).toEqual([
+            { sql: 'CREATE TABLE users (id INT);' },
+        ])
+    })
+
+    it('should skip comments/blank lines and keep trailing statement without semicolon', async () => {
+        vi.mocked(executeOperation).mockResolvedValue([{ ok: 1 }] as any)
+
+        const sqlFile = new File(
+            ['-- seed dump\n\nCREATE TABLE a (id INT);\nINSERT INTO a VALUES (1)'],
+            'dump.sql',
+            { type: 'application/sql' }
+        )
+
+        const request = await createFormDataRequest(sqlFile)
+        const response = await importDumpRoute(request, mockDataSource, mockConfig)
+
+        expect(response.status).toBe(200)
+        expect(vi.mocked(executeOperation)).toHaveBeenCalledTimes(2)
+        const seen = vi.mocked(executeOperation).mock.calls.map((c) => (c[0] as { sql: string }[])[0].sql)
+        expect(seen[0]).toContain('CREATE TABLE a')
+        expect(seen[1]).toContain('INSERT INTO a VALUES (1)')
+    })
+
+    it('should return 500 when form parsing fails (outer catch)', async () => {
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+        const bad = new Request('http://localhost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'multipart/form-data; boundary=x' },
+            body: 'not-valid-form-data!!!',
+        })
+
+        const response = await importDumpRoute(bad, mockDataSource, mockConfig)
+
+        expect(response.status).toBe(500)
+        consoleErrorSpy.mockRestore()
+    })
 })
