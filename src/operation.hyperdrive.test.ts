@@ -74,5 +74,52 @@ describe('Hyperdrive connection lifecycle', () => {
                 expect(waitUntil).not.toHaveBeenCalled()
             }
         })
+
+        it.each([new Error('query failed'), undefined])(
+            `preserves query rejection %s when cleanup also rejects ${mode}`,
+            async (failure) => {
+                const cleanupFailure = new Error('cleanup failed')
+                client.unsafe.mockRejectedValueOnce(failure)
+                client.end.mockRejectedValueOnce(cleanupFailure)
+                // Model the runtime observing background rejection, without
+                // leaving an unhandled promise rejection in the test process.
+                const waitUntil = vi.fn((promise: Promise<unknown>) => {
+                    void promise.catch(() => {})
+                })
+
+                await expect(run(waitUntil)).rejects.toBe(failure)
+                expect(client.end).toHaveBeenCalledTimes(1)
+                if (background) {
+                    const cleanup = client.end.mock.results[0].value
+                    expect(waitUntil).toHaveBeenCalledWith(cleanup)
+                    await expect(cleanup).rejects.toBe(cleanupFailure)
+                } else {
+                    expect(waitUntil).not.toHaveBeenCalled()
+                    expect(console.error).toHaveBeenCalledWith(
+                        'Hyperdrive cleanup error:',
+                        cleanupFailure
+                    )
+                }
+            }
+        )
+
+        it(`reports cleanup failure after query success ${mode}`, async () => {
+            const cleanupFailure = new Error('cleanup failed')
+            client.end.mockRejectedValueOnce(cleanupFailure)
+            const waitUntil = vi.fn((promise: Promise<unknown>) => {
+                void promise.catch(() => {})
+            })
+
+            if (background) {
+                await expect(run(waitUntil)).resolves.toEqual([{ id: 1 }])
+                const cleanup = client.end.mock.results[0].value
+                expect(waitUntil).toHaveBeenCalledWith(cleanup)
+                await expect(cleanup).rejects.toBe(cleanupFailure)
+            } else {
+                await expect(run(waitUntil)).rejects.toBe(cleanupFailure)
+                expect(waitUntil).not.toHaveBeenCalled()
+            }
+            expect(client.end).toHaveBeenCalledTimes(1)
+        })
     }
 })
