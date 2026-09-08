@@ -274,20 +274,28 @@ export async function executeQuery(opts: {
             fetch_types: false,
         })
 
+        let queryFailed = false
         try {
             result = await sql.unsafe(updatedSQL, updatedParams as any[])
-
-            if (opts.dataSource?.executionContext) {
-                // Optimistically we hope a ExecutionContext is available to us
-                // to properly end our SQL function.
-                opts.dataSource?.executionContext?.waitUntil(sql.end())
-            } else {
-                // As a fallback we'll just end it.
-                await sql.end()
-            }
         } catch (e) {
+            queryFailed = true
             console.error('Hyperdrive query error:', e)
             throw e
+        } finally {
+            try {
+                if (opts.dataSource?.executionContext) {
+                    // Optimistically we hope a ExecutionContext is available to us
+                    // to properly end our SQL function.
+                    opts.dataSource?.executionContext?.waitUntil(sql.end())
+                } else {
+                    // As a fallback we'll just end it.
+                    await sql.end()
+                }
+            } catch (e) {
+                console.error('Hyperdrive cleanup error:', e)
+                // A cleanup failure must not replace the original query rejection.
+                if (!queryFailed) throw e
+            }
         }
     } else {
         result = await executeExternalQuery({
