@@ -153,4 +153,22 @@ describe('StarbasePluginRegistry', () => {
         expect(mockPlugin.afterQuery).toHaveBeenCalled()
         expect(result).toEqual({ data: [], modified: true })
     })
+    it('should list registered plugin names via currentPlugins()', async () => {
+        const second = new MockPlugin('Second')
+        const reg = new StarbasePluginRegistry({
+            app: mockApp,
+            plugins: [mockPlugin, second],
+        })
+
+        expect(reg.currentPlugins()).toEqual(['MockPlugin', 'Second'])
+        expect(new StarbasePluginRegistry({ app: mockApp, plugins: [] }).currentPlugins()).toEqual([])
+    })
+
+    it('should skip plugins without register implementation (UnimplementedError)', async () => {
+        const plain = new TestPlugin('Plain')
+        const reg = new StarbasePluginRegistry({ app: mockApp, plugins: [plain] })
+
+        await expect(reg.init()).resolves.toBeUndefined()
+        expect(reg.currentPlugins()).toEqual(['Plain'])
+    })
 })
