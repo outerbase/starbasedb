@@ -332,4 +332,54 @@ describe('JSON Import Module', () => {
         }
         expect(jsonResponse.error).toBe('Failed to import JSON data')
     })
+
+    describe.each(['application/json', 'multipart/form-data'])(
+        '%s validation',
+        (contentType) => {
+            it.each([
+                ['null document', null],
+                ['null row', { data: [{ id: 1 }, null] }],
+                ['string row', { data: [{ id: 1 }, 'invalid'] }],
+                ['number row', { data: [{ id: 1 }, 42] }],
+                ['array row', { data: [{ id: 1 }, ['invalid']] }],
+            ])(
+                'rejects %s before any database write',
+                async (_label, payload) => {
+                    vi.mocked(executeOperation).mockResolvedValue([])
+                    const body = JSON.stringify(payload)
+                    let request: Request
+                    if (contentType === 'application/json') {
+                        request = new Request('http://localhost', {
+                            method: 'POST',
+                            headers: { 'Content-Type': contentType },
+                            body,
+                        })
+                    } else {
+                        const formData = new FormData()
+                        formData.set(
+                            'file',
+                            new File([body], 'rows.json', {
+                                type: 'application/json',
+                            })
+                        )
+                        request = new Request('http://localhost', {
+                            method: 'POST',
+                            body: formData,
+                        })
+                    }
+                    const response = await importTableFromJsonRoute(
+                        'users',
+                        request,
+                        mockDataSource,
+                        mockConfig
+                    )
+                    expect(response.status).toBe(400)
+                    expect(executeOperation).not.toHaveBeenCalled()
+                    expect(
+                        ((await response.json()) as { error: string }).error
+                    ).toContain('Invalid JSON format')
+                }
+            )
+        }
+    )
 })
