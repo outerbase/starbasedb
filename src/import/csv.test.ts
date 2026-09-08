@@ -292,6 +292,62 @@ describe('CSV Import Module', () => {
         expect(body.result.failedStatements[0].error).toBe('Unknown error')
     })
 
+    it('should preserve quoted values containing commas', async () => {
+        ;(executeOperation as any).mockResolvedValue([])
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                data: 'id,name\n1,"Doe, John"\n2,Jane',
+            }),
+        })
+
+        const response = await importTableFromCsvRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(200)
+        const body = await jsonResponse(response)
+        expect(body.result.message).toBe(
+            'Imported 2 out of 2 records successfully. 0 records failed.'
+        )
+        expect((executeOperation as any).mock.calls[0][0][0].params).toEqual([
+            '1',
+            'Doe, John',
+        ])
+        expect((executeOperation as any).mock.calls[1][0][0].params).toEqual([
+            '2',
+            'Jane',
+        ])
+    })
+
+    it('should unescape doubled quotes inside quoted values', async () => {
+        ;(executeOperation as any).mockResolvedValue([])
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                data: 'id,quote\n1,"He said ""hello"""',
+            }),
+        })
+
+        const response = await importTableFromCsvRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(200)
+        expect((executeOperation as any).mock.calls[0][0][0].params).toEqual([
+            '1',
+            'He said "hello"',
+        ])
+    })
+
     it('should return 500 when parsing the request fails', async () => {
         const request = new Request('http://localhost', {
             method: 'POST',
