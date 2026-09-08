@@ -276,7 +276,10 @@ export async function executeQuery(opts: {
 
         try {
             result = await sql.unsafe(updatedSQL, updatedParams as any[])
-
+        } catch (e) {
+            console.error('Hyperdrive query error:', e)
+            throw e
+        } finally {
             if (opts.dataSource?.executionContext) {
                 // Optimistically we hope a ExecutionContext is available to us
                 // to properly end our SQL function.
@@ -285,9 +288,6 @@ export async function executeQuery(opts: {
                 // As a fallback we'll just end it.
                 await sql.end()
             }
-        } catch (e) {
-            console.error('Hyperdrive query error:', e)
-            throw e
         }
     } else {
         result = await executeExternalQuery({
