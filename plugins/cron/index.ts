@@ -76,7 +76,18 @@ export class CronPlugin extends StarbasePlugin {
             this.eventCallbacks.forEach((callback) => {
                 try {
                     payload.forEach((element) => {
-                        callback(element)
+                        // onEvent wraps callbacks async without awaiting them,
+                        // so sync throws escape as unhandled rejections and
+                        // abort delivery to later subscribers. Catch per
+                        // element so one bad subscriber never starves the rest.
+                        Promise.resolve()
+                            .then(() => callback(element))
+                            .catch((error) => {
+                                console.error(
+                                    'Error in Cron event callback:',
+                                    error
+                                )
+                            })
                     })
                 } catch (error) {
                     console.error('Error in Cron event callback:', error)
