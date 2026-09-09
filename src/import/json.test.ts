@@ -83,6 +83,38 @@ describe('JSON Import Module', () => {
         expect(jsonResponse.error).toContain('Invalid JSON format')
     })
 
+    it.each([
+        ['missing data', {}],
+        ['null data', { data: null }],
+        ['object data', { data: { id: 1, name: 'Alice' } }],
+    ])(
+        'should return 400 without inserts for application/json with %s',
+        async (_caseName, payload) => {
+            const request = new Request('http://localhost', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            })
+
+            const response = await importTableFromJsonRoute(
+                'users',
+                request,
+                mockDataSource,
+                mockConfig
+            )
+
+            expect(response.status).toBe(400)
+            expect(executeOperation).not.toHaveBeenCalled()
+            const jsonResponse = (await response.json()) as {
+                error?: string
+                result?: any
+            }
+            expect(jsonResponse.error).toBe(
+                'Invalid JSON format. Expected an object with "data" array and optional "columnMapping".'
+            )
+        }
+    )
+
     it('should return 400 if no file is uploaded in multipart form-data', async () => {
         const formData = new FormData()
 
@@ -104,6 +136,36 @@ describe('JSON Import Module', () => {
             result?: any
         }
         expect(jsonResponse.error).toBe('No file uploaded')
+    })
+
+    it('should return 400 if uploaded JSON file is invalid', async () => {
+        const formData = new FormData()
+        formData.set(
+            'file',
+            new File(['not json'], 'users.json', {
+                type: 'application/json',
+            })
+        )
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: formData,
+        })
+
+        const response = await importTableFromJsonRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(400)
+        expect(executeOperation).not.toHaveBeenCalled()
+        const jsonResponse = (await response.json()) as {
+            error?: string
+            result?: any
+        }
+        expect(jsonResponse.error).toBe('Invalid file upload')
     })
 
     it('should successfully insert valid JSON data into the table', async () => {
@@ -133,6 +195,83 @@ describe('JSON Import Module', () => {
         }
         expect(jsonResponse.result.message).toBe(
             'Imported 2 out of 2 records successfully. 0 records failed.'
+        )
+    })
+
+    it('should apply column mapping when inserting JSON records', async () => {
+        vi.mocked(executeOperation).mockResolvedValue([])
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                data: [{ fullName: 'Alice', emailAddress: 'alice@test.dev' }],
+                columnMapping: {
+                    fullName: 'name',
+                    emailAddress: 'email',
+                },
+            }),
+        })
+
+        const response = await importTableFromJsonRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(200)
+        expect(executeOperation).toHaveBeenCalledWith(
+            [
+                {
+                    sql: 'INSERT INTO users (name, email) VALUES (?, ?)',
+                    params: ['Alice', 'alice@test.dev'],
+                },
+            ],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should insert valid JSON data from multipart file upload', async () => {
+        vi.mocked(executeOperation).mockResolvedValue([])
+
+        const formData = new FormData()
+        formData.set(
+            'file',
+            new File(
+                [
+                    JSON.stringify({
+                        data: [{ id: 1, name: 'Alice' }],
+                    }),
+                ],
+                'users.json',
+                { type: 'application/json' }
+            )
+        )
+
+        const request = new Request('http://localhost', {
+            method: 'POST',
+            body: formData,
+        })
+
+        const response = await importTableFromJsonRoute(
+            'users',
+            request,
+            mockDataSource,
+            mockConfig
+        )
+
+        expect(response.status).toBe(200)
+        expect(executeOperation).toHaveBeenCalledWith(
+            [
+                {
+                    sql: 'INSERT INTO users (id, name) VALUES (?, ?)',
+                    params: [1, 'Alice'],
+                },
+            ],
+            mockDataSource,
+            mockConfig
         )
     })
 
@@ -193,4 +332,54 @@ describe('JSON Import Module', () => {
         }
         expect(jsonResponse.error).toBe('Failed to import JSON data')
     })
+
+    describe.each(['application/json', 'multipart/form-data'])(
+        '%s validation',
+        (contentType) => {
+            it.each([
+                ['null document', null],
+                ['null row', { data: [{ id: 1 }, null] }],
+                ['string row', { data: [{ id: 1 }, 'invalid'] }],
+                ['number row', { data: [{ id: 1 }, 42] }],
+                ['array row', { data: [{ id: 1 }, ['invalid']] }],
+            ])(
+                'rejects %s before any database write',
+                async (_label, payload) => {
+                    vi.mocked(executeOperation).mockResolvedValue([])
+                    const body = JSON.stringify(payload)
+                    let request: Request
+                    if (contentType === 'application/json') {
+                        request = new Request('http://localhost', {
+                            method: 'POST',
+                            headers: { 'Content-Type': contentType },
+                            body,
+                        })
+                    } else {
+                        const formData = new FormData()
+                        formData.set(
+                            'file',
+                            new File([body], 'rows.json', {
+                                type: 'application/json',
+                            })
+                        )
+                        request = new Request('http://localhost', {
+                            method: 'POST',
+                            body: formData,
+                        })
+                    }
+                    const response = await importTableFromJsonRoute(
+                        'users',
+                        request,
+                        mockDataSource,
+                        mockConfig
+                    )
+                    expect(response.status).toBe(400)
+                    expect(executeOperation).not.toHaveBeenCalled()
+                    expect(
+                        ((await response.json()) as { error: string }).error
+                    ).toContain('Invalid JSON format')
+                }
+            )
+        }
+    )
 })
