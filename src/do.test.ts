@@ -3,7 +3,14 @@ import { StarbaseDBDurableObject } from './do'
 
 vi.mock('cloudflare:workers', () => {
     return {
-        DurableObject: class MockDurableObject {},
+        DurableObject: class MockDurableObject {
+            ctx: any
+            env: any
+            constructor(ctx: any, env: any) {
+                this.ctx = ctx
+                this.env = env
+            }
+        },
     }
 })
 
@@ -144,5 +151,139 @@ describe('StarbaseDBDurableObject Tests', () => {
         await expect(
             instance.executeQuery({ sql: 'INVALID QUERY' })
         ).rejects.toThrow('Query failed')
+    })
+
+    it('should execute raw queries with columns and rows returned', async () => {
+        const result = await instance.executeQuery({
+            sql: 'SELECT * FROM users',
+            isRaw: true,
+        })
+
+        expect(result).toEqual({
+            columns: ['id', 'name'],
+            rows: [
+                [1, 'Alice'],
+                [2, 'Bob'],
+            ],
+            meta: {
+                rows_read: 2,
+                rows_written: 1,
+            },
+        })
+    })
+
+    it('should execute query with parameters', async () => {
+        await instance.executeQuery({
+            sql: 'SELECT * FROM users WHERE id = ?',
+            params: [1],
+        })
+
+        expect(mockStorage.sql.exec).toHaveBeenCalledWith(
+            'SELECT * FROM users WHERE id = ?',
+            1
+        )
+    })
+
+    it('should return 400 for /socket fetch request without websocket upgrade header', async () => {
+        const req = new Request('https://example.com/socket')
+        const res = await instance.fetch(req)
+
+        expect(res.status).toBe(400)
+    })
+
+    it('should handle /socket fetch request with websocket upgrade header', async () => {
+        const req = new Request('https://example.com/socket?sessionId=s1', {
+            headers: { upgrade: 'websocket' },
+        })
+        const res = await instance.fetch(req)
+
+        expect(res.status).toBe(101)
+        expect(instance.connections.has('s1')).toBe(true)
+    })
+
+    it('should handle /socket/broadcast to all connections', async () => {
+        const mockWs1 = { send: vi.fn() } as any
+        const mockWs2 = { send: vi.fn() } as any
+        instance.connections.set('c1', mockWs1)
+        instance.connections.set('c2', mockWs2)
+
+        const req = new Request('https://example.com/socket/broadcast', {
+            method: 'POST',
+            body: JSON.stringify({ event: 'ping' }),
+        })
+        const res = await instance.fetch(req)
+
+        expect(res.status).toBe(200)
+        expect(mockWs1.send).toHaveBeenCalledWith(JSON.stringify({ event: 'ping' }))
+        expect(mockWs2.send).toHaveBeenCalledWith(JSON.stringify({ event: 'ping' }))
+    })
+
+    it('should handle /socket/broadcast targeted to a single sessionId', async () => {
+        const mockWs1 = { send: vi.fn() } as any
+        const mockWs2 = { send: vi.fn() } as any
+        instance.connections.set('target-session', mockWs1)
+        instance.connections.set('other-session', mockWs2)
+
+        const req = new Request('https://example.com/socket/broadcast?sessionId=target-session', {
+            method: 'POST',
+            body: JSON.stringify({ event: 'target' }),
+        })
+        const res = await instance.fetch(req)
+
+        expect(res.status).toBe(200)
+        expect(mockWs1.send).toHaveBeenCalledWith(JSON.stringify({ event: 'target' }))
+        expect(mockWs2.send).not.toHaveBeenCalled()
+    })
+
+    it('should clean up dead connections when broadcast fails', async () => {
+        const deadWs = {
+            send: vi.fn().mockImplementation(() => {
+                throw new Error('Socket closed')
+            }),
+        } as any
+        instance.connections.set('dead-session', deadWs)
+
+        const req = new Request('https://example.com/socket/broadcast', {
+            method: 'POST',
+            body: JSON.stringify({ event: 'test' }),
+        })
+        const res = await instance.fetch(req)
+
+        expect(res.status).toBe(200)
+        expect(instance.connections.has('dead-session')).toBe(false)
+    })
+
+    it('should handle webSocketMessage query action', async () => {
+        const mockWs = { send: vi.fn() } as any
+        await instance.webSocketMessage(
+            mockWs,
+            JSON.stringify({ action: 'query', sql: 'SELECT 1', params: [] })
+        )
+
+        expect(mockWs.send).toHaveBeenCalled()
+    })
+
+    it('should handle webSocketClose and remove connection', async () => {
+        const mockWs = { close: vi.fn() } as any
+        instance.connections.set('session-123', mockWs)
+
+        await instance.webSocketClose(mockWs, 1000, 'Normal closure', true)
+
+        expect(mockWs.close).toHaveBeenCalledWith(
+            1000,
+            'StarbaseDB is closing WebSocket connection'
+        )
+        expect(instance.connections.has('session-123')).toBe(false)
+    })
+
+    it('should get statistics from database', async () => {
+        mockStorage.sql.exec.mockReturnValueOnce({
+            toArray: vi.fn().mockReturnValue([{ count: 42 }]),
+        })
+
+        const stats = await instance.getStatistics()
+
+        expect(stats.recentQueries).toBe(42)
+        expect(stats.activeConnections).toBe(0)
     })
 })

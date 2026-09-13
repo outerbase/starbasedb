@@ -96,9 +96,37 @@ describe('StarbaseDB Initialization', () => {
         expect(instance['config']).toBe(mockConfig)
     })
 
-    it('should get feature flag correctly', () => {
+    it('should throw error when source is external but external config is missing', () => {
+        expect(
+            () =>
+                new StarbaseDB({
+                    dataSource: { source: 'external' } as any,
+                    config: mockConfig,
+                })
+        ).toThrow('No external data sources available.')
+    })
+
+    it('should get feature flag correctly with default and config values', () => {
         expect(instance['getFeature']('rest')).toBe(true)
         expect(instance['getFeature']('export')).toBe(true)
+
+        const noFeaturesInstance = new StarbaseDB({
+            dataSource: mockDataSource,
+            config: { role: 'admin' },
+        })
+        expect(noFeaturesInstance['getFeature']('rest', true)).toBe(true)
+        expect(noFeaturesInstance['getFeature']('rest', false)).toBe(false)
+
+        const disabledFeaturesInstance = new StarbaseDB({
+            dataSource: mockDataSource,
+            config: {
+                role: 'admin',
+                features: { rest: false, export: false, import: false },
+            },
+        })
+        expect(disabledFeaturesInstance['getFeature']('rest')).toBe(false)
+        expect(disabledFeaturesInstance['getFeature']('export')).toBe(false)
+        expect(disabledFeaturesInstance['getFeature']('import')).toBe(false)
     })
 })
 
@@ -119,6 +147,90 @@ describe('StarbaseDB Middleware & Request Handling', () => {
 
         expect(instance['app'].fetch).toHaveBeenCalledWith(request)
         expect(response).toBeDefined()
+    })
+
+    it('should not reinitialize if already initialized', async () => {
+        const request = new Request('https://example.com/api/test')
+        await instance.handle(request, mockExecutionContext)
+        await instance.handle(request, mockExecutionContext)
+
+        expect(instance['initialized']).toBe(true)
+    })
+
+    it('should handle preAuth matching an authless plugin pathPrefix', async () => {
+        const mockPlugin = {
+            name: 'test-authless-plugin',
+            opts: { requiresAuth: false },
+            pathPrefix: '/public/*',
+            register: vi.fn(),
+        }
+        const instWithPlugin = new StarbaseDB({
+            dataSource: mockDataSource,
+            config: mockConfig,
+            plugins: [mockPlugin as any],
+        })
+
+        const req = new Request('https://example.com/public/dashboard')
+        const res = await instWithPlugin.handlePreAuth(req, mockExecutionContext)
+
+        expect(res).toBeDefined()
+    })
+
+    it('should handle preAuth with parameterized plugin pathPrefix', async () => {
+        const mockPlugin = {
+            name: 'param-plugin',
+            opts: { requiresAuth: false },
+            pathPrefix: '/user/:id/profile',
+            register: vi.fn(),
+        }
+        const instWithPlugin = new StarbaseDB({
+            dataSource: mockDataSource,
+            config: mockConfig,
+            plugins: [mockPlugin as any],
+        })
+
+        const req = new Request('https://example.com/user/123/profile')
+        const res = await instWithPlugin.handlePreAuth(req, mockExecutionContext)
+
+        expect(res).toBeDefined()
+    })
+
+    it('should return undefined in preAuth if route does not match authless plugin', async () => {
+        const mockPlugin = {
+            name: 'test-plugin',
+            opts: { requiresAuth: false },
+            pathPrefix: '/public/*',
+            register: vi.fn(),
+        }
+        const instWithPlugin = new StarbaseDB({
+            dataSource: mockDataSource,
+            config: mockConfig,
+            plugins: [mockPlugin as any],
+        })
+
+        const req = new Request('https://example.com/private/settings')
+        const res = await instWithPlugin.handlePreAuth(req, mockExecutionContext)
+
+        expect(res).toBeUndefined()
+    })
+
+    it('should return undefined in preAuth for plugins that require auth', async () => {
+        const mockPlugin = {
+            name: 'auth-required-plugin',
+            opts: { requiresAuth: true },
+            pathPrefix: '/secure/*',
+            register: vi.fn(),
+        }
+        const instWithPlugin = new StarbaseDB({
+            dataSource: mockDataSource,
+            config: mockConfig,
+            plugins: [mockPlugin as any],
+        })
+
+        const req = new Request('https://example.com/secure/data')
+        const res = await instWithPlugin.handlePreAuth(req, mockExecutionContext)
+
+        expect(res).toBeUndefined()
     })
 })
 
@@ -142,7 +254,20 @@ describe('StarbaseDB Query Execution', () => {
         expect(response.status).toBe(200)
     })
 
-    it('should return 400 if SQL query is invalid', async () => {
+    it('should return 400 if Content-Type is not application/json', async () => {
+        const request = new Request('https://example.com/query', {
+            method: 'POST',
+            body: 'plain text',
+            headers: { 'Content-Type': 'text/plain' },
+        })
+
+        const response = await instance.queryRoute(request, false)
+
+        expect(response.status).toBe(400)
+        expect(response.error).toBe('Content-Type must be application/json.')
+    })
+
+    it('should return 400 if SQL query is invalid or empty', async () => {
         const request = new Request('https://example.com/query', {
             method: 'POST',
             body: JSON.stringify({ sql: '' }),
@@ -152,6 +277,22 @@ describe('StarbaseDB Query Execution', () => {
         const response = await instance.queryRoute(request, false)
 
         expect(response.status).toBe(400)
+        expect(response.error).toBe('Invalid or empty "sql" field.')
+    })
+
+    it('should return 400 if params is invalid', async () => {
+        const request = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({ sql: 'SELECT 1', params: 12345 }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+
+        const response = await instance.queryRoute(request, false)
+
+        expect(response.status).toBe(400)
+        expect(response.error).toBe(
+            'Invalid "params" field. Must be an array or object.'
+        )
     })
 
     it('should execute a SQL transaction', async () => {
@@ -168,6 +309,42 @@ describe('StarbaseDB Query Execution', () => {
         expect(executeTransaction).toHaveBeenCalled()
         expect(response.status).toBe(200)
     })
+
+    it('should return 500 if a query in transaction has empty sql', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+        const request = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({
+                transaction: [{ sql: '   ' }],
+            }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+
+        const response = await instance.queryRoute(request, false)
+
+        expect(response.status).toBe(500)
+        expect(response.error).toBe(
+            'Invalid or empty "sql" field in transaction.'
+        )
+    })
+
+    it('should return 500 if a query in transaction has invalid params', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+        const request = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({
+                transaction: [{ sql: 'INSERT INTO tbl VALUES (?)', params: 999 }],
+            }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+
+        const response = await instance.queryRoute(request, false)
+
+        expect(response.status).toBe(500)
+        expect(response.error).toBe(
+            'Invalid "params" field in transaction. Must be an array or object.'
+        )
+    })
 })
 
 describe('StarbaseDB Cache Expiry', () => {
@@ -178,6 +355,20 @@ describe('StarbaseDB Cache Expiry', () => {
             sql: 'DELETE FROM tmp_cache WHERE timestamp + (ttl * 1000) < ?',
             params: [expect.any(Number)],
         })
+    })
+
+    it('should catch and log error if cache expiry fails', async () => {
+        mockDataSource.rpc.executeQuery = vi.fn().mockImplementationOnce(() => {
+            throw new Error('Cache cleanup failure')
+        })
+        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+        await instance['expireCache']()
+
+        expect(consoleErrorSpy).toHaveBeenCalledWith(
+            'Error cleaning up expired cache entries:',
+            expect.any(Error)
+        )
     })
 })
 
