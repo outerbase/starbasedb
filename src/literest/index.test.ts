@@ -489,4 +489,36 @@ describe('LiteREST', () => {
             expect(query).not.toContain('DROP TABLE users')
         })
     })
+
+    describe('allowlist bypass', () => {
+        it('should execute queries with bypassAllowlist: true by default', async () => {
+            const request = new Request('http://localhost/rest/main/users', {
+                method: 'GET',
+            })
+            await liteRest.handleRequest(request)
+
+            expect(executeTransaction).toHaveBeenCalledWith(
+                expect.objectContaining({ bypassAllowlist: true })
+            )
+        })
+
+        it('should respect allowlistBypassRest: false when configured', async () => {
+            const strictConfig: StarbaseDBConfiguration = {
+                ...mockConfig,
+                features: {
+                    allowlistBypassRest: false,
+                },
+            }
+            const strictLiteRest = new LiteREST(mockDataSource, strictConfig)
+
+            const request = new Request('http://localhost/rest/main/users', {
+                method: 'GET',
+            })
+            await strictLiteRest.handleRequest(request)
+
+            expect(executeTransaction).toHaveBeenCalledWith(
+                expect.objectContaining({ bypassAllowlist: false })
+            )
+        })
+    })
 })

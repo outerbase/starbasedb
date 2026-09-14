@@ -51,6 +51,7 @@ REGION = "auto"
 # Toggle to enable default features 
 ENABLE_ALLOWLIST = 0
 ENABLE_RLS = 0
+ALLOWLIST_BYPASS_REST = 1
 
 # External database source details
 # This enables Starbase to connect to an external data source
