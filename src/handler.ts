@@ -26,6 +26,7 @@ export interface StarbaseDBConfiguration {
         websocket?: boolean
         export?: boolean
         import?: boolean
+        allowlistBypassRest?: boolean
     }
 }
 

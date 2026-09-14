@@ -246,6 +246,35 @@ describe('executeQuery', () => {
         )
     })
 
+    it('should bypass the allowlist feature when bypassAllowlist is true', async () => {
+        vi.mocked(isQueryAllowed).mockClear()
+
+        await executeQuery({
+            sql: 'SELECT * FROM users',
+            params: undefined,
+            isRaw: false,
+            dataSource: mockDataSource,
+            config: mockConfig,
+            bypassAllowlist: true,
+        })
+
+        expect(isQueryAllowed).not.toHaveBeenCalled()
+    })
+
+    it('should pass bypassAllowlist flag in executeTransaction', async () => {
+        vi.mocked(isQueryAllowed).mockClear()
+
+        await executeTransaction({
+            queries: [{ sql: 'SELECT * FROM users' }],
+            isRaw: false,
+            dataSource: mockDataSource,
+            config: mockConfig,
+            bypassAllowlist: true,
+        })
+
+        expect(isQueryAllowed).not.toHaveBeenCalled()
+    })
+
     it('should apply row-level security', async () => {
         await executeQuery({
             sql: 'SELECT * FROM users',

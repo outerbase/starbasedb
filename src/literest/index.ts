@@ -13,6 +13,14 @@ export class LiteREST {
     }
 
     /**
+     * Determines whether queries produced by LiteREST should bypass the static SQL allowlist.
+     * By default true so REST API works seamlessly when allowlist is toggled on.
+     */
+    private shouldBypassAllowlist(): boolean {
+        return this.config?.features?.allowlistBypassRest ?? true
+    }
+
+    /**
      * Sanitizes an identifier by removing all non-alphanumeric characters except underscores.
      * @param identifier - The identifier to sanitize.
      * @returns The sanitized identifier.
@@ -70,6 +78,7 @@ export class LiteREST {
             isRaw: false,
             dataSource: this.dataSource,
             config: this.config,
+            bypassAllowlist: this.shouldBypassAllowlist(),
         })) as any[]
 
         let pkColumns = []
@@ -178,6 +187,7 @@ export class LiteREST {
             isRaw: false,
             dataSource: this.dataSource,
             config: this.config,
+            bypassAllowlist: this.shouldBypassAllowlist(),
         })) as any[]
         return {
             result: results?.length > 0 ? results[0] : undefined,

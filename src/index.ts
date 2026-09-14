@@ -31,6 +31,7 @@ export interface Env {
 
     ENABLE_ALLOWLIST?: boolean
     ENABLE_RLS?: boolean
+    ALLOWLIST_BYPASS_REST?: boolean
 
     // External database source details
     OUTERBASE_API_KEY?: string
@@ -190,6 +191,10 @@ export default {
                 features: {
                     allowlist: env.ENABLE_ALLOWLIST,
                     rls: env.ENABLE_RLS,
+                    allowlistBypassRest:
+                        env.ALLOWLIST_BYPASS_REST !== undefined
+                            ? Boolean(Number(env.ALLOWLIST_BYPASS_REST))
+                            : true,
                 },
             }
 

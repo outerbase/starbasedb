@@ -196,8 +196,9 @@ export async function executeQuery(opts: {
     isRaw: boolean
     dataSource: DataSource
     config: StarbaseDBConfiguration
+    bypassAllowlist?: boolean
 }): Promise<QueryResponse> {
-    let { sql, params, isRaw, dataSource, config } = opts
+    let { sql, params, isRaw, dataSource, config, bypassAllowlist } = opts
 
     if (!dataSource) {
         console.error('Data source not found.')
@@ -205,12 +206,14 @@ export async function executeQuery(opts: {
     }
 
     // If the allowlist feature is enabled, we should verify the query is allowed before proceeding.
-    await isQueryAllowed({
-        sql: sql,
-        isEnabled: config?.features?.allowlist ?? false,
-        dataSource,
-        config,
-    })
+    if (!bypassAllowlist) {
+        await isQueryAllowed({
+            sql: sql,
+            isEnabled: config?.features?.allowlist ?? false,
+            dataSource,
+            config,
+        })
+    }
 
     // If the row level security feature is enabled, we should apply our policies to this SQL statement.
     sql = await applyRLS({
@@ -323,8 +326,9 @@ export async function executeTransaction(opts: {
     isRaw: boolean
     dataSource: DataSource
     config: StarbaseDBConfiguration
+    bypassAllowlist?: boolean
 }): Promise<QueryResponse> {
-    const { queries, isRaw, dataSource, config } = opts
+    const { queries, isRaw, dataSource, config, bypassAllowlist } = opts
 
     if (!dataSource) {
         console.error('Data source not found.')
@@ -340,6 +344,7 @@ export async function executeTransaction(opts: {
             isRaw,
             dataSource,
             config,
+            bypassAllowlist,
         })
 
         results.push(result)
