@@ -1,4 +1,7 @@
 import { DurableObject } from 'cloudflare:workers'
+import { DUMP_STATE_KEY, type DumpState } from './export/chunkedDump'
+import type { DataSource } from './types'
+import type { StarbaseDBConfiguration } from './handler'
 
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
@@ -72,6 +75,8 @@ export class StarbaseDBDurableObject extends DurableObject {
             deleteAlarm: this.deleteAlarm.bind(this),
             getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
+            startDumpJob: this.startDumpJob.bind(this),
+            dumpJobStatus: this.dumpJobStatus.bind(this),
         }
     }
 
@@ -106,6 +111,55 @@ export class StarbaseDBDurableObject extends DurableObject {
 
     async alarm() {
         try {
+            // A chunked dump job in flight takes priority: resume its next
+            // bounded cycle (breathing interval already elapsed). The dump job
+            // always targets the internal source, which is this DO itself.
+            const dumpState = await this.storage.get<DumpState>(DUMP_STATE_KEY)
+            if (dumpState && !dumpState.completedAt) {
+                const { runDumpJob } = await import('./export/dump')
+                await runDumpJob(
+                    {
+                        storage: this.storage,
+                        env: {
+                            R2_DUMP_BUCKET: (
+                                this.env as Env & { R2_DUMP_BUCKET?: R2Bucket }
+                            ).R2_DUMP_BUCKET,
+                        },
+                        dataSource: this.dumpJobDataSource(),
+                        config: { role: 'admin' } as StarbaseDBConfiguration,
+                        setAlarm: (time, options) =>
+                            this.setAlarm(time, options),
+                    },
+                    new URLSearchParams()
+                )
+                return
+            }
+
+            // A finished dump that has not been consolidated yet: merge its
+            // chunk records into the single R2 object (multipart, resumable)
+            // so presigned download URLs become available.
+            if (
+                dumpState &&
+                dumpState.completedAt &&
+                (this.env as Env & { R2_DUMP_BUCKET?: R2Bucket })
+                    .R2_DUMP_BUCKET &&
+                (!dumpState.finalizedAt || !dumpState.temporaryChunksCleanedAt)
+            ) {
+                const { runDumpFinalize } = await import('./export/dump')
+                await runDumpFinalize({
+                    storage: this.storage,
+                    env: {
+                        R2_DUMP_BUCKET: (
+                            this.env as Env & { R2_DUMP_BUCKET?: R2Bucket }
+                        ).R2_DUMP_BUCKET,
+                    },
+                    dataSource: this.dumpJobDataSource(),
+                    config: { role: 'admin' } as StarbaseDBConfiguration,
+                    setAlarm: (time, options) => this.setAlarm(time, options),
+                })
+                return
+            }
+
             // Fetch all the tasks that are marked to emit an event for this cycle.
             const task = (await this.executeQuery({
                 sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
@@ -282,6 +336,64 @@ export class StarbaseDBDurableObject extends DurableObject {
             console.error('SQL Execution Error:', error)
             throw error
         }
+    }
+
+    /**
+     * Internal data source for dump jobs. Built in-process (no RPC hop): the
+     * engine's queries execute directly against this DO's SQLite storage.
+     */
+    private dumpJobDataSource(): DataSource {
+        return {
+            source: 'internal',
+            rpc: this.init(),
+        } as unknown as DataSource
+    }
+
+    /**
+     * Chunked dump job entry point, executed inside the Durable Object so it
+     * can drive bounded work cycles, persist progress, mirror chunks to R2
+     * (when bound) and resume itself through the DO alarm. Takes only plain
+     * config/params so the RPC surface avoids circular DataSource typings.
+     */
+    public async startDumpJob(
+        config: StarbaseDBConfiguration,
+        searchParams: Record<string, string>
+    ): Promise<Response> {
+        const { runDumpJob } = await import('./export/dump')
+        return runDumpJob(
+            {
+                storage: this.storage,
+                env: {
+                    // Optional binding; deployers add it to wrangler.toml when
+                    // they want R2-backed dumps. Absent = storage-only mode.
+                    R2_DUMP_BUCKET: (
+                        this.env as Env & { R2_DUMP_BUCKET?: R2Bucket }
+                    ).R2_DUMP_BUCKET,
+                },
+                dataSource: this.dumpJobDataSource(),
+                config,
+                setAlarm: (time, options) => this.setAlarm(time, options),
+            },
+            new URLSearchParams(searchParams)
+        )
+    }
+
+    /** Status/fetch endpoint for a chunked dump job. */
+    public async dumpJobStatus(
+        config: StarbaseDBConfiguration
+    ): Promise<Response> {
+        const { dumpJobStatus } = await import('./export/dump')
+        return dumpJobStatus({
+            storage: this.storage,
+            env: {
+                R2_DUMP_BUCKET: (
+                    this.env as Env & { R2_DUMP_BUCKET?: R2Bucket }
+                ).R2_DUMP_BUCKET,
+            },
+            dataSource: this.dumpJobDataSource(),
+            config,
+            setAlarm: (time, options) => this.setAlarm(time, options),
+        })
     }
 
     public async executeQuery(opts: {

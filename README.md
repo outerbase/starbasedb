@@ -243,6 +243,8 @@ curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
 </code>
 </pre>
 
+Internal database dumps use one temporary-chunk retention policy. Chunks remain in Durable Object storage and, when configured, in R2 while a dump is active. After the R2 multipart object is finalized successfully, both copies of the temporary chunks are deleted. Without R2, the Durable Object chunk records remain the completed job's downloadable artifact. Large internal requests automatically use the resumable job flow; `?job=1` remains supported for explicit job requests.
+
 <h3>JSON Data Export</h3>
 <pre>
 <code>
