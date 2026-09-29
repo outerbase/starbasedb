@@ -145,4 +145,125 @@ describe('StarbaseDBDurableObject Tests', () => {
             instance.executeQuery({ sql: 'INVALID QUERY' })
         ).rejects.toThrow('Query failed')
     })
+
+    it('should handle getAlarm, setAlarm, deleteAlarm', async () => {
+        mockDurableObjectState.storage.getAlarm = vi
+            .fn()
+            .mockResolvedValue(12345)
+        mockDurableObjectState.storage.setAlarm = vi
+            .fn()
+            .mockResolvedValue(undefined)
+        mockDurableObjectState.storage.deleteAlarm = vi
+            .fn()
+            .mockResolvedValue(undefined)
+
+        expect(await instance.getAlarm()).toBe(12345)
+
+        await instance.setAlarm(new Date(Date.now() + 5000))
+        expect(mockDurableObjectState.storage.setAlarm).toHaveBeenCalled()
+
+        await instance.deleteAlarm()
+        expect(mockDurableObjectState.storage.deleteAlarm).toHaveBeenCalled()
+    })
+
+    it('should handle alarm execution', async () => {
+        mockStorage.sql.exec.mockReturnValueOnce({
+            toArray: vi.fn().mockReturnValue([
+                {
+                    is_active: 1,
+                    callback_host: 'http://localhost',
+                },
+            ]),
+        })
+        global.fetch = vi.fn().mockResolvedValue({ status: 200 } as any)
+
+        await instance.alarm()
+        expect(global.fetch).toHaveBeenCalled()
+    })
+
+    it('should handle alarm execution when task fails', async () => {
+        mockStorage.sql.exec.mockReturnValueOnce({
+            toArray: vi.fn().mockReturnValue([
+                {
+                    is_active: 1,
+                    callback_host: 'http://localhost',
+                },
+            ]),
+        })
+        global.fetch = vi.fn().mockRejectedValue(new Error('Network error'))
+        mockDurableObjectState.storage.setAlarm = vi.fn()
+
+        await instance.alarm()
+        expect(mockDurableObjectState.storage.setAlarm).toHaveBeenCalled() // Recovery alarm
+    })
+
+    it('should return statistics', async () => {
+        instance.sql.databaseSize = 1024
+        mockStorage.sql.exec.mockReturnValueOnce({
+            toArray: vi.fn().mockReturnValue([{ count: 5 }]),
+        })
+        const stats = await instance.getStatistics()
+        expect(stats.databaseSize).toBe(1024)
+        expect(stats.activeConnections).toBe(0)
+        expect(stats.recentQueries).toBe(5)
+    })
+
+    it('should reject /socket if not websocket upgrade', async () => {
+        const request = new Request('http://localhost/socket')
+        const response = await instance.fetch(request)
+        expect(response.status).toBe(400)
+    })
+
+    it('should handle /socket with upgrade', async () => {
+        const request = new Request('http://localhost/socket?sessionId=test', {
+            headers: { upgrade: 'websocket' },
+        })
+        const response = await instance.fetch(request)
+        expect(response.status).toBe(101)
+        expect(instance.connections.has('test')).toBe(true)
+    })
+
+    it('should handle /socket/broadcast', async () => {
+        const server = new global.WebSocket('ws://localhost')
+        server.send = vi.fn()
+        instance.connections.set('test1', server)
+
+        const request = new Request('http://localhost/socket/broadcast', {
+            method: 'POST',
+            body: JSON.stringify({ msg: 'hello' }),
+        })
+        const response = await instance.fetch(request)
+        expect(response.status).toBe(200)
+        expect(server.send).toHaveBeenCalled()
+    })
+
+    it('should handle webSocketMessage', async () => {
+        const ws = new global.WebSocket('ws://localhost')
+        ws.send = vi.fn()
+        await instance.webSocketMessage(
+            ws,
+            JSON.stringify({ action: 'query', sql: 'SELECT 1' })
+        )
+        expect(ws.send).toHaveBeenCalled()
+    })
+
+    it('should handle webSocketClose', async () => {
+        const ws = new global.WebSocket('ws://localhost')
+        ws.close = vi.fn()
+        instance.ctx = mockDurableObjectState
+        instance.connections.set('session-123', ws)
+        await instance.webSocketClose(ws, 1000, 'done', true)
+        expect(ws.close).toHaveBeenCalled()
+        expect(instance.connections.has('session-123')).toBe(false)
+    })
+
+    it('should execute raw queries', async () => {
+        const result = await instance.executeQuery({
+            sql: 'SELECT 1',
+            isRaw: true,
+            params: [1],
+        })
+        expect(result).toHaveProperty('columns')
+        expect(result).toHaveProperty('rows')
+    })
 })
