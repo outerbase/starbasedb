@@ -488,5 +488,87 @@ describe('LiteREST', () => {
 
             expect(query).not.toContain('DROP TABLE users')
         })
+
+        it('should add WHERE clause for IN operator', async () => {
+            const searchParams = new URLSearchParams({
+                'status.in': 'active, pending',
+            })
+            // @ts-expect-error
+            const { query, params } = await liteRest.buildSelectQuery(
+                'users',
+                undefined,
+                undefined,
+                searchParams
+            )
+            expect(query).toContain('WHERE status IN (?, ?)')
+            expect(params).toEqual(['active', 'pending'])
+        })
+
+        it('should add WHERE clause for generic operator', async () => {
+            const searchParams = new URLSearchParams({
+                'age.gte': '18',
+            })
+            // @ts-expect-error
+            const { query, params } = await liteRest.buildSelectQuery(
+                'users',
+                undefined,
+                undefined,
+                searchParams
+            )
+            expect(query).toContain('WHERE age >= ?')
+            expect(params).toEqual(['18'])
+        })
+    })
+
+    describe('getPrimaryKeyColumns queries', () => {
+        it('should query primary keys for postgresql/hyperdrive', async () => {
+            mockDataSource.source = 'hyperdrive'
+            mockDataSource.external = { dialect: 'postgresql' } as any
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id' }])
+            // @ts-expect-error
+            const cols = await liteRest.getPrimaryKeyColumns('users', 'public')
+            expect(cols).toEqual(['id'])
+        })
+
+        it('should query primary keys for mysql', async () => {
+            mockDataSource.source = 'external'
+            mockDataSource.external = { dialect: 'mysql' } as any
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id' }])
+            // @ts-expect-error
+            const cols = await liteRest.getPrimaryKeyColumns('users')
+            expect(cols).toEqual(['id'])
+        })
+    })
+
+    describe('Edge Cases', () => {
+        it('POST with empty object should return 400', async () => {
+            const request = new Request('http://localhost/rest/main/users', {
+                method: 'POST',
+                body: JSON.stringify({}),
+                headers: { 'Content-Type': 'application/json' },
+            })
+            const response = await liteRest.handleRequest(request)
+            expect(response.status).toBe(400)
+        })
+
+        it('PATCH with only pk keys (no updatable keys) should return 400', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'PATCH',
+                body: JSON.stringify({ id: 1 }),
+                headers: { 'Content-Type': 'application/json' },
+            })
+            const response = await liteRest.handleRequest(request)
+            expect(response.status).toBe(400)
+        })
+
+        it('DELETE missing pk columns should return 400', async () => {
+            vi.mocked(executeQuery).mockResolvedValue([]) // No pk
+            const request = new Request('http://localhost/rest/main/users/1', {
+                method: 'DELETE',
+            })
+            const response = await liteRest.handleRequest(request)
+            expect(response.status).toBe(400)
+        })
     })
 })
