@@ -54,7 +54,8 @@ export interface CronEventPayload {
 export class CronPlugin extends StarbasePlugin {
     public pathPrefix: string = '/cron'
     private dataSource?: DataSource
-    private eventCallbacks: ((payload: CronEventPayload) => void)[] = []
+    private eventCallbacks: ((payload: CronEventPayload) => Promise<void>)[] =
+        []
 
     constructor() {
         super('starbasedb:cron', {
@@ -73,15 +74,11 @@ export class CronPlugin extends StarbasePlugin {
         app.post(`${this.pathPrefix}/callback`, async (c) => {
             const payload = (await c.req.json()) as CronEventPayload[]
 
-            this.eventCallbacks.forEach((callback) => {
-                try {
-                    payload.forEach((element) => {
-                        callback(element)
-                    })
-                } catch (error) {
-                    console.error('Error in Cron event callback:', error)
-                }
-            })
+            await Promise.all(
+                this.eventCallbacks.flatMap((callback) =>
+                    payload.map((element) => callback(element))
+                )
+            )
 
             return createResponse({ success: true }, undefined, 200)
         })
@@ -192,10 +189,13 @@ export class CronPlugin extends StarbasePlugin {
         ctx?: ExecutionContext
     ) {
         const wrappedCallback = async (payload: CronEventPayload) => {
-            const result = callback(payload)
-            if (result instanceof Promise && ctx) {
-                ctx.waitUntil(result)
-            }
+            const delivery = Promise.resolve()
+                .then(() => callback(payload))
+                .catch((error) => {
+                    console.error('Error in Cron event callback:', error)
+                })
+            if (ctx) ctx.waitUntil(delivery)
+            else await delivery
         }
 
         this.eventCallbacks.push(wrappedCallback)

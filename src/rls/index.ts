@@ -20,7 +20,12 @@ type Policy = {
     }
 }
 
-let policies: Policy[] = []
+type RLSState = {
+    policies: Policy[]
+    defaultSchema?: string
+    dialect: string
+    visited: WeakSet<object>
+}
 
 // Rules on how RLS policies should work
 // 1. If a table has _any_ rules applied to it, then each action needs to be explicitly defined or it should be automatically denied.
@@ -142,12 +147,19 @@ export async function applyRLS(opts: {
         return sql
     }
 
-    policies = await loadPolicies(dataSource)
-
     const dialect =
         dataSource.source === 'external'
             ? dataSource.external!.dialect
             : 'sqlite'
+    const state: RLSState = {
+        policies: await loadPolicies(dataSource),
+        defaultSchema: dataSource.external?.defaultSchema,
+        dialect,
+        visited: new WeakSet(),
+    }
+    if (state.policies.length === 0) {
+        throw new Error('RLS policies are unavailable or empty; query denied')
+    }
 
     let context: Record<string, any> = dataSource?.context ?? {}
     let ast
@@ -165,9 +177,9 @@ export async function applyRLS(opts: {
     try {
         ast = parser.astify(sql, { database: dialect })
         if (Array.isArray(ast)) {
-            ast.forEach((singleAst) => applyRLSToAst(singleAst))
+            ast.forEach((singleAst) => applyRLSToAst(singleAst, state))
         } else {
-            applyRLSToAst(ast)
+            applyRLSToAst(ast, state)
         }
     } catch (error) {
         console.error('Error parsing SQL:', error)
@@ -202,186 +214,215 @@ export async function applyRLS(opts: {
     return modifiedSql
 }
 
-function applyRLSToAst(ast: any): void {
-    if (!ast) return
+function applyRLSToAst(ast: any, state: RLSState): void {
+    ast = selectAst(ast) ?? ast
+    if (!ast || typeof ast !== 'object' || state.visited.has(ast)) return
+    state.visited.add(ast)
 
     // Handle WITH (CTE) queries as arrays
     if (ast.with && Array.isArray(ast.with)) {
         for (const cte of ast.with) {
             if (cte.stmt) {
-                applyRLSToAst(cte.stmt)
+                applyRLSToAst(cte.stmt, state)
             }
         }
     }
 
     // Set operations
     if (['union', 'intersect', 'except'].includes(ast.type)) {
-        applyRLSToAst(ast.left)
-        applyRLSToAst(ast.right)
+        applyRLSToAst(ast.left, state)
+        applyRLSToAst(ast.right, state)
         return
     }
+    // node-sql-parser chains UNION arms as SELECT nodes rather than a union node.
+    if (ast._next) applyRLSToAst(ast._next, state)
 
     // Subqueries in INSERT/UPDATE/DELETE
     if (ast.type === 'insert' && ast.from) {
-        applyRLSToAst(ast.from)
+        applyRLSToAst(ast.from, state)
     }
-    if (ast.type === 'update' && ast.where) {
-        traverseWhere(ast.where)
-    }
-    if (ast.type === 'delete' && ast.where) {
-        traverseWhere(ast.where)
-    }
-
-    const tablesWithRules: Record<string, string[]> = {}
-    policies.forEach((policy) => {
-        const tbl = normalizeIdentifier(policy.condition.left.table)
-        if (!tablesWithRules[tbl]) {
-            tablesWithRules[tbl] = []
-        }
-        tablesWithRules[tbl].push(policy.action)
-    })
 
     const statementType = ast.type?.toUpperCase()
     if (!['SELECT', 'UPDATE', 'DELETE', 'INSERT'].includes(statementType)) {
         return
     }
 
-    let tables: string[] = []
-    if (statementType === 'INSERT') {
-        let tableName = normalizeIdentifier(ast.table[0].table)
-        if (tableName.includes('.')) {
-            tableName = tableName.split('.')[1]
-        }
-        tables = [tableName]
-    } else if (statementType === 'UPDATE') {
-        tables = ast.table.map((tableRef: any) => {
-            let tableName = normalizeIdentifier(tableRef.table)
-            if (tableName.includes('.')) {
-                tableName = tableName.split('.')[1]
-            }
-            return tableName
-        })
-    } else {
-        // SELECT or DELETE
-        tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
-                }
-                return tableName
-            }) || []
-    }
+    const tableRefs =
+        (statementType === 'INSERT' || statementType === 'UPDATE'
+            ? ast.table
+            : ast.from
+        )?.filter((ref: any) => typeof ref.table === 'string') ?? []
 
-    const restrictedTables = Object.keys(tablesWithRules)
-
-    for (const table of tables) {
-        if (restrictedTables.includes(table)) {
-            const allowedActions = tablesWithRules[table]
-            if (!allowedActions.includes(statementType)) {
+    for (const ref of tableRefs) {
+        if (!ref.db && !state.defaultSchema) {
+            const schemas = new Set(
+                state.policies
+                    .filter(
+                        (policy) =>
+                            identifier(policyTable(policy).table, state) ===
+                            identifier(ref.table, state)
+                    )
+                    .map((policy) => {
+                        const schema = policyTable(policy).schema
+                        return schema ? identifier(schema, state) : undefined
+                    })
+            )
+            if (schemas.size > 1) {
                 throw new Error(
-                    `Unauthorized access: No matching rules for ${statementType} on restricted table ${table}`
+                    `Ambiguous RLS schema for table ${ref.table}; qualify the table or configure a default schema`
+                )
+            }
+        }
+        const tablePolicies = state.policies.filter((policy) =>
+            policyMatchesTable(policy, ref, state)
+        )
+        if (tablePolicies.length > 0) {
+            if (
+                !tablePolicies.some(
+                    (policy) =>
+                        policy.action === statementType || policy.action === '*'
+                )
+            ) {
+                throw new Error(
+                    `Unauthorized access: No matching rules for ${statementType} on restricted table ${ref.table}`
                 )
             }
         }
     }
 
-    policies
+    state.policies
         .filter(
             (policy) => policy.action === statementType || policy.action === '*'
         )
-        .forEach(({ action, condition }) => {
-            const targetTable = normalizeIdentifier(condition.left.table)
-            const isTargetTable = tables.includes(targetTable)
+        .forEach((policy) => {
+            for (const ref of tableRefs.filter((ref: any) =>
+                policyMatchesTable(policy, ref, state)
+            )) {
+                // A policy names the base table; SQL must qualify its column using
+                // this occurrence's alias (including each side of a self join).
+                const condition = {
+                    ...policy.condition,
+                    left: {
+                        ...policy.condition.left,
+                        table: ref.as ?? ref.table,
+                    },
+                    right: { ...policy.condition.right },
+                }
 
-            if (!isTargetTable) return
-
-            if (action !== 'INSERT') {
-                // Add condition to WHERE with parentheses
-                if (ast.where) {
-                    ast.where = {
-                        type: 'binary_expr',
-                        operator: 'AND',
-                        parentheses: true,
-                        left: {
-                            ...ast.where,
+                if (statementType !== 'INSERT') {
+                    // Add condition to WHERE with parentheses
+                    if (ast.where) {
+                        ast.where = {
+                            type: 'binary_expr',
+                            operator: 'AND',
                             parentheses: true,
-                        },
-                        right: {
+                            left: {
+                                ...ast.where,
+                                parentheses: true,
+                            },
+                            right: {
+                                ...condition,
+                                parentheses: true,
+                            },
+                        }
+                    } else {
+                        ast.where = {
                             ...condition,
                             parentheses: true,
-                        },
+                        }
                     }
                 } else {
-                    ast.where = {
-                        ...condition,
-                        parentheses: true,
+                    // For INSERT, enforce column values
+                    if (
+                        !Array.isArray(ast.values) ||
+                        !Array.isArray(ast.columns)
+                    ) {
+                        throw new Error(
+                            'RLS INSERT requires an explicit column list and VALUES rows; INSERT SELECT is not supported for a restricted target'
+                        )
                     }
-                }
-            } else {
-                // For INSERT, enforce column values
-                if (ast.values && ast.values.length > 0) {
-                    const columnIndex = ast.columns.findIndex(
-                        (col: any) =>
-                            normalizeIdentifier(col) ===
-                            normalizeIdentifier(condition.left.column)
-                    )
-                    if (columnIndex !== -1) {
-                        ast.values.forEach((valueList: any) => {
-                            if (
-                                valueList.type === 'expr_list' &&
-                                Array.isArray(valueList.value)
-                            ) {
-                                valueList.value[columnIndex] = {
-                                    type: condition.right.type,
-                                    value: condition.right.value,
+                    if (ast.values && ast.values.length > 0) {
+                        const columnIndex = ast.columns.findIndex(
+                            (col: any) =>
+                                normalizeIdentifier(col) ===
+                                normalizeIdentifier(condition.left.column)
+                        )
+                        if (columnIndex === -1) {
+                            throw new Error(
+                                `RLS INSERT requires policy column ${condition.left.column}`
+                            )
+                        }
+                        if (columnIndex !== -1) {
+                            ast.values.forEach((valueList: any) => {
+                                if (
+                                    valueList.type === 'expr_list' &&
+                                    Array.isArray(valueList.value)
+                                ) {
+                                    valueList.value[columnIndex] = {
+                                        type: condition.right.type,
+                                        value: condition.right.value,
+                                    }
+                                } else {
+                                    valueList[columnIndex] = {
+                                        type: condition.right.type,
+                                        value: condition.right.value,
+                                    }
                                 }
-                            } else {
-                                valueList[columnIndex] = {
-                                    type: condition.right.type,
-                                    value: condition.right.value,
-                                }
-                            }
-                        })
+                            })
+                        }
                     }
                 }
             }
         })
 
-    ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
-            applyRLSToAst(fromItem.expr)
-        }
-
-        // Handle both single join and array of joins
-        if (fromItem.join) {
-            const joins = Array.isArray(fromItem.join)
-                ? fromItem.join
-                : [fromItem]
-            joins.forEach((joinItem: any) => {
-                if (joinItem.expr && joinItem.expr.type === 'select') {
-                    applyRLSToAst(joinItem.expr)
-                }
-            })
-        }
-    })
-
-    if (ast.where) {
-        traverseWhere(ast.where)
-    }
-
-    ast.columns?.forEach((column: any) => {
-        if (column.expr && column.expr.type === 'select') {
-            applyRLSToAst(column.expr)
-        }
-    })
+    // SELECTs can appear anywhere inside expressions (including JOIN ON,
+    // functions, assignments and INSERT SELECT), not just directly in FROM.
+    // The visited set prevents duplicate injection through shared AST wrappers.
+    Object.values(ast).forEach((expr) => traverseExpression(expr, state))
 }
 
-function traverseWhere(node: any): void {
-    if (!node) return
-    if (node.type === 'select') {
-        applyRLSToAst(node)
+function traverseExpression(node: any, state: RLSState): void {
+    if (!node || typeof node !== 'object') return
+    const subquery = selectAst(node)
+    if (subquery) {
+        applyRLSToAst(subquery, state)
+        return
     }
-    if (node.left) traverseWhere(node.left)
-    if (node.right) traverseWhere(node.right)
+    Object.values(node).forEach((value) => traverseExpression(value, state))
+}
+
+function selectAst(node: any): any {
+    const candidate = node?.ast ?? node
+    return candidate?.type === 'select' ? candidate : undefined
+}
+
+function policyTable(policy: Policy): { table: string; schema?: string } {
+    const name = normalizeIdentifier(policy.condition.left.table)
+    const separator = name.lastIndexOf('.')
+    const schema = separator < 0 ? undefined : name.slice(0, separator)
+    const table = separator < 0 ? name : name.slice(separator + 1)
+    return { table, schema }
+}
+
+function identifier(name: string, state: RLSState): string {
+    const normalized = normalizeIdentifier(name)
+    return state.dialect === 'sqlite' ? normalized.toLowerCase() : normalized
+}
+
+function policyMatchesTable(
+    policy: Policy,
+    ref: any,
+    state: RLSState
+): boolean {
+    const { table, schema } = policyTable(policy)
+    if (identifier(table, state) !== identifier(ref.table, state)) return false
+
+    // A configured default disambiguates unqualified names; otherwise callers
+    // reject names that could combine rules from multiple explicit schemas.
+    const querySchema = ref.db ?? state.defaultSchema
+    return (
+        !querySchema ||
+        !schema ||
+        identifier(querySchema, state) === identifier(schema, state)
+    )
 }

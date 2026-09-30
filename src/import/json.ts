@@ -50,10 +50,27 @@ export async function importTableFromJsonRoute(
             return createResponse(undefined, 'Unsupported Content-Type', 400)
         }
 
-        if (!Array.isArray(jsonData.data)) {
+        if (!jsonData || !Array.isArray(jsonData.data)) {
             return createResponse(
                 undefined,
                 'Invalid JSON format. Expected an object with "data" array and optional "columnMapping".',
+                400
+            )
+        }
+
+        // Validate the complete batch before executing any insert. A malformed
+        // later record must not leave an earlier record partially imported.
+        if (
+            jsonData.data.some(
+                (record) =>
+                    record === null ||
+                    typeof record !== 'object' ||
+                    Array.isArray(record)
+            )
+        ) {
+            return createResponse(
+                undefined,
+                'Invalid JSON format. Each record in "data" must be an object.',
                 400
             )
         }
