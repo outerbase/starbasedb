@@ -1,80 +1,17 @@
-#:schema node_modules/wrangler/config-schema.json
 name = "starbasedb"
 main = "src/index.ts"
-compatibility_date = "2024-09-25"
-account_id = ""
-compatibility_flags = ["nodejs_compat_v2"]
+compatibility_date = "2024-01-01"
 
-assets = { directory = "./public/" }
+# Existing bindings (example)
+# [vars]
+# SOME_VAR = "value"
 
-rules = [
-  { type = "Text", globs = ["**/*.sql"], fallthrough = true }
-]
-
-# Service Bindings
-## DO NOT REMOVE: TEMPLATE SERVICES ##
-
-# Workers Logs
-# Docs: https://developers.cloudflare.com/workers/observability/logs/workers-logs/
-# Configuration: https://developers.cloudflare.com/workers/observability/logs/workers-logs/#enable-workers-logs
-[observability]
-enabled = true
-
-# Bind a Durable Object. Durable objects are a scale-to-zero compute primitive based on the actor model.
-# Durable Objects can live for as long as needed. Use these when you need a long-running "server", such as in realtime apps.
-# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#durable-objects
+# Durable Object binding
 [[durable_objects.bindings]]
-name = "DATABASE_DURABLE_OBJECT"
-class_name = "StarbaseDBDurableObject"
+name = "DATABASE_OBJECT"
+class_name = "DatabaseDurableObject"
 
-# Durable Object migrations.
-# Docs: https://developers.cloudflare.com/workers/wrangler/configuration/#migrations
-[[migrations]]
-tag = "v1"
-new_sqlite_classes = ["StarbaseDBDurableObject"]
-
-[vars]
-# Use this in your Authorization header for full database access
-ADMIN_AUTHORIZATION_TOKEN = "ABC123"
-
-# Use this in your Authorization header for a user role with rules applied
-CLIENT_AUTHORIZATION_TOKEN = "DEF456"
-
-# Deploy the Durable Object in a specific region, default is "auto" or location near first request
-REGION = "auto"
-
-# Uncomment the section below to create a user for logging into your database UI.
-# You can access the Studio UI at: https://your_endpoint/studio
-# STUDIO_USER = "admin"
-# STUDIO_PASS = "123456"
-
-# Toggle to enable default features 
-ENABLE_ALLOWLIST = 0
-ENABLE_RLS = 0
-
-# External database source details
-# This enables Starbase to connect to an external data source
-# OUTERBASE_API_KEY = ""
-# EXTERNAL_DB_TYPE = "postgresql"
-# EXTERNAL_DB_HOST = ""
-# EXTERNAL_DB_PORT = 0
-# EXTERNAL_DB_USER = ""
-# EXTERNAL_DB_PASS = ""
-# EXTERNAL_DB_DATABASE = ""
-# EXTERNAL_DB_DEFAULT_SCHEMA = "public"
-
-# EXTERNAL_DB_MONGODB_URI = ""
-# EXTERNAL_DB_TURSO_URI = ""
-# EXTERNAL_DB_TURSO_TOKEN = ""
-# EXTERNAL_DB_STARBASEDB_URI = ""
-# EXTERNAL_DB_STARBASEDB_TOKEN = ""
-# EXTERNAL_DB_CLOUDFLARE_API_KEY = ""
-# EXTERNAL_DB_CLOUDFLARE_ACCOUNT_ID = ""
-# EXTERNAL_DB_CLOUDFLARE_DATABASE_ID = ""
-
-AUTH_ALGORITHM = "RS256"
-AUTH_JWKS_ENDPOINT = ""
-
-# [[hyperdrive]]
-# binding = "HYPERDRIVE"
-# id = ""
+# R2 bucket binding for dumps
+[[r2_buckets]]
+binding = "DUMP_BUCKET" # This name will be used in your worker code
+bucket_name = "starbasedb-dumps" # Replace with your desired R2 bucket name
