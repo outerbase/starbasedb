@@ -71,7 +71,8 @@ describe('loadPolicies - Policy Fetching and Parsing', () => {
 describe('applyRLS - Query Modification', () => {
     beforeEach(() => {
         vi.resetAllMocks()
-        mockDataSource.context.sub = 'user123'
+        mockConfig.role = 'client'
+        mockDataSource.context = { sub: 'user123' }
         vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
             {
                 actions: 'SELECT',
@@ -80,6 +81,33 @@ describe('applyRLS - Query Modification', () => {
                 column: 'user_id',
                 value: 'context.id()',
                 value_type: 'string',
+                operator: '=',
+            },
+            {
+                actions: 'DELETE',
+                schema: 'public',
+                table: 'users',
+                column: 'user_id',
+                value: 'context.id()',
+                value_type: 'string',
+                operator: '=',
+            },
+            {
+                actions: 'UPDATE',
+                schema: 'public',
+                table: 'users',
+                column: 'user_id',
+                value: 'context.id()',
+                value_type: 'string',
+                operator: '=',
+            },
+            {
+                actions: 'INSERT',
+                schema: 'public',
+                table: 'users',
+                column: 'user_id',
+                value: 1,
+                value_type: 'number',
                 operator: '=',
             },
         ])
@@ -148,14 +176,14 @@ describe('applyRLS - Edge Cases', () => {
     })
 
     it('should not modify SQL if user is admin', async () => {
-        mockConfig.role = 'admin'
+        const adminConfig = { ...mockConfig, role: 'admin' as const }
 
         const sql = 'SELECT * FROM users'
         const modifiedSql = await applyRLS({
             sql,
             isEnabled: true,
             dataSource: mockDataSource,
-            config: mockConfig,
+            config: adminConfig,
         })
 
         expect(modifiedSql).toBe(sql)
@@ -164,6 +192,8 @@ describe('applyRLS - Edge Cases', () => {
 
 describe('applyRLS - Multi-Table Queries', () => {
     beforeEach(() => {
+        mockConfig.role = 'client'
+        mockDataSource.context = { sub: 'user123' }
         vi.mocked(mockDataSource.rpc.executeQuery).mockResolvedValue([
             {
                 actions: 'SELECT',
@@ -200,8 +230,8 @@ describe('applyRLS - Multi-Table Queries', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("WHERE `users.user_id` = 'user123'")
-        expect(modifiedSql).toContain("AND `orders.user_id` = 'user123'")
+        expect(modifiedSql).toContain("`users`.`user_id` = 'user123'")
+        expect(modifiedSql).toContain("`orders`.`user_id` = 'user123'")
     })
 
     it('should apply RLS policies to multiple tables in a JOIN', async () => {
@@ -218,8 +248,8 @@ describe('applyRLS - Multi-Table Queries', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("WHERE (users.user_id = 'user123')")
-        expect(modifiedSql).toContain("AND (orders.user_id = 'user123')")
+        expect(modifiedSql).toContain("`users`.`user_id` = 'user123'")
+        expect(modifiedSql).toContain("`orders`.`user_id` = 'user123'")
     })
 
     it('should apply RLS policies to subqueries inside FROM clause', async () => {
@@ -236,6 +266,6 @@ describe('applyRLS - Multi-Table Queries', () => {
             config: mockConfig,
         })
 
-        expect(modifiedSql).toContain("WHERE `users.user_id` = 'user123'")
+        expect(modifiedSql).toContain("`user_id` = 'user123'")
     })
 })

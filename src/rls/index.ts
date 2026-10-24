@@ -94,6 +94,8 @@ export async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
             let rightNode
             if (value === 'context.id()') {
                 rightNode = { type: 'string', value: '__CONTEXT_ID__' }
+            } else if (typeof value === 'number') {
+                rightNode = { type: 'number', value: value }
             } else {
                 rightNode = { type: 'string', value: value }
             }
@@ -234,7 +236,10 @@ function applyRLSToAst(ast: any): void {
 
     const tablesWithRules: Record<string, string[]> = {}
     policies.forEach((policy) => {
-        const tbl = normalizeIdentifier(policy.condition.left.table)
+        let tbl = normalizeIdentifier(policy.condition.left.table)
+        if (tbl.includes('.')) {
+            tbl = tbl.split('.')[1]
+        }
         if (!tablesWithRules[tbl]) {
             tablesWithRules[tbl] = []
         }
@@ -264,13 +269,16 @@ function applyRLSToAst(ast: any): void {
     } else {
         // SELECT or DELETE
         tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
-                }
-                return tableName
-            }) || []
+            ast.from
+                ?.map((fromTable: any) => {
+                    if (!fromTable.table) return null
+                    let tableName = normalizeIdentifier(fromTable.table)
+                    if (tableName.includes('.')) {
+                        tableName = tableName.split('.')[1]
+                    }
+                    return tableName
+                })
+                .filter(Boolean) || []
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
@@ -291,32 +299,34 @@ function applyRLSToAst(ast: any): void {
             (policy) => policy.action === statementType || policy.action === '*'
         )
         .forEach(({ action, condition }) => {
-            const targetTable = normalizeIdentifier(condition.left.table)
+            let targetTable = normalizeIdentifier(condition.left.table)
+            if (targetTable.includes('.')) {
+                targetTable = targetTable.split('.')[1]
+            }
             const isTargetTable = tables.includes(targetTable)
 
             if (!isTargetTable) return
 
             if (action !== 'INSERT') {
+                const conditionToApply = {
+                    ...condition,
+                    left: {
+                        ...condition.left,
+                        table: tables.length > 1 ? targetTable : null,
+                    },
+                }
                 // Add condition to WHERE with parentheses
                 if (ast.where) {
                     ast.where = {
                         type: 'binary_expr',
                         operator: 'AND',
-                        parentheses: true,
                         left: {
                             ...ast.where,
-                            parentheses: true,
                         },
-                        right: {
-                            ...condition,
-                            parentheses: true,
-                        },
+                        right: conditionToApply,
                     }
                 } else {
-                    ast.where = {
-                        ...condition,
-                        parentheses: true,
-                    }
+                    ast.where = conditionToApply
                 }
             } else {
                 // For INSERT, enforce column values
@@ -349,8 +359,9 @@ function applyRLSToAst(ast: any): void {
         })
 
     ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
-            applyRLSToAst(fromItem.expr)
+        const subAst = fromItem.expr?.ast || fromItem.expr
+        if (subAst && subAst.type === 'select') {
+            applyRLSToAst(subAst)
         }
 
         // Handle both single join and array of joins
@@ -359,8 +370,9 @@ function applyRLSToAst(ast: any): void {
                 ? fromItem.join
                 : [fromItem]
             joins.forEach((joinItem: any) => {
-                if (joinItem.expr && joinItem.expr.type === 'select') {
-                    applyRLSToAst(joinItem.expr)
+                const joinSubAst = joinItem.expr?.ast || joinItem.expr
+                if (joinSubAst && joinSubAst.type === 'select') {
+                    applyRLSToAst(joinSubAst)
                 }
             })
         }
