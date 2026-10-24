@@ -233,13 +233,22 @@ window.onload = connectWebSocket
 ```
 
 <h3>SQL Dump</h3>
-You can request a `database_dump.sql` file that exports your database schema and data into a single file.
+You can request a `database_dump.sql` file that exports your database schema and data into a single file. Dumps are streamed incrementally in bounded memory pages:
 
 <pre>
 <code>
 curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump' \
 --header 'Authorization: Bearer ABC123' \
 --output database_dump.sql
+</code>
+</pre>
+
+For large databases, offload the dump directly to Cloudflare R2 storage without hitting worker execution time limits:
+
+<pre>
+<code>
+curl --location 'https://starbasedb.YOUR-ID-HERE.workers.dev/export/dump?location=r2&callback=https://example.com/webhook' \
+--header 'Authorization: Bearer ABC123'
 </code>
 </pre>
 

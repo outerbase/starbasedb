@@ -78,3 +78,8 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# Cloudflare R2 bucket for offloading large database dumps
+# [[r2_buckets]]
+# binding = "DATABASE_DUMP_BUCKET"
+# bucket_name = "my-starbase-dumps"
