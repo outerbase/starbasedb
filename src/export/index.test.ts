@@ -154,5 +154,28 @@ describe('Database Operations Module', () => {
                 'attachment; filename="notes.txt"'
             )
         })
+
+        it('should create a valid response for a ReadableStream', async () => {
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(
+                        new TextEncoder().encode('streamed data')
+                    )
+                    controller.close()
+                },
+            })
+            const response = createExportResponse(
+                stream,
+                'stream.csv',
+                'text/csv'
+            )
+
+            expect(response.headers.get('Content-Type')).toBe('text/csv')
+            expect(response.headers.get('Content-Disposition')).toBe(
+                'attachment; filename="stream.csv"'
+            )
+            const text = await response.text()
+            expect(text).toBe('streamed data')
+        })
     })
 })

@@ -2,6 +2,8 @@ import { DataSource } from '../types'
 import { executeTransaction } from '../operation'
 import { StarbaseDBConfiguration } from '../handler'
 
+export const EXPORT_PAGE_SIZE = 1000
+
 export async function executeOperation(
     queries: { sql: string; params?: any[] }[],
     dataSource: DataSource,
@@ -48,23 +50,29 @@ export async function getTableData(
             config
         )
         return dataResult
-    } catch (error: any) {
+    } catch (error: unknown) {
         console.error('Table Data Fetch Error:', error)
         throw error
     }
 }
 
 export function createExportResponse(
-    data: any,
+    data: BodyInit | unknown,
     fileName: string,
     contentType: string
 ): Response {
-    const blob = new Blob([data], { type: contentType })
-
     const headers = new Headers({
         'Content-Type': contentType,
         'Content-Disposition': `attachment; filename="${fileName}"`,
     })
 
+    if (data instanceof ReadableStream) {
+        return new Response(data, { headers })
+    }
+
+    const blob =
+        data instanceof Blob
+            ? data
+            : new Blob([String(data ?? '')], { type: contentType })
     return new Response(blob, { headers })
 }
