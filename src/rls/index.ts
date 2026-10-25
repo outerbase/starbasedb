@@ -235,10 +235,15 @@ function applyRLSToAst(ast: any): void {
     const tablesWithRules: Record<string, string[]> = {}
     policies.forEach((policy) => {
         const tbl = normalizeIdentifier(policy.condition.left.table)
+        const baseTbl = tbl.includes('.') ? tbl.split('.')[1] : tbl
         if (!tablesWithRules[tbl]) {
             tablesWithRules[tbl] = []
         }
+        if (!tablesWithRules[baseTbl]) {
+            tablesWithRules[baseTbl] = []
+        }
         tablesWithRules[tbl].push(policy.action)
+        tablesWithRules[baseTbl].push(policy.action)
     })
 
     const statementType = ast.type?.toUpperCase()
@@ -266,11 +271,11 @@ function applyRLSToAst(ast: any): void {
         tables =
             ast.from?.map((fromTable: any) => {
                 let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
+                if (tableName && tableName.includes('.')) {
                     tableName = tableName.split('.')[1]
                 }
                 return tableName
-            }) || []
+            }).filter(Boolean) || []
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
@@ -292,30 +297,38 @@ function applyRLSToAst(ast: any): void {
         )
         .forEach(({ action, condition }) => {
             const targetTable = normalizeIdentifier(condition.left.table)
-            const isTargetTable = tables.includes(targetTable)
+            const baseTargetTable = targetTable.includes('.')
+                ? targetTable.split('.')[1]
+                : targetTable
+            const isTargetTable =
+                tables.includes(targetTable) || tables.includes(baseTargetTable)
 
             if (!isTargetTable) return
 
+            const resolvedCondition = {
+                ...condition,
+                left: {
+                    ...condition.left,
+                    table: tables.length > 1 ? baseTargetTable : null,
+                },
+            }
+
             if (action !== 'INSERT') {
-                // Add condition to WHERE with parentheses
+                // Add condition to WHERE
                 if (ast.where) {
                     ast.where = {
                         type: 'binary_expr',
                         operator: 'AND',
-                        parentheses: true,
                         left: {
                             ...ast.where,
-                            parentheses: true,
                         },
                         right: {
-                            ...condition,
-                            parentheses: true,
+                            ...resolvedCondition,
                         },
                     }
                 } else {
                     ast.where = {
-                        ...condition,
-                        parentheses: true,
+                        ...resolvedCondition,
                     }
                 }
             } else {
@@ -349,8 +362,12 @@ function applyRLSToAst(ast: any): void {
         })
 
     ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
-            applyRLSToAst(fromItem.expr)
+        if (fromItem.expr) {
+            if (fromItem.expr.ast) {
+                applyRLSToAst(fromItem.expr.ast)
+            } else if (fromItem.expr.type === 'select') {
+                applyRLSToAst(fromItem.expr)
+            }
         }
 
         // Handle both single join and array of joins
