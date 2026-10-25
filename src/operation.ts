@@ -15,6 +15,7 @@ import {
 import {
     CloudflareD1Source,
     DataSource,
+    PostgresSource,
     RemoteSource,
     StarbaseDBSource,
     TursoDBSource,
@@ -447,7 +448,9 @@ export async function executeSDKQuery(opts: {
     let connection: SqlConnection
 
     if (external.dialect === 'postgresql') {
-        const { database } = await createSDKPostgresConnection(external)
+        const { database } = await createSDKPostgresConnection(
+            external as PostgresSource
+        )
         connection = database
     } else if (external.dialect === 'mysql') {
         const { database } = await createSDKMySQLConnection(external)

@@ -1,0 +1,6 @@
+{
+    "name": "Data Replication Plugin",
+    "description": "Replicates data from an external data source (Postgres, MySQL, SQLite) into the internal SQLite database.",
+    "version": "0.1.0",
+    "author": "Outerbase"
+}

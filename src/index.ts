@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { DataReplicationPlugin } from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -210,6 +211,13 @@ export default {
             }, ctx)
 
             const interfacePlugin = new InterfacePlugin()
+            const replicationPlugin = new DataReplicationPlugin({
+                cronPlugin,
+                config: {
+                    tables: [],
+                    batchSize: 1000,
+                },
+            })
 
             const plugins = [
                 webSocketPlugin,
@@ -226,6 +234,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                replicationPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
