@@ -128,7 +128,7 @@ describe('Database Dump Module', () => {
         )
     })
 
-    it('should return a 500 response when an error occurs', async () => {
+    it('should return a 500 response when an error occurs before streaming starts', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
             .mockImplementation(() => {})
@@ -141,5 +141,130 @@ describe('Database Dump Module', () => {
         expect(response.status).toBe(500)
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to create database dump')
+    })
+
+    it('should paginate large tables in chunked batches across multiple queries', async () => {
+        const batch1 = Array.from({ length: 1000 }, (_, i) => ({
+            id: i + 1,
+            val: `item_${i + 1}`,
+        }))
+        const batch2 = Array.from({ length: 1000 }, (_, i) => ({
+            id: i + 1001,
+            val: `item_${i + 1001}`,
+        }))
+        const batch3 = Array.from({ length: 250 }, (_, i) => ({
+            id: i + 2001,
+            val: `item_${i + 2001}`,
+        }))
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'large_table' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE large_table (id INTEGER, val TEXT);' },
+            ])
+            .mockResolvedValueOnce(batch1)
+            .mockResolvedValueOnce(batch2)
+            .mockResolvedValueOnce(batch3)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        expect(response).toBeInstanceOf(Response)
+
+        const dumpText = await response.text()
+        expect(dumpText).toContain(
+            'CREATE TABLE large_table (id INTEGER, val TEXT);'
+        )
+        expect(dumpText).toContain(
+            "INSERT INTO large_table VALUES (1, 'item_1');"
+        )
+        expect(dumpText).toContain(
+            "INSERT INTO large_table VALUES (1001, 'item_1001');"
+        )
+        expect(dumpText).toContain(
+            "INSERT INTO large_table VALUES (2250, 'item_2250');"
+        )
+
+        // Verify SQL queries were called with pagination
+        const calls = vi.mocked(executeOperation).mock.calls
+        const querySqls = calls.map(
+            (c) => (c[0] as Array<{ sql: string }>)[0].sql
+        )
+        expect(querySqls).toContain(
+            'SELECT * FROM large_table LIMIT 1000 OFFSET 0;'
+        )
+        expect(querySqls).toContain(
+            'SELECT * FROM large_table LIMIT 1000 OFFSET 1000;'
+        )
+        expect(querySqls).toContain(
+            'SELECT * FROM large_table LIMIT 1000 OFFSET 2000;'
+        )
+    })
+
+    it('should format NULL, boolean, and numeric values correctly in INSERT statements', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'types_table' }])
+            .mockResolvedValueOnce([
+                {
+                    sql: 'CREATE TABLE types_table (id INT, null_col TEXT, is_active BOOLEAN, score REAL);',
+                },
+            ])
+            .mockResolvedValueOnce([
+                { id: 1, null_col: null, is_active: true, score: 98.6 },
+                { id: 2, null_col: undefined, is_active: false, score: 0 },
+            ])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+        const dumpText = await response.text()
+
+        expect(dumpText).toContain(
+            'INSERT INTO types_table VALUES (1, NULL, 1, 98.6);'
+        )
+        expect(dumpText).toContain(
+            'INSERT INTO types_table VALUES (2, NULL, 0, 0);'
+        )
+    })
+
+    it('should stream response as a ReadableStream without buffering entire output in memory', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'stream_test' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE stream_test (id INT);' },
+            ])
+            .mockResolvedValueOnce([{ id: 1 }, { id: 2 }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        expect(response.body).toBeInstanceOf(ReadableStream)
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+        let chunksCount = 0
+        let fullOutput = ''
+
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            chunksCount++
+            fullOutput += decoder.decode(value, { stream: true })
+        }
+
+        expect(chunksCount).toBeGreaterThan(1)
+        expect(fullOutput).toContain('SQLite format 3\0')
+        expect(fullOutput).toContain('CREATE TABLE stream_test (id INT);')
+        expect(fullOutput).toContain('INSERT INTO stream_test VALUES (1);')
+        expect(fullOutput).toContain('INSERT INTO stream_test VALUES (2);')
+    })
+
+    it('should emit an error on the stream when an error occurs during streaming', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'broken_table' }])
+            .mockRejectedValueOnce(new Error('Stream failure during fetch'))
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
+
+        expect(response.status).toBe(200)
+        expect(response.body).toBeInstanceOf(ReadableStream)
+
+        await expect(response.text()).rejects.toThrow(
+            'Stream failure during fetch'
+        )
     })
 })
