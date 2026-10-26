@@ -47,6 +47,22 @@ function normalizeIdentifier(name: string): string {
     return name
 }
 
+function tableNamesMatch(policyTable: string, queryTable: string): boolean {
+    if (!policyTable || !queryTable) return false
+    const p = normalizeIdentifier(policyTable)
+    const q = normalizeIdentifier(queryTable)
+    if (p === q) return true
+    const pParts = p.split('.')
+    const qParts = q.split('.')
+    const pBare = pParts[pParts.length - 1]
+    const qBare = qParts[qParts.length - 1]
+    if (pBare === qBare) {
+        if (pParts.length === 1 || qParts.length === 1) return true
+        return pParts[0] === qParts[0]
+    }
+    return false
+}
+
 export async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
     try {
         const statement =
@@ -232,69 +248,71 @@ function applyRLSToAst(ast: any): void {
         traverseWhere(ast.where)
     }
 
-    const tablesWithRules: Record<string, string[]> = {}
-    policies.forEach((policy) => {
-        const tbl = normalizeIdentifier(policy.condition.left.table)
-        if (!tablesWithRules[tbl]) {
-            tablesWithRules[tbl] = []
-        }
-        tablesWithRules[tbl].push(policy.action)
-    })
-
     const statementType = ast.type?.toUpperCase()
     if (!['SELECT', 'UPDATE', 'DELETE', 'INSERT'].includes(statementType)) {
         return
     }
 
-    let tables: string[] = []
+    let tables: { name: string; alias?: string | null }[] = []
     if (statementType === 'INSERT') {
-        let tableName = normalizeIdentifier(ast.table[0].table)
-        if (tableName.includes('.')) {
-            tableName = tableName.split('.')[1]
+        const t = ast.table?.[0]
+        if (t) {
+            tables = [{ name: normalizeIdentifier(t.table), alias: t.as }]
         }
-        tables = [tableName]
     } else if (statementType === 'UPDATE') {
-        tables = ast.table.map((tableRef: any) => {
-            let tableName = normalizeIdentifier(tableRef.table)
-            if (tableName.includes('.')) {
-                tableName = tableName.split('.')[1]
-            }
-            return tableName
-        })
+        tables = (ast.table || []).map((tableRef: any) => ({
+            name: normalizeIdentifier(tableRef.table),
+            alias: tableRef.as,
+        }))
     } else {
         // SELECT or DELETE
-        tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
-                }
-                return tableName
-            }) || []
+        tables = (ast.from || [])
+            .filter((fromTable: any) => fromTable.table)
+            .map((fromTable: any) => ({
+                name: normalizeIdentifier(fromTable.table),
+                alias: fromTable.as,
+            }))
     }
 
-    const restrictedTables = Object.keys(tablesWithRules)
-
     for (const table of tables) {
-        if (restrictedTables.includes(table)) {
-            const allowedActions = tablesWithRules[table]
-            if (!allowedActions.includes(statementType)) {
+        const matchingPolicies = policies.filter((p) =>
+            tableNamesMatch(p.condition.left.table, table.name)
+        )
+        if (matchingPolicies.length > 0) {
+            const allowedActions = matchingPolicies.map((p) => p.action)
+            if (
+                !allowedActions.includes(statementType) &&
+                !allowedActions.includes('*')
+            ) {
                 throw new Error(
-                    `Unauthorized access: No matching rules for ${statementType} on restricted table ${table}`
+                    `Unauthorized access: No matching rules for ${statementType} on restricted table ${table.name}`
                 )
             }
         }
     }
 
+    const hasMultipleTables = tables.length > 1
     policies
         .filter(
             (policy) => policy.action === statementType || policy.action === '*'
         )
         .forEach(({ action, condition }) => {
             const targetTable = normalizeIdentifier(condition.left.table)
-            const isTargetTable = tables.includes(targetTable)
+            const matchedTable = tables.find((t) =>
+                tableNamesMatch(targetTable, t.name)
+            )
 
-            if (!isTargetTable) return
+            if (!matchedTable) return
+
+            const conditionToApply = {
+                ...condition,
+                left: {
+                    ...condition.left,
+                    table: hasMultipleTables
+                        ? matchedTable.alias || matchedTable.name
+                        : null,
+                },
+            }
 
             if (action !== 'INSERT') {
                 // Add condition to WHERE with parentheses
@@ -308,15 +326,12 @@ function applyRLSToAst(ast: any): void {
                             parentheses: true,
                         },
                         right: {
-                            ...condition,
+                            ...conditionToApply,
                             parentheses: true,
                         },
                     }
                 } else {
-                    ast.where = {
-                        ...condition,
-                        parentheses: true,
-                    }
+                    ast.where = conditionToApply
                 }
             } else {
                 // For INSERT, enforce column values
@@ -349,8 +364,11 @@ function applyRLSToAst(ast: any): void {
         })
 
     ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
-            applyRLSToAst(fromItem.expr)
+        const subAst =
+            fromItem.expr?.ast ||
+            (fromItem.expr?.type === 'select' ? fromItem.expr : null)
+        if (subAst) {
+            applyRLSToAst(subAst)
         }
 
         // Handle both single join and array of joins
@@ -359,8 +377,11 @@ function applyRLSToAst(ast: any): void {
                 ? fromItem.join
                 : [fromItem]
             joins.forEach((joinItem: any) => {
-                if (joinItem.expr && joinItem.expr.type === 'select') {
-                    applyRLSToAst(joinItem.expr)
+                const joinSubAst =
+                    joinItem.expr?.ast ||
+                    (joinItem.expr?.type === 'select' ? joinItem.expr : null)
+                if (joinSubAst) {
+                    applyRLSToAst(joinSubAst)
                 }
             })
         }
@@ -371,8 +392,11 @@ function applyRLSToAst(ast: any): void {
     }
 
     ast.columns?.forEach((column: any) => {
-        if (column.expr && column.expr.type === 'select') {
-            applyRLSToAst(column.expr)
+        const colSubAst =
+            column.expr?.ast ||
+            (column.expr?.type === 'select' ? column.expr : null)
+        if (colSubAst) {
+            applyRLSToAst(colSubAst)
         }
     })
 }
@@ -381,6 +405,9 @@ function traverseWhere(node: any): void {
     if (!node) return
     if (node.type === 'select') {
         applyRLSToAst(node)
+    }
+    if (node.ast?.type === 'select') {
+        applyRLSToAst(node.ast)
     }
     if (node.left) traverseWhere(node.left)
     if (node.right) traverseWhere(node.right)
