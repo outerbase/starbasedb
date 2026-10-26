@@ -1,13 +1,17 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { dumpDatabaseRoute } from './dump'
+import { dumpDatabaseRoute, formatDumpTimestamp } from './dump'
 import { executeOperation } from '.'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
-vi.mock('.', () => ({
-    executeOperation: vi.fn(),
-}))
+vi.mock('.', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('.')>()
+    return {
+        ...actual,
+        executeOperation: vi.fn(),
+    }
+})
 
 vi.mock('../utils', () => ({
     createResponse: vi.fn(
@@ -78,6 +82,50 @@ describe('Database Dump Module', () => {
         )
         expect(dumpText).toContain('INSERT INTO orders VALUES (1, 99.99);')
         expect(dumpText).toContain('INSERT INTO orders VALUES (2, 49.5);')
+    })
+
+    it('should paginate large tables in bounded batches with breathing intervals and optional R2 + callback', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'events' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE events (id INTEGER, label TEXT);' },
+            ])
+            // Page 1 (full batch of 2)
+            .mockResolvedValueOnce([
+                { id: 1, label: 'e1' },
+                { id: 2, label: 'e2' },
+            ])
+            // Page 2 (full batch of 2)
+            .mockResolvedValueOnce([
+                { id: 3, label: 'e3' },
+                { id: 4, label: 'e4' },
+            ])
+            // Page 3 (partial batch of 1 -> end of table)
+            .mockResolvedValueOnce([{ id: 5, label: null }])
+
+        const r2Put = vi.fn().mockResolvedValue(undefined)
+        const fixedDate = new Date('2024-01-01T17:00:00Z')
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, {
+            batchSize: 2,
+            breathingIntervalMs: 1,
+            maxActiveWindowMs: 1,
+            r2Bucket: { put: r2Put },
+            now: fixedDate,
+        })
+
+        const dumpText = await response.text()
+        expect(dumpText).toContain("INSERT INTO events VALUES (1, 'e1');")
+        expect(dumpText).toContain("INSERT INTO events VALUES (4, 'e4');")
+        expect(dumpText).toContain('INSERT INTO events VALUES (5, NULL);')
+        expect(formatDumpTimestamp(fixedDate)).toBe('dump_20240101-170000.sql')
+        expect(r2Put).toHaveBeenCalledWith(
+            'dump_20240101-170000.sql',
+            expect.any(Blob),
+            expect.objectContaining({
+                httpMetadata: { contentType: 'application/x-sqlite3' },
+            })
+        )
     })
 
     it('should handle empty databases (no tables)', async () => {
