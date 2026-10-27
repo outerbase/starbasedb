@@ -1,34 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { StarbaseDB } from './handler'
 import type { DataSource } from './types'
-import { Hono } from 'hono'
 import { executeQuery, executeTransaction } from './operation'
-import { LiteREST } from './literest'
-import { createResponse } from './utils'
 import { corsPreflight } from './cors'
-import { StarbasePluginRegistry } from './plugin'
+import { StarbasePlugin } from './plugin'
 
 vi.mock('./cors', () => ({
     corsPreflight: vi.fn().mockReturnValue(new Response(null, { status: 204 })),
+    corsHeaders: { 'Access-Control-Allow-Origin': '*' },
 }))
 
 const mockExecutionContext = {
     waitUntil: vi.fn(),
 } as unknown as ExecutionContext
-
-vi.mock('hono', () => {
-    return {
-        Hono: vi.fn().mockImplementation(() => ({
-            use: vi.fn(),
-            post: vi.fn(),
-            get: vi.fn(),
-            all: vi.fn(),
-            fetch: vi.fn().mockResolvedValue(new Response('mock-response')),
-            notFound: vi.fn(),
-            onError: vi.fn(),
-        })),
-    }
-})
 
 vi.mock('./operation', () => ({
     executeQuery: vi.fn().mockResolvedValue('mock-query-result'),
@@ -43,23 +27,49 @@ vi.mock('./literest', () => ({
     })),
 }))
 
-vi.mock('./plugin', () => ({
-    StarbasePluginRegistry: vi.fn().mockImplementation(() => ({
-        init: vi.fn(),
-    })),
+vi.mock('./export/dump', () => ({
+    dumpDatabaseRoute: vi
+        .fn()
+        .mockResolvedValue(new Response('mock-dump-export')),
 }))
-
-vi.mock('./utils', () => ({
-    createResponse: vi.fn((result, error, status) => ({
-        result,
-        error,
-        status,
-    })),
+vi.mock('./export/json', () => ({
+    exportTableToJsonRoute: vi
+        .fn()
+        .mockResolvedValue(new Response('mock-json-export')),
+}))
+vi.mock('./export/csv', () => ({
+    exportTableToCsvRoute: vi
+        .fn()
+        .mockResolvedValue(new Response('mock-csv-export')),
+}))
+vi.mock('./import/dump', () => ({
+    importDumpRoute: vi
+        .fn()
+        .mockResolvedValue(new Response('mock-dump-import')),
+}))
+vi.mock('./import/json', () => ({
+    importTableFromJsonRoute: vi
+        .fn()
+        .mockResolvedValue(new Response('mock-json-import')),
+}))
+vi.mock('./import/csv', () => ({
+    importTableFromCsvRoute: vi
+        .fn()
+        .mockResolvedValue(new Response('mock-csv-import')),
 }))
 
 let instance: StarbaseDB
 let mockDataSource: DataSource
 let mockConfig: any
+
+class PublicWidgetPlugin extends StarbasePlugin {
+    constructor() {
+        super('public-widget', { requiresAuth: false }, '/widget/:id/*')
+    }
+    async register(app: any) {
+        app.get('/widget/:id/*', (c: any) => c.text('widget-ok'))
+    }
+}
 
 beforeEach(() => {
     mockConfig = {
@@ -84,6 +94,7 @@ beforeEach(() => {
     instance = new StarbaseDB({
         dataSource: mockDataSource,
         config: mockConfig,
+        plugins: [new PublicWidgetPlugin()],
     })
 
     vi.clearAllMocks()
@@ -96,13 +107,24 @@ describe('StarbaseDB Initialization', () => {
         expect(instance['config']).toBe(mockConfig)
     })
 
+    it('should throw if source is external without external config', () => {
+        expect(
+            () =>
+                new StarbaseDB({
+                    dataSource: { source: 'external' } as any,
+                    config: mockConfig,
+                })
+        ).toThrow('No external data sources available.')
+    })
+
     it('should get feature flag correctly', () => {
         expect(instance['getFeature']('rest')).toBe(true)
         expect(instance['getFeature']('export')).toBe(true)
+        expect(instance['getFeature']('allowlist', false)).toBe(false)
     })
 })
 
-describe('StarbaseDB Middleware & Request Handling', () => {
+describe('StarbaseDB Middleware, PreAuth & Routes', () => {
     it('should correctly handle CORS preflight', async () => {
         const request = new Request('https://example.com', {
             method: 'OPTIONS',
@@ -113,12 +135,147 @@ describe('StarbaseDB Middleware & Request Handling', () => {
         expect(response.status).toBe(204)
     })
 
-    it('should fetch using Hono app', async () => {
-        const request = new Request('https://example.com/api/test')
-        const response = await instance.handle(request, mockExecutionContext)
+    it('should serve authless plugin routes in handlePreAuth and return undefined for protected routes', async () => {
+        const publicReq = new Request('https://example.com/widget/42/view')
+        const preAuthRes = await instance.handlePreAuth(
+            publicReq,
+            mockExecutionContext
+        )
+        expect(preAuthRes).toBeDefined()
+        expect(await preAuthRes!.text()).toBe('widget-ok')
 
-        expect(instance['app'].fetch).toHaveBeenCalledWith(request)
-        expect(response).toBeDefined()
+        const privateReq = new Request('https://example.com/query')
+        const noMatchRes = await instance.handlePreAuth(
+            privateReq,
+            mockExecutionContext
+        )
+        expect(noMatchRes).toBeUndefined()
+    })
+
+    it('should handle registered Hono routes (/query, /query/raw, /status/*, /rest/*, /export/*, /import/*, /api/*, 404)', async () => {
+        // /query and /query/raw
+        const qRes = await instance.handle(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sql: 'SELECT 1' }),
+            }),
+            mockExecutionContext
+        )
+        expect(qRes.status).toBe(200)
+
+        const qRawRes = await instance.handle(
+            new Request('https://example.com/query/raw', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sql: 'SELECT 1' }),
+            }),
+            mockExecutionContext
+        )
+        expect(qRawRes.status).toBe(200)
+
+        // /status/database and /status/trace
+        const statusDbRes = await instance.handle(
+            new Request('https://example.com/status/database'),
+            mockExecutionContext
+        )
+        expect(statusDbRes.status).toBe(200)
+
+        const fetchSpy = vi
+            .spyOn(global, 'fetch')
+            .mockResolvedValueOnce(new Response('fl=1') as any)
+        const traceRes = await instance.handle(
+            new Request('https://example.com/status/trace'),
+            mockExecutionContext
+        )
+        expect(traceRes.status).toBe(200)
+        fetchSpy.mockRestore()
+
+        // /rest/*
+        const restRes = await instance.handle(
+            new Request('https://example.com/rest/users'),
+            mockExecutionContext
+        )
+        expect(await restRes.text()).toBe('mock-rest-response')
+
+        // /export/*
+        expect(
+            await (
+                await instance.handle(
+                    new Request('https://example.com/export/dump'),
+                    mockExecutionContext
+                )
+            ).text()
+        ).toBe('mock-dump-export')
+        expect(
+            await (
+                await instance.handle(
+                    new Request('https://example.com/export/json/users'),
+                    mockExecutionContext
+                )
+            ).text()
+        ).toBe('mock-json-export')
+        expect(
+            await (
+                await instance.handle(
+                    new Request('https://example.com/export/csv/users'),
+                    mockExecutionContext
+                )
+            ).text()
+        ).toBe('mock-csv-export')
+
+        // /import/*
+        expect(
+            await (
+                await instance.handle(
+                    new Request('https://example.com/import/dump', {
+                        method: 'POST',
+                    }),
+                    mockExecutionContext
+                )
+            ).text()
+        ).toBe('mock-dump-import')
+        expect(
+            await (
+                await instance.handle(
+                    new Request('https://example.com/import/json/users', {
+                        method: 'POST',
+                    }),
+                    mockExecutionContext
+                )
+            ).text()
+        ).toBe('mock-json-import')
+        expect(
+            await (
+                await instance.handle(
+                    new Request('https://example.com/import/csv/users', {
+                        method: 'POST',
+                    }),
+                    mockExecutionContext
+                )
+            ).text()
+        ).toBe('mock-csv-import')
+
+        // /api/* and 404
+        const apiRes = await instance.handle(
+            new Request('https://example.com/api/your/path/here'),
+            mockExecutionContext
+        )
+        expect(apiRes.status).toBe(200)
+
+        const notFoundRes = await instance.handle(
+            new Request('https://example.com/non-existent-route'),
+            mockExecutionContext
+        )
+        expect(notFoundRes.status).toBe(404)
+
+        // isInternalSource rejection when source !== 'internal'
+        mockDataSource.source = 'hyperdrive'
+        const extExportRes = await instance.handle(
+            new Request('https://example.com/export/dump'),
+            mockExecutionContext
+        )
+        expect(extExportRes.status).toBe(400)
     })
 })
 
@@ -142,19 +299,39 @@ describe('StarbaseDB Query Execution', () => {
         expect(response.status).toBe(200)
     })
 
-    it('should return 400 if SQL query is invalid', async () => {
-        const request = new Request('https://example.com/query', {
-            method: 'POST',
-            body: JSON.stringify({ sql: '' }),
-            headers: { 'Content-Type': 'application/json' },
-        })
+    it('should return 400 if Content-Type is not application/json, SQL is invalid, or params are invalid', async () => {
+        const badTypeRes = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: 'SELECT 1',
+            }),
+            false
+        )
+        expect(badTypeRes.status).toBe(400)
 
-        const response = await instance.queryRoute(request, false)
+        const badSqlRes = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                body: JSON.stringify({ sql: '' }),
+                headers: { 'Content-Type': 'application/json' },
+            }),
+            false
+        )
+        expect(badSqlRes.status).toBe(400)
 
-        expect(response.status).toBe(400)
+        const badParamsRes = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                body: JSON.stringify({ sql: 'SELECT 1', params: 'invalid' }),
+                headers: { 'Content-Type': 'application/json' },
+            }),
+            false
+        )
+        expect(badParamsRes.status).toBe(400)
     })
 
-    it('should execute a SQL transaction', async () => {
+    it('should execute a SQL transaction and validate transaction items', async () => {
         const request = new Request('https://example.com/query', {
             method: 'POST',
             body: JSON.stringify({
@@ -167,23 +344,63 @@ describe('StarbaseDB Query Execution', () => {
 
         expect(executeTransaction).toHaveBeenCalled()
         expect(response.status).toBe(200)
+
+        const consoleErrorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        const badTxSqlRes = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                body: JSON.stringify({
+                    transaction: [{ sql: '' }],
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            }),
+            false
+        )
+        expect(badTxSqlRes.status).toBe(500)
+
+        const badTxParamsRes = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                body: JSON.stringify({
+                    transaction: [{ sql: 'SELECT 1', params: 'bad' }],
+                }),
+                headers: { 'Content-Type': 'application/json' },
+            }),
+            false
+        )
+        expect(badTxParamsRes.status).toBe(500)
+        consoleErrorSpy.mockRestore()
     })
 })
 
-describe('StarbaseDB Cache Expiry', () => {
-    it('should remove expired cache entries', async () => {
+describe('StarbaseDB Cache Expiry & Error Handling', () => {
+    it('should remove expired cache entries and catch errors', async () => {
         await instance['expireCache']()
 
         expect(mockDataSource.rpc.executeQuery).toHaveBeenCalledWith({
             sql: 'DELETE FROM tmp_cache WHERE timestamp + (ttl * 1000) < ?',
             params: [expect.any(Number)],
         })
-    })
-})
 
-describe('StarbaseDB Error Handling', () => {
+        const consoleErrorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        vi.mocked(mockDataSource.rpc.executeQuery).mockImplementationOnce(
+            () => {
+                throw new Error('Cache cleanup failed')
+            }
+        )
+        await instance['expireCache']()
+        expect(consoleErrorSpy).toHaveBeenCalled()
+        consoleErrorSpy.mockRestore()
+    })
+
     it('should return 500 if query execution fails', async () => {
-        vi.mocked(executeQuery).mockRejectedValue(new Error('Database error'))
+        vi.mocked(executeQuery).mockRejectedValueOnce(
+            new Error('Database error')
+        )
 
         const request = new Request('https://example.com/query', {
             method: 'POST',
@@ -198,5 +415,6 @@ describe('StarbaseDB Error Handling', () => {
         const response = await instance.queryRoute(request, false)
 
         expect(response.status).toBe(500)
+        consoleErrorSpy.mockRestore()
     })
 })
