@@ -1,0 +1,16 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_data_sync_metadata": {},
+            "tmp_data_sync_errors": {}
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
