@@ -1,13 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { dumpDatabaseRoute } from './dump'
+import {
+    dumpDatabaseRoute,
+    formatDumpTimestamp,
+    formatSqlValue,
+} from './dump'
 import { executeOperation } from '.'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
-vi.mock('.', () => ({
-    executeOperation: vi.fn(),
-}))
+vi.mock('.', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('.')>()
+    return {
+        ...actual,
+        executeOperation: vi.fn(),
+    }
+})
 
 vi.mock('../utils', () => ({
     createResponse: vi.fn(
@@ -43,14 +51,14 @@ describe('Database Dump Module', () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }, { name: 'orders' }])
             .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT)' },
             ])
             .mockResolvedValueOnce([
                 { id: 1, name: 'Alice' },
                 { id: 2, name: 'Bob' },
             ])
             .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE orders (id INTEGER, total REAL);' },
+                { sql: 'CREATE TABLE orders (id INTEGER, total REAL)' },
             ])
             .mockResolvedValueOnce([
                 { id: 1, total: 99.99 },
@@ -97,7 +105,7 @@ describe('Database Dump Module', () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }])
             .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, name TEXT);' },
+                { sql: 'CREATE TABLE users (id INTEGER, name TEXT)' },
             ])
             .mockResolvedValueOnce([])
 
@@ -115,7 +123,7 @@ describe('Database Dump Module', () => {
         vi.mocked(executeOperation)
             .mockResolvedValueOnce([{ name: 'users' }])
             .mockResolvedValueOnce([
-                { sql: 'CREATE TABLE users (id INTEGER, bio TEXT);' },
+                { sql: 'CREATE TABLE users (id INTEGER, bio TEXT)' },
             ])
             .mockResolvedValueOnce([{ id: 1, bio: "Alice's adventure" }])
 
@@ -126,6 +134,118 @@ describe('Database Dump Module', () => {
         expect(dumpText).toContain(
             "INSERT INTO users VALUES (1, 'Alice''s adventure');"
         )
+    })
+
+    it('should stream large tables across multiple paginated batches', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'events' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE events (id INTEGER, type TEXT)' },
+            ])
+            // Batch 1 (full batch of 2)
+            .mockResolvedValueOnce([
+                { id: 1, type: 'click' },
+                { id: 2, type: 'view' },
+            ])
+            // Batch 2 (full batch of 2)
+            .mockResolvedValueOnce([
+                { id: 3, type: 'scroll' },
+                { id: 4, type: 'submit' },
+            ])
+            // Batch 3 (partial batch of 1 -> end of table)
+            .mockResolvedValueOnce([{ id: 5, type: 'logout' }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, {
+            batchSize: 2,
+            breathingIntervalMs: 1,
+            workSliceMs: 0,
+        })
+
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+        const chunks: string[] = []
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            chunks.push(decoder.decode(value, { stream: true }))
+        }
+
+        expect(chunks.length).toBeGreaterThanOrEqual(5)
+        const fullDump = chunks.join('')
+        expect(fullDump).toContain("INSERT INTO events VALUES (1, 'click');")
+        expect(fullDump).toContain("INSERT INTO events VALUES (3, 'scroll');")
+        expect(fullDump).toContain("INSERT INTO events VALUES (5, 'logout');")
+
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            3,
+            [{ sql: 'SELECT * FROM events LIMIT 2 OFFSET 0;' }],
+            mockDataSource,
+            mockConfig
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            4,
+            [{ sql: 'SELECT * FROM events LIMIT 2 OFFSET 2;' }],
+            mockDataSource,
+            mockConfig
+        )
+        expect(executeOperation).toHaveBeenNthCalledWith(
+            5,
+            [{ sql: 'SELECT * FROM events LIMIT 2 OFFSET 4;' }],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
+    it('should quote table names with periods and support R2 upload and callback notifications', async () => {
+        const mockR2Put = vi.fn().mockResolvedValue(undefined)
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response('ok'))
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users.table' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE "users.table" (id INTEGER, note TEXT)' },
+            ])
+            .mockResolvedValueOnce([{ id: 1, note: null }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, {
+            r2Bucket: { put: mockR2Put } as any,
+            r2Key: 'dump_20250101-120000.sql',
+            callbackUrl: 'https://example.com/webhook',
+        })
+
+        const dumpText = await response.text()
+        expect(dumpText).toContain('INSERT INTO "users.table" VALUES (1, NULL);')
+        expect(mockR2Put).toHaveBeenCalledWith(
+            'dump_20250101-120000.sql',
+            dumpText,
+            {
+                httpMetadata: { contentType: 'application/x-sqlite3' },
+            }
+        )
+        expect(fetchSpy).toHaveBeenCalledWith(
+            'https://example.com/webhook',
+            expect.objectContaining({
+                method: 'POST',
+            })
+        )
+        fetchSpy.mockRestore()
+    })
+
+    it('should format SQL values and dump timestamps accurately', () => {
+        expect(formatSqlValue(null)).toBe('NULL')
+        expect(formatSqlValue(undefined)).toBe('NULL')
+        expect(formatSqlValue(true)).toBe('1')
+        expect(formatSqlValue(false)).toBe('0')
+        expect(formatSqlValue(new Uint8Array([0xde, 0xad]))).toBe("X'dead'")
+        expect(formatSqlValue(new Uint8Array([0xbe, 0xef]).buffer)).toBe(
+            "X'beef'"
+        )
+        expect(formatSqlValue({ a: "b'c" })).toBe('\'{"a":"b\'\'c"}\'')
+        expect(
+            formatDumpTimestamp(new Date(Date.UTC(2024, 0, 1, 17, 0, 0)))
+        ).toBe('20240101-170000')
     })
 
     it('should return a 500 response when an error occurs', async () => {
@@ -141,5 +261,6 @@ describe('Database Dump Module', () => {
         expect(response.status).toBe(500)
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to create database dump')
+        consoleErrorMock.mockRestore()
     })
 })

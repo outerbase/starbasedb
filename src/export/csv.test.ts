@@ -1,14 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { exportTableToCsvRoute } from './csv'
-import { getTableData, createExportResponse } from './index'
+import * as exportIndex from './index'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
 
-vi.mock('./index', () => ({
-    getTableData: vi.fn(),
-    createExportResponse: vi.fn(),
-}))
+vi.mock('./index', async (importOriginal) => {
+    const actual = await importOriginal<typeof import('./index')>()
+    return {
+        ...actual,
+        executeOperation: vi.fn(),
+        getTableData: vi.fn(),
+        createExportResponse: vi.fn((data, fileName, contentType) =>
+            actual.createExportResponse(data, fileName, contentType)
+        ),
+    }
+})
 
 vi.mock('../utils', () => ({
     createResponse: vi.fn(
@@ -42,17 +49,13 @@ beforeEach(() => {
 })
 
 describe('CSV Export Module', () => {
-    it('should return a CSV file when table data exists', async () => {
-        vi.mocked(getTableData).mockResolvedValue([
-            { id: 1, name: 'Alice', age: 30 },
-            { id: 2, name: 'Bob', age: 25 },
-        ])
-
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-csv-content', {
-                headers: { 'Content-Type': 'text/csv' },
-            })
-        )
+    it('should return a streamed CSV file when table data exists', async () => {
+        vi.mocked(exportIndex.executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { id: 1, name: 'Alice', age: 30 },
+                { id: 2, name: 'Bob', age: 25 },
+            ])
 
         const response = await exportTableToCsvRoute(
             'users',
@@ -60,21 +63,68 @@ describe('CSV Export Module', () => {
             mockConfig
         )
 
-        expect(getTableData).toHaveBeenCalledWith(
+        expect(response.headers.get('Content-Type')).toBe('text/csv')
+        expect(response.headers.get('Content-Disposition')).toBe(
+            'attachment; filename="users_export.csv"'
+        )
+        expect(await response.text()).toBe('id,name,age\n1,Alice,30\n2,Bob,25\n')
+    })
+
+    it('should stream large tables across multiple paginated CSV batches', async () => {
+        vi.mocked(exportIndex.executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([
+                { id: 1, name: 'Alice', age: 30 },
+                { id: 2, name: 'Bob', age: 25 },
+            ])
+            .mockResolvedValueOnce([
+                { id: 3, name: 'Charlie', age: 35 },
+                { id: 4, name: 'Diana', age: null },
+            ])
+            .mockResolvedValueOnce([{ id: 5, name: 'Eve', age: 28 }])
+
+        const response = await exportTableToCsvRoute(
             'users',
+            mockDataSource,
+            mockConfig,
+            { batchSize: 2, breathingIntervalMs: 1 }
+        )
+
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+        const chunks: string[] = []
+        while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+            chunks.push(decoder.decode(value, { stream: true }))
+        }
+
+        expect(chunks).toHaveLength(3)
+        expect(chunks.join('')).toBe(
+            'id,name,age\n1,Alice,30\n2,Bob,25\n3,Charlie,35\n4,Diana,\n5,Eve,28\n'
+        )
+        expect(exportIndex.executeOperation).toHaveBeenNthCalledWith(
+            2,
+            [{ sql: 'SELECT * FROM users LIMIT 2 OFFSET 0;' }],
             mockDataSource,
             mockConfig
         )
-        expect(createExportResponse).toHaveBeenCalledWith(
-            'id,name,age\n1,Alice,30\n2,Bob,25\n',
-            'users_export.csv',
-            'text/csv'
+        expect(exportIndex.executeOperation).toHaveBeenNthCalledWith(
+            3,
+            [{ sql: 'SELECT * FROM users LIMIT 2 OFFSET 2;' }],
+            mockDataSource,
+            mockConfig
         )
-        expect(response.headers.get('Content-Type')).toBe('text/csv')
+        expect(exportIndex.executeOperation).toHaveBeenNthCalledWith(
+            4,
+            [{ sql: 'SELECT * FROM users LIMIT 2 OFFSET 4;' }],
+            mockDataSource,
+            mockConfig
+        )
     })
 
     it('should return 404 if table does not exist', async () => {
-        vi.mocked(getTableData).mockResolvedValue(null)
+        vi.mocked(exportIndex.executeOperation).mockResolvedValueOnce([])
 
         const response = await exportTableToCsvRoute(
             'non_existent_table',
@@ -82,11 +132,6 @@ describe('CSV Export Module', () => {
             mockConfig
         )
 
-        expect(getTableData).toHaveBeenCalledWith(
-            'non_existent_table',
-            mockDataSource,
-            mockConfig
-        )
         expect(response.status).toBe(404)
 
         const jsonResponse: { error: string } = await response.json()
@@ -95,14 +140,10 @@ describe('CSV Export Module', () => {
         )
     })
 
-    it('should handle empty table (return only headers)', async () => {
-        vi.mocked(getTableData).mockResolvedValue([])
-
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-csv-content', {
-                headers: { 'Content-Type': 'text/csv' },
-            })
-        )
+    it('should handle empty table', async () => {
+        vi.mocked(exportIndex.executeOperation)
+            .mockResolvedValueOnce([{ name: 'empty_table' }])
+            .mockResolvedValueOnce([])
 
         const response = await exportTableToCsvRoute(
             'empty_table',
@@ -110,29 +151,16 @@ describe('CSV Export Module', () => {
             mockConfig
         )
 
-        expect(getTableData).toHaveBeenCalledWith(
-            'empty_table',
-            mockDataSource,
-            mockConfig
-        )
-        expect(createExportResponse).toHaveBeenCalledWith(
-            '',
-            'empty_table_export.csv',
-            'text/csv'
-        )
         expect(response.headers.get('Content-Type')).toBe('text/csv')
+        expect(await response.text()).toBe('')
     })
 
     it('should escape commas and quotes in CSV values', async () => {
-        vi.mocked(getTableData).mockResolvedValue([
-            { id: 1, name: 'Sahithi, is', bio: 'my forever "penguin"' },
-        ])
-
-        vi.mocked(createExportResponse).mockReturnValue(
-            new Response('mocked-csv-content', {
-                headers: { 'Content-Type': 'text/csv' },
-            })
-        )
+        vi.mocked(exportIndex.executeOperation)
+            .mockResolvedValueOnce([{ name: 'special_chars' }])
+            .mockResolvedValueOnce([
+                { id: 1, name: 'Sahithi, is', bio: 'my forever "penguin"' },
+            ])
 
         const response = await exportTableToCsvRoute(
             'special_chars',
@@ -140,19 +168,19 @@ describe('CSV Export Module', () => {
             mockConfig
         )
 
-        expect(createExportResponse).toHaveBeenCalledWith(
-            'id,name,bio\n1,"Sahithi, is","my forever ""penguin"""\n',
-            'special_chars_export.csv',
-            'text/csv'
-        )
         expect(response.headers.get('Content-Type')).toBe('text/csv')
+        expect(await response.text()).toBe(
+            'id,name,bio\n1,"Sahithi, is","my forever ""penguin"""\n'
+        )
     })
 
     it('should return 500 on an unexpected error', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
             .mockImplementation(() => {})
-        vi.mocked(getTableData).mockRejectedValue(new Error('Database Error'))
+        vi.mocked(exportIndex.executeOperation).mockRejectedValue(
+            new Error('Database Error')
+        )
 
         const response = await exportTableToCsvRoute(
             'users',
@@ -163,5 +191,6 @@ describe('CSV Export Module', () => {
         expect(response.status).toBe(500)
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to export table to CSV')
+        consoleErrorMock.mockRestore()
     })
 })
