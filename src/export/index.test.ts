@@ -1,5 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { executeOperation, getTableData, createExportResponse } from './index'
+import {
+    executeOperation,
+    getTableData,
+    createExportResponse,
+    quoteIdentifier,
+    EXPORT_BATCH_SIZE,
+} from './index'
 import { executeTransaction } from '../operation'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
@@ -28,6 +34,20 @@ beforeEach(() => {
 })
 
 describe('Database Operations Module', () => {
+    describe('quoteIdentifier', () => {
+        it('should leave simple alphanumeric identifiers unquoted', () => {
+            expect(quoteIdentifier('users')).toBe('users')
+            expect(quoteIdentifier('tmp_cache_1')).toBe('tmp_cache_1')
+        })
+
+        it('should quote identifiers containing periods, spaces, or quotes', () => {
+            expect(quoteIdentifier('users.table')).toBe('"users.table"')
+            expect(quoteIdentifier('my "special" table')).toBe(
+                '"my ""special"" table"'
+            )
+        })
+    })
+
     describe('executeOperation', () => {
         it('should return the first result when transaction succeeds', async () => {
             vi.mocked(executeTransaction).mockResolvedValue([
@@ -83,6 +103,54 @@ describe('Database Operations Module', () => {
             ])
         })
 
+        it('should paginate across multiple batches when table exceeds batchSize', async () => {
+            vi.mocked(executeTransaction)
+                .mockResolvedValueOnce([{ name: 'users' }])
+                .mockResolvedValueOnce([
+                    { id: 1, name: 'Alice' },
+                    { id: 2, name: 'Bob' },
+                ])
+                .mockResolvedValueOnce([
+                    { id: 3, name: 'Charlie' },
+                    { id: 4, name: 'Diana' },
+                ])
+                .mockResolvedValueOnce([{ id: 5, name: 'Eve' }])
+
+            const result = await getTableData(
+                'users',
+                mockDataSource,
+                mockConfig,
+                2
+            )
+
+            expect(result).toEqual([
+                { id: 1, name: 'Alice' },
+                { id: 2, name: 'Bob' },
+                { id: 3, name: 'Charlie' },
+                { id: 4, name: 'Diana' },
+                { id: 5, name: 'Eve' },
+            ])
+            expect(executeTransaction).toHaveBeenCalledTimes(4)
+            expect(executeTransaction).toHaveBeenNthCalledWith(2, {
+                queries: [{ sql: 'SELECT * FROM users LIMIT 2 OFFSET 0;' }],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
+            expect(executeTransaction).toHaveBeenNthCalledWith(3, {
+                queries: [{ sql: 'SELECT * FROM users LIMIT 2 OFFSET 2;' }],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
+            expect(executeTransaction).toHaveBeenNthCalledWith(4, {
+                queries: [{ sql: 'SELECT * FROM users LIMIT 2 OFFSET 4;' }],
+                isRaw: false,
+                dataSource: mockDataSource,
+                config: mockConfig,
+            })
+        })
+
         it('should return null if table does not exist', async () => {
             vi.mocked(executeTransaction).mockResolvedValueOnce([])
 
@@ -106,6 +174,7 @@ describe('Database Operations Module', () => {
             await expect(
                 getTableData('users', mockDataSource, mockConfig)
             ).rejects.toThrow('Database Error')
+            consoleErrorMock.mockRestore()
         })
     })
 
@@ -153,6 +222,30 @@ describe('Database Operations Module', () => {
             expect(response.headers.get('Content-Disposition')).toBe(
                 'attachment; filename="notes.txt"'
             )
+        })
+
+        it('should stream a ReadableStream directly without buffering into a Blob', async () => {
+            const encoder = new TextEncoder()
+            const stream = new ReadableStream<Uint8Array>({
+                start(controller) {
+                    controller.enqueue(encoder.encode('chunk1-'))
+                    controller.enqueue(encoder.encode('chunk2'))
+                    controller.close()
+                },
+            })
+
+            const response = createExportResponse(
+                stream,
+                'streamed.csv',
+                'text/csv'
+            )
+
+            expect(response.headers.get('Content-Type')).toBe('text/csv')
+            expect(response.headers.get('Content-Disposition')).toBe(
+                'attachment; filename="streamed.csv"'
+            )
+            expect(await response.text()).toBe('chunk1-chunk2')
+            expect(EXPORT_BATCH_SIZE).toBe(1000)
         })
     })
 })
