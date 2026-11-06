@@ -3,6 +3,33 @@ import { StarbaseDBConfiguration } from '../handler'
 import { DataSource } from '../types'
 import { createResponse } from '../utils'
 
+const ROW_BATCH_SIZE = 1000
+
+async function* fetchRowsBatches(
+    tableName: string,
+    dataSource: DataSource,
+    config: StarbaseDBConfiguration
+): AsyncGenerator<Record<string, any>[]> {
+    let offset = 0
+    while (true) {
+        const batch = await executeOperation(
+            [{ sql: `SELECT * FROM ${tableName} LIMIT ${ROW_BATCH_SIZE} OFFSET ${offset};` }],
+            dataSource,
+            config
+        )
+        if (!Array.isArray(batch) || batch.length === 0) break
+        yield batch
+        if (batch.length < ROW_BATCH_SIZE) break
+        offset += ROW_BATCH_SIZE
+    }
+}
+
+function formatSqlValue(value: any): string {
+    if (value === null || value === undefined) return 'NULL'
+    if (typeof value === 'string') return `'${value.replace(/'/g, "''")}'`
+    return String(value)
+}
+
 export async function dumpDatabaseRoute(
     dataSource: DataSource,
     config: StarbaseDBConfiguration
@@ -16,54 +43,58 @@ export async function dumpDatabaseRoute(
         )
 
         const tables = tablesResult.map((row: any) => row.name)
-        let dumpContent = 'SQLite format 3\0' // SQLite file header
+        const encoder = new TextEncoder()
 
-        // Iterate through all tables
-        for (const table of tables) {
-            // Get table schema
-            const schemaResult = await executeOperation(
-                [
-                    {
-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
-                    },
-                ],
-                dataSource,
-                config
-            )
+        const stream = new ReadableStream<Uint8Array>({
+            async start(controller) {
+                try {
+                    controller.enqueue(encoder.encode('SQLite format 3\0'))
 
-            if (schemaResult.length) {
-                const schema = schemaResult[0].sql
-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
-            }
+                    for (const table of tables) {
+                        const schemaResult = await executeOperation(
+                            [
+                                {
+                                    sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
+                                },
+                            ],
+                            dataSource,
+                            config
+                        )
 
-            // Get table data
-            const dataResult = await executeOperation(
-                [{ sql: `SELECT * FROM ${table};` }],
-                dataSource,
-                config
-            )
+                        if (schemaResult.length && schemaResult[0].sql) {
+                            const schema = schemaResult[0].sql
+                            controller.enqueue(
+                                encoder.encode(`\n-- Table: ${table}\n${schema};\n\n`)
+                            )
+                        }
 
-            for (const row of dataResult) {
-                const values = Object.values(row).map((value) =>
-                    typeof value === 'string'
-                        ? `'${value.replace(/'/g, "''")}'`
-                        : value
-                )
-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
-            }
+                        for await (const batch of fetchRowsBatches(table, dataSource, config)) {
+                            let batchSql = ''
+                            for (const row of batch) {
+                                const values = Object.values(row).map(formatSqlValue)
+                                batchSql += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
+                            }
+                            if (batchSql) {
+                                controller.enqueue(encoder.encode(batchSql))
+                            }
+                        }
 
-            dumpContent += '\n'
-        }
+                        controller.enqueue(encoder.encode('\n'))
+                    }
 
-        // Create a Blob from the dump content
-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
+                    controller.close()
+                } catch (streamError) {
+                    controller.error(streamError)
+                }
+            },
+        })
 
         const headers = new Headers({
             'Content-Type': 'application/x-sqlite3',
             'Content-Disposition': 'attachment; filename="database_dump.sql"',
         })
 
-        return new Response(blob, { headers })
+        return new Response(stream, { headers })
     } catch (error: any) {
         console.error('Database Dump Error:', error)
         return createResponse(undefined, 'Failed to create database dump', 500)
