@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { LiteREST } from './index'
-import { createResponse } from '../utils'
 import { executeQuery, executeTransaction } from '../operation'
 import type { DataSource } from '../types'
 import type { StarbaseDBConfiguration } from '../handler'
@@ -20,16 +19,37 @@ vi.mock('../utils', () => ({
     ),
 }))
 
-vi.mocked(executeTransaction).mockImplementation(async ({ queries }) => {
-    return [{ id: 1, name: 'Alice' }]
-})
-
 let mockDataSource: DataSource
 let mockConfig: StarbaseDBConfiguration
 let liteRest: LiteREST
 
+async function dispatchRestRequest(
+    path: string,
+    init?: RequestInit
+): Promise<{ status: number; body: { result?: any; error?: string } }> {
+    const request = new Request(`http://localhost${path}`, init)
+    const response = await liteRest.handleRequest(request)
+    const body = (await response.json()) as { result?: any; error?: string }
+    return { status: response.status, body }
+}
+
+function mockPrimaryKeySchema(
+    columns: { name: string; pk: number }[] = [{ name: 'id', pk: 1 }]
+) {
+    vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
+        if (sql.includes('PRAGMA table_info(users)')) {
+            return columns
+        }
+        return []
+    })
+}
+
 beforeEach(() => {
     vi.clearAllMocks()
+
+    vi.mocked(executeTransaction).mockImplementation(async () => {
+        return [{ id: 1, name: 'Alice' }]
+    })
 
     mockDataSource = {
         source: 'external',
@@ -51,442 +71,277 @@ beforeEach(() => {
 })
 
 describe('LiteREST', () => {
-    describe('sanitizeIdentifier', () => {
-        it('should remove non-alphanumeric characters except underscores', () => {
-            // @ts-expect-error: Testing private method
+    describe('sanitizeIdentifier & sanitizeOperator', () => {
+        it('strips non-alphanumeric characters while preserving underscores', () => {
+            // @ts-expect-error: Testing private identifier sanitizer
             expect(liteRest.sanitizeIdentifier('table$name!')).toBe('tablename')
-            // @ts-expect-error
+            // @ts-expect-error: Testing private identifier sanitizer
             expect(liteRest.sanitizeIdentifier('valid_name123')).toBe(
                 'valid_name123'
             )
         })
-    })
 
-    describe('sanitizeOperator', () => {
-        it('should return valid SQL operator', () => {
-            // @ts-expect-error: Testing private method
+        it('maps filter operators to SQL comparison tokens', () => {
+            // @ts-expect-error: Testing private operator mapper
             expect(liteRest.sanitizeOperator('eq')).toBe('=')
-            // @ts-expect-error
+            // @ts-expect-error: Testing private operator mapper
             expect(liteRest.sanitizeOperator('gte')).toBe('>=')
-            // @ts-expect-error
+            // @ts-expect-error: Testing private operator mapper
             expect(liteRest.sanitizeOperator('invalid')).toBe('=')
         })
     })
 
-    describe('handleRequest', () => {
-        it('should return 405 for unsupported methods', async () => {
-            const request = new Request('http://localhost/rest/main/users', {
-                method: 'OPTIONS',
-            })
-            const response = await liteRest.handleRequest(request)
-            expect(response.status).toBe(405)
+    describe('handleRequest HTTP methods', () => {
+        it('rejects unsupported HTTP verbs with 405', async () => {
+            for (const method of ['OPTIONS', 'HEAD']) {
+                const { status, body } = await dispatchRestRequest(
+                    '/rest/main/users',
+                    { method }
+                )
+                expect(status).toBe(405)
+                expect(body.error).toBe('Method not allowed')
+            }
         })
 
-        it('should handle GET requests successfully', async () => {
-            vi.mocked(executeQuery).mockResolvedValue([
-                { id: 1, name: 'Alice' },
-            ])
-
-            const request = new Request('http://localhost/rest/main/users', {
+        it('executes GET and POST requests against the table resource', async () => {
+            mockPrimaryKeySchema()
+            const getRes = await dispatchRestRequest('/rest/main/users', {
                 method: 'GET',
             })
-            const response = await liteRest.handleRequest(request)
-            expect(response).toBeInstanceOf(Response)
-            expect(response.status).toBe(200)
-            const jsonResponse = (await response.json()) as { result: any }
-            expect(jsonResponse.result).toEqual([{ id: 1, name: 'Alice' }])
-        })
+            expect(getRes.status).toBe(200)
+            expect(getRes.body.result).toEqual([{ id: 1, name: 'Alice' }])
 
-        it('should return 500 for GET errors', async () => {
-            const consoleErrorMock = vi
-                .spyOn(console, 'error')
-                .mockImplementation(() => {})
-            vi.mocked(executeQuery).mockRejectedValue(new Error('DB Error'))
-
-            const request = new Request('http://localhost/rest/main/users', {
-                method: 'GET',
-            })
-            const response = await liteRest.handleRequest(request)
-
-            expect(response.status).toBe(500)
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe('DB Error')
-        })
-
-        it('should handle POST requests successfully', async () => {
             vi.mocked(executeTransaction).mockResolvedValue([
                 { id: 1, name: 'New User' },
             ])
-
-            const request = new Request('http://localhost/rest/main/users', {
+            const postRes = await dispatchRestRequest('/rest/main/users', {
                 method: 'POST',
                 body: JSON.stringify({ name: 'New User' }),
             })
-
-            const response = await liteRest.handleRequest(request)
-
-            expect(response.status).toBe(201)
-            const jsonResponse = (await response.json()) as {
-                result: { message: string; data: { name: string } }
-            }
-            expect(jsonResponse.result).toEqual({
+            expect(postRes.status).toBe(201)
+            expect(postRes.body.result).toEqual({
                 message: 'Resource created successfully',
                 data: { name: 'New User' },
             })
         })
 
-        it('should return 400 for invalid POST data', async () => {
-            const request = new Request('http://localhost/rest/main/users', {
-                method: 'POST',
-                body: JSON.stringify(null),
-                headers: { 'Content-Type': 'application/json' },
-            })
-            const response = await liteRest.handleRequest(request)
-
-            expect(response).toBeInstanceOf(Response)
-            expect(response.status).toBe(400)
-
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe('Invalid data format')
-        })
-
-        it('should return 500 for POST errors', async () => {
-            vi.mocked(executeTransaction).mockRejectedValue(
-                new Error('Insert failed')
-            )
-
-            const request = new Request('http://localhost/rest/main/users', {
-                method: 'POST',
-                body: JSON.stringify({ name: 'Error User' }),
-                headers: { 'Content-Type': 'application/json' },
-            })
-
-            const response = await liteRest.handleRequest(request)
-
-            expect(response).toBeInstanceOf(Response)
-            expect(response.status).toBe(500)
-
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe('Insert failed')
-        })
-
-        it('should handle PATCH requests successfully', async () => {
-            vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
-                if (sql.includes('PRAGMA table_info(users)')) {
-                    return [{ name: 'id', pk: 1 }]
-                }
-
-                return []
-            })
+        it('executes PATCH, PUT, and DELETE mutations with primary key lookup', async () => {
+            mockPrimaryKeySchema()
             vi.mocked(executeTransaction).mockResolvedValue([])
 
-            const request = new Request('http://localhost/rest/main/users/1', {
+            const patchRes = await dispatchRestRequest('/rest/main/users/1', {
                 method: 'PATCH',
                 body: JSON.stringify({ name: 'Updated Name' }),
                 headers: { 'Content-Type': 'application/json' },
             })
-
-            const response = await liteRest.handleRequest(request)
-            expect(response).toBeInstanceOf(Response)
-            expect(response.status).toBe(200)
-
-            const jsonResponse = (await response.json()) as {
-                result: { message: string; data: { name: string } }
-            }
-
-            expect(jsonResponse.result).toEqual({
-                message: 'Resource updated successfully',
-                data: { name: 'Updated Name' },
-            })
-        })
-
-        it('should return 400 for invalid PATCH data', async () => {
-            const request = new Request('http://localhost/rest/main/users/1', {
-                method: 'PATCH',
-                body: JSON.stringify(null),
-                headers: { 'Content-Type': 'application/json' },
-            })
-
-            const response = await liteRest.handleRequest(request)
-
-            expect(response.status).toBe(400)
-
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe('Invalid data format')
-        })
-
-        it('should return 400 for PATCH request missing composite PK values', async () => {
-            vi.mocked(executeQuery).mockResolvedValue([
-                { name: 'user_id', pk: 1 },
-                { name: 'group_id', pk: 1 },
-            ])
-
-            const request = new Request('http://localhost/rest/main/users', {
-                method: 'PATCH',
-                body: JSON.stringify({ user_id: 1, name: 'Updated' }),
-                headers: { 'Content-Type': 'application/json' },
-            })
-
-            const response = await liteRest.handleRequest(request)
-            expect(response.status).toBe(400)
-
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe(
-                "Missing primary key value for 'group_id'"
+            expect(patchRes.status).toBe(200)
+            expect(patchRes.body.result.message).toBe(
+                'Resource updated successfully'
             )
-        })
 
-        it('should handle PUT requests successfully', async () => {
-            vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
-                if (sql.includes('PRAGMA table_info(users)')) {
-                    return [{ name: 'id', pk: 1 }]
-                }
-
-                return []
-            })
-            vi.mocked(executeTransaction).mockResolvedValue([])
-
-            const request = new Request('http://localhost/rest/main/users/1', {
+            const putRes = await dispatchRestRequest('/rest/main/users/1', {
                 method: 'PUT',
                 body: JSON.stringify({ id: 1, name: 'Replaced User' }),
                 headers: { 'Content-Type': 'application/json' },
             })
+            expect(putRes.status).toBe(200)
+            expect(putRes.body.result.message).toBe(
+                'Resource replaced successfully'
+            )
 
-            const response = await liteRest.handleRequest(request)
-
-            expect(response).toBeInstanceOf(Response)
-            expect(response.status).toBe(200)
-
-            const jsonResponse = (await response.json()) as {
-                result: { message: string; data: { id: number; name: string } }
-            }
-
-            expect(jsonResponse.result).toEqual({
-                message: 'Resource replaced successfully',
-                data: { id: 1, name: 'Replaced User' },
+            const deleteRes = await dispatchRestRequest('/rest/main/users/1', {
+                method: 'DELETE',
             })
+            expect(deleteRes.status).toBe(200)
+            expect(deleteRes.body.result.message).toBe(
+                'Resource deleted successfully'
+            )
         })
 
-        it('should return 400 for missing PUT data', async () => {
-            const request = new Request('http://localhost/rest/main/users/1', {
-                method: 'PUT',
-                body: JSON.stringify(null),
-                headers: { 'Content-Type': 'application/json' },
-            })
+        it('validates payload structure and composite primary keys with 400 status', async () => {
+            mockPrimaryKeySchema()
 
-            const response = await liteRest.handleRequest(request)
-
-            expect(response.status).toBe(400)
-
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe('Invalid data format')
-        })
-
-        it('should return 405 for invalid HTTP methods', async () => {
-            const methods = ['HEAD']
-            for (const method of methods) {
-                const request = new Request(
-                    'http://localhost/rest/main/users',
+            for (const method of ['POST', 'PATCH', 'PUT']) {
+                const { status, body } = await dispatchRestRequest(
+                    '/rest/main/users/1',
                     {
                         method,
+                        body: JSON.stringify(null),
+                        headers: { 'Content-Type': 'application/json' },
                     }
                 )
-                const response = await liteRest.handleRequest(request)
-                expect(response.status).toBe(405)
-                const jsonResponse = (await response.json()) as {
-                    error: string
-                }
-                expect(jsonResponse.error).toBe('Method not allowed')
+                expect(status).toBe(400)
+                expect(body.error).toBe('Invalid data format')
             }
-        })
 
-        it('should handle DELETE requests successfully', async () => {
-            vi.mocked(executeQuery).mockImplementation(async ({ sql }) => {
-                if (sql.includes('PRAGMA table_info(users)')) {
-                    return [{ name: 'id', pk: 1 }]
-                }
-
-                return []
-            })
-            vi.mocked(executeTransaction).mockResolvedValue([])
-
-            const request = new Request('http://localhost/rest/main/users/1', {
-                method: 'DELETE',
-            })
-            const response = await liteRest.handleRequest(request)
-
-            expect(response).toBeInstanceOf(Response)
-            expect(response.status).toBe(200)
-
-            const jsonResponse = (await response.json()) as {
-                result: { message: string }
-            }
-            expect(jsonResponse.result).toEqual({
-                message: 'Resource deleted successfully',
-            })
-        })
-
-        it('should return 400 for DELETE without ID', async () => {
-            const request = new Request('http://localhost/rest/main/users', {
-                method: 'DELETE',
-            })
-            const response = await liteRest.handleRequest(request)
-
-            expect(response).toBeInstanceOf(Response)
-            expect(response.status).toBe(400)
-
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe(
+            const missingDeleteId = await dispatchRestRequest(
+                '/rest/main/users',
+                { method: 'DELETE' }
+            )
+            expect(missingDeleteId.status).toBe(400)
+            expect(missingDeleteId.body.error).toBe(
                 "Missing primary key value for 'id'"
             )
-        })
 
-        it('should return 500 for DELETE errors', async () => {
-            vi.mocked(executeQuery).mockRejectedValue(
-                new Error('Delete failed')
-            )
-
-            const request = new Request('http://localhost/rest/main/users/1', {
-                method: 'DELETE',
-            })
-            const response = await liteRest.handleRequest(request)
-
-            expect(response).toBeInstanceOf(Response)
-            expect(response.status).toBe(500)
-
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe('Delete failed')
-        })
-        it('should return 400 if DELETE is attempted with missing composite PK values', async () => {
-            vi.mocked(executeQuery).mockResolvedValue([
+            mockPrimaryKeySchema([
                 { name: 'user_id', pk: 1 },
                 { name: 'group_id', pk: 1 },
             ])
+            const missingCompositePatch = await dispatchRestRequest(
+                '/rest/main/users',
+                {
+                    method: 'PATCH',
+                    body: JSON.stringify({ user_id: 1, name: 'Updated' }),
+                    headers: { 'Content-Type': 'application/json' },
+                }
+            )
+            expect(missingCompositePatch.status).toBe(400)
+            expect(missingCompositePatch.body.error).toBe(
+                "Missing primary key value for 'group_id'"
+            )
 
-            const request = new Request('http://localhost/rest/main/users/1', {
-                method: 'DELETE',
-            })
-            const response = await liteRest.handleRequest(request)
-
-            expect(response.status).toBe(400)
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe(
+            const missingCompositeDelete = await dispatchRestRequest(
+                '/rest/main/users/1',
+                { method: 'DELETE' }
+            )
+            expect(missingCompositeDelete.status).toBe(400)
+            expect(missingCompositeDelete.body.error).toBe(
                 "Missing primary key value for 'group_id'"
             )
         })
 
-        it('should return 500 if primary key query fails', async () => {
-            vi.mocked(executeQuery).mockRejectedValue(new Error('DB Error'))
+        it('returns 500 when underlying query or transaction execution rejects', async () => {
+            vi.spyOn(console, 'error').mockImplementation(() => {})
+            mockPrimaryKeySchema()
+            vi.mocked(executeTransaction).mockRejectedValue(
+                new Error('Transaction execution failed')
+            )
 
-            const request = new Request('http://localhost/rest/main/users/1', {
+            const postErr = await dispatchRestRequest('/rest/main/users', {
+                method: 'POST',
+                body: JSON.stringify({ name: 'Error User' }),
+                headers: { 'Content-Type': 'application/json' },
+            })
+            expect(postErr.status).toBe(500)
+            expect(postErr.body.error).toBe('Transaction execution failed')
+
+            vi.mocked(executeQuery).mockRejectedValue(new Error('DB Error'))
+            const getErr = await dispatchRestRequest('/rest/main/users/1', {
                 method: 'GET',
             })
-            const response = await liteRest.handleRequest(request)
+            expect(getErr.status).toBe(500)
+            expect(getErr.body.error).toBe('DB Error')
 
-            expect(response.status).toBe(500)
-            const jsonResponse = (await response.json()) as { error: string }
-            expect(jsonResponse.error).toBe('DB Error')
+            const deleteErr = await dispatchRestRequest('/rest/main/users/1', {
+                method: 'DELETE',
+            })
+            expect(deleteErr.status).toBe(500)
+            expect(deleteErr.body.error).toBe('DB Error')
+        })
+    })
+
+    describe('allowlist bypass integration', () => {
+        it('bypasses allowlist on primary key introspection and REST queries by default when ENABLE_ALLOWLIST is active', async () => {
+            mockPrimaryKeySchema()
+            const clientConfig: StarbaseDBConfiguration = {
+                role: 'client',
+                features: { allowlist: true, rest: true },
+            }
+            liteRest = new LiteREST(mockDataSource, clientConfig)
+
+            const { status } = await dispatchRestRequest('/rest/main/users/1', {
+                method: 'GET',
+            })
+            expect(status).toBe(200)
+            expect(executeQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    sql: 'PRAGMA table_info(users);',
+                    bypassAllowlist: true,
+                })
+            )
+            expect(executeTransaction).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    bypassAllowlist: true,
+                })
+            )
+        })
+
+        it('respects allowlistBypassRest = false for REST queries while keeping schema introspection bypassed', async () => {
+            mockPrimaryKeySchema()
+            const strictConfig: StarbaseDBConfiguration = {
+                role: 'client',
+                features: {
+                    allowlist: true,
+                    allowlistBypassRest: false,
+                    rest: true,
+                },
+            }
+            liteRest = new LiteREST(mockDataSource, strictConfig)
+
+            await dispatchRestRequest('/rest/main/users/1', { method: 'GET' })
+            expect(executeQuery).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    bypassAllowlist: true,
+                })
+            )
+            expect(executeTransaction).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    bypassAllowlist: false,
+                })
+            )
         })
     })
 
     describe('buildSelectQuery', () => {
-        it('should build a valid SELECT query', async () => {
-            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
+        it('constructs parameterized SELECT queries with PK, sort, and pagination clauses', async () => {
+            mockPrimaryKeySchema()
 
-            // @ts-expect-error: Testing private method
-            const { query, params } = await liteRest.buildSelectQuery(
-                'users',
-                undefined,
-                undefined,
-                new URLSearchParams()
-            )
-
-            expect(query).toBe('SELECT * FROM users')
-            expect(params).toEqual([])
-        })
-
-        it('should add WHERE clause for primary key', async () => {
-            vi.mocked(executeQuery).mockResolvedValue([{ name: 'id', pk: 1 }])
-
-            // @ts-expect-error: Testing private method
-            const { query, params } = await liteRest.buildSelectQuery(
+            // @ts-expect-error: Testing private query builder
+            const baseResult = await liteRest.buildSelectQuery(
                 'users',
                 undefined,
                 '1',
                 new URLSearchParams()
             )
+            expect(baseResult.query).toBe('SELECT * FROM users WHERE id = ?')
+            expect(baseResult.params).toEqual(['1'])
 
-            expect(query).toContain('WHERE id = ?')
-            expect(params).toEqual(['1'])
-        })
-
-        it('should add ORDER BY clause', async () => {
-            const searchParams = new URLSearchParams({
+            const paginatedParams = new URLSearchParams({
                 sort_by: 'name',
                 order: 'desc',
-            })
-
-            // @ts-expect-error: Testing private method
-            const { query } = await liteRest.buildSelectQuery(
-                'users',
-                undefined,
-                undefined,
-                searchParams
-            )
-
-            expect(query).toContain('ORDER BY name DESC')
-        })
-
-        it('should add LIMIT and OFFSET', async () => {
-            const searchParams = new URLSearchParams({
                 limit: '10',
                 offset: '5',
             })
-
-            // @ts-expect-error: Testing private method
-            const { query, params } = await liteRest.buildSelectQuery(
+            // @ts-expect-error: Testing private query builder
+            const pagedResult = await liteRest.buildSelectQuery(
                 'users',
                 undefined,
                 undefined,
-                searchParams
+                paginatedParams
             )
-
-            expect(query).toContain('LIMIT ? OFFSET ?')
-            expect(params).toEqual([10, 5])
+            expect(pagedResult.query).toContain('ORDER BY name DESC')
+            expect(pagedResult.query).toContain('LIMIT ? OFFSET ?')
+            expect(pagedResult.params).toEqual([10, 5])
         })
 
-        it('should ignore invalid limit and offset parameters', async () => {
-            const searchParams = new URLSearchParams({
+        it('sanitizes sort_by identifiers and ignores invalid pagination bounds', async () => {
+            mockPrimaryKeySchema()
+            const invalidParams = new URLSearchParams({
+                sort_by: 'DROP TABLE users;',
                 limit: 'invalid',
                 offset: '-5',
             })
 
-            // @ts-expect-error: Testing private method
+            // @ts-expect-error: Testing private query builder
             const { query, params } = await liteRest.buildSelectQuery(
                 'users',
                 undefined,
                 undefined,
-                searchParams
+                invalidParams
             )
-
+            expect(query).not.toContain('DROP TABLE users')
             expect(query).not.toContain('LIMIT ? OFFSET ?')
             expect(params).toEqual([])
-        })
-
-        it('should ignore invalid sort_by parameter', async () => {
-            const searchParams = new URLSearchParams({
-                sort_by: 'DROP TABLE users;',
-            })
-
-            // @ts-expect-error: Testing private method
-            const { query } = await liteRest.buildSelectQuery(
-                'users',
-                undefined,
-                undefined,
-                searchParams
-            )
-
-            expect(query).not.toContain('DROP TABLE users')
         })
     })
 })

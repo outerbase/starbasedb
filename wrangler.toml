@@ -50,6 +50,7 @@ REGION = "auto"
 
 # Toggle to enable default features 
 ENABLE_ALLOWLIST = 0
+ALLOWLIST_BYPASS_REST = 1
 ENABLE_RLS = 0
 
 # External database source details

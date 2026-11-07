@@ -3,6 +3,63 @@ import { DataSource } from '../types'
 import { executeQuery, executeTransaction } from '../operation'
 import { StarbaseDBConfiguration } from '../handler'
 
+const ALLOWED_OPERATORS: Record<string, string> = {
+    eq: '=',
+    ne: '!=',
+    gt: '>',
+    lt: '<',
+    gte: '>=',
+    lte: '<=',
+    like: 'LIKE',
+    in: 'IN',
+}
+
+const RESERVED_SEARCH_PARAMS = ['sort_by', 'order', 'limit', 'offset']
+
+type TableRef = {
+    tableName: string
+    schemaName?: string
+    id?: string
+}
+
+type ParsedRestRequest = TableRef & {
+    method: string
+    searchParams: URLSearchParams
+    body?: any
+}
+
+function qualifyTable(ref: TableRef): string {
+    return ref.schemaName ? `${ref.schemaName}.${ref.tableName}` : ref.tableName
+}
+
+function buildPostgresPrimaryKeyQuery(ref: TableRef): string {
+    return `
+                    SELECT kcu.column_name AS name 
+                    FROM information_schema.table_constraints tc 
+                    JOIN information_schema.key_column_usage kcu 
+                    ON tc.constraint_name = kcu.constraint_name
+                    AND tc.table_schema = kcu.table_schema 
+                    AND tc.table_name = kcu.table_name 
+                    WHERE tc.constraint_type = 'PRIMARY KEY'
+                    AND tc.table_name = '${ref.tableName}' 
+                    AND tc.table_schema = '${ref.schemaName ?? 'public'}';`
+}
+
+function buildMysqlPrimaryKeyQuery(ref: TableRef): string {
+    return `
+                    SELECT COLUMN_NAME AS name FROM information_schema.key_column_usage 
+                    WHERE table_name = '${ref.tableName}' 
+                    AND constraint_name = 'PRIMARY'
+                    AND table_schema = ${ref.schemaName ?? 'DATABASE()'};
+                `
+}
+
+function extractSqlitePkNames(schemaInfo: any[]): string[] {
+    return schemaInfo
+        .filter((col) => Number(col?.pk) > 0 && col?.name !== null)
+        .map((col) => col.name as string)
+}
+
 export class LiteREST {
     private dataSource: DataSource
     private config: StarbaseDBConfiguration
@@ -13,131 +70,105 @@ export class LiteREST {
     }
 
     /**
-     * Sanitizes an identifier by removing all non-alphanumeric characters except underscores.
-     * @param identifier - The identifier to sanitize.
-     * @returns The sanitized identifier.
+     * Determines whether REST CRUD operations bypass SQL allowlist enforcement.
+     */
+    private shouldBypassAllowlist(): boolean {
+        return this.config?.features?.allowlistBypassRest ?? true
+    }
+
+    /**
+     * Strips non-alphanumeric characters other than underscores from SQL identifiers.
      */
     private sanitizeIdentifier(identifier: string): string {
         return identifier.replace(/[^a-zA-Z0-9_]/g, '')
     }
 
-    /**
-     * Retrieves the primary key columns for a given table.
-     * @param tableName - The name of the table.
-     * @returns An array of primary key column names.
-     */
-    private async getPrimaryKeyColumns(
-        tableName: string,
-        schemaName?: string
-    ): Promise<string[]> {
-        let query = `PRAGMA table_info(${tableName});`
-
-        if (
-            this.dataSource.source === 'external' ||
-            this.dataSource.source === 'hyperdrive'
-        ) {
-            if (
-                this.dataSource.external?.dialect === 'postgresql' ||
-                this.dataSource.source === 'hyperdrive'
-            ) {
-                query = `
-                    SELECT kcu.column_name AS name 
-                    FROM information_schema.table_constraints tc 
-                    JOIN information_schema.key_column_usage kcu 
-                    ON tc.constraint_name = kcu.constraint_name
-                    AND tc.table_schema = kcu.table_schema 
-                    AND tc.table_name = kcu.table_name 
-                    WHERE tc.constraint_type = 'PRIMARY KEY'
-                    AND tc.table_name = '${tableName}' 
-                    AND tc.table_schema = '${schemaName ?? 'public'}';`
-            } else if (this.dataSource.external?.dialect === 'mysql') {
-                query = `
-                    SELECT COLUMN_NAME AS name FROM information_schema.key_column_usage 
-                    WHERE table_name = '${tableName}' 
-                    AND constraint_name = 'PRIMARY'
-                    AND table_schema = ${schemaName ?? 'DATABASE()'};
-                `
-            }
+    private resolveDialect(): 'postgresql' | 'mysql' | 'sqlite' {
+        if (this.dataSource.source === 'hyperdrive') {
+            return 'postgresql'
         }
+        if (this.dataSource.source === 'external') {
+            return this.dataSource.external?.dialect ?? 'sqlite'
+        }
+        return 'sqlite'
+    }
 
-        const isSQLite =
-            this.dataSource.source === 'internal' ||
-            this.dataSource.external?.dialect === 'sqlite'
+    private buildPrimaryKeyQuery(ref: TableRef): string {
+        const dialect = this.resolveDialect()
+        if (dialect === 'postgresql') {
+            return buildPostgresPrimaryKeyQuery(ref)
+        }
+        if (dialect === 'mysql') {
+            return buildMysqlPrimaryKeyQuery(ref)
+        }
+        return `PRAGMA table_info(${ref.tableName});`
+    }
 
+    /**
+     * Queries table metadata to resolve primary key column names.
+     */
+    private async getPrimaryKeyColumns(ref: TableRef): Promise<string[]> {
+        const query = this.buildPrimaryKeyQuery(ref)
         const schemaInfo = (await executeQuery({
             sql: query,
             params: [],
             isRaw: false,
             dataSource: this.dataSource,
             config: this.config,
+            bypassAllowlist: true,
         })) as any[]
 
-        let pkColumns = []
-
-        if (isSQLite) {
-            pkColumns = schemaInfo
-                .filter(
-                    (col) =>
-                        typeof col.pk === 'number' &&
-                        col.pk > 0 &&
-                        col.name !== null
-                )
-                .map((col) => col.name as string)
-        } else {
-            pkColumns = schemaInfo.map((col) => col.name as string)
+        if (this.resolveDialect() === 'sqlite') {
+            return extractSqlitePkNames(schemaInfo)
         }
 
-        return pkColumns
+        return schemaInfo.map((col) => col.name as string)
     }
 
-    /**
-     * Checks if the provided data is valid.
-     * @param data - The data to validate.
-     * @returns True if the data is valid, false otherwise.
-     */
-    private isDataValid(data: any): boolean {
-        return data && typeof data === 'object' && !Array.isArray(data)
+    private isDataValid(data: Record<string, unknown> | null): boolean {
+        if (!data || typeof data !== 'object') {
+            return false
+        }
+        return !Array.isArray(data)
     }
 
-    /**
-     * Sanitizes an operator by mapping it to a valid SQL operator.
-     * @param operator - The operator to sanitize.
-     * @returns The sanitized operator.
-     */
     private sanitizeOperator(operator: string | undefined): string {
-        const allowedOperators: { [key: string]: string } = {
-            eq: '=',
-            ne: '!=',
-            gt: '>',
-            lt: '<',
-            gte: '>=',
-            lte: '<=',
-            like: 'LIKE',
-            in: 'IN',
-        }
-        return allowedOperators[operator || 'eq'] || '='
+        return ALLOWED_OPERATORS[operator || 'eq'] || '='
     }
 
-    /**
-     * Retrieves the primary key conditions for a given table.
-     * @param pkColumns - The primary key columns for the table.
-     * @param id - The identifier for the record.
-     * @param data - The data to use for primary key conditions.
-     * @param searchParams - The search parameters.
-     * @returns An object containing the conditions, parameters, and any error message.
-     */
-    private getPrimaryKeyConditions(
-        pkColumns: string[],
-        id: string | undefined,
-        data: any,
+    private resolvePrimaryKeyValue(opts: {
+        pk: string
+        id?: string
+        data: any
         searchParams: URLSearchParams
-    ): { conditions: string[]; params: any[]; error?: string } {
+        allowIdFallback: boolean
+    }): any {
+        const { pk, id, data, searchParams, allowIdFallback } = opts
+        if (allowIdFallback && id) {
+            return id
+        }
+        return data?.[pk] || searchParams.get(pk)
+    }
+
+    private getPrimaryKeyConditions(opts: {
+        pkColumns: string[]
+        id?: string
+        data: any
+        searchParams: URLSearchParams
+    }): { conditions: string[]; params: any[]; error?: string } {
+        const { pkColumns, id, data, searchParams } = opts
         const conditions: string[] = []
         const params: any[] = []
+        const allowIdFallback = pkColumns?.length === 1
 
-        if (pkColumns?.length === 1) {
-            const pk = pkColumns[0]
-            const pkValue = id || data[pk] || searchParams.get(pk)
+        for (const pk of pkColumns ?? []) {
+            const pkValue = this.resolvePrimaryKeyValue({
+                pk,
+                id,
+                data,
+                searchParams,
+                allowIdFallback,
+            })
             if (!pkValue) {
                 return {
                     conditions,
@@ -147,29 +178,11 @@ export class LiteREST {
             }
             conditions.push(`${pk} = ?`)
             params.push(pkValue)
-        } else {
-            // Composite primary key
-            for (const pk of pkColumns) {
-                const pkValue = data[pk] || searchParams.get(pk)
-                if (!pkValue) {
-                    return {
-                        conditions,
-                        params,
-                        error: `Missing primary key value for '${pk}'`,
-                    }
-                }
-                conditions.push(`${pk} = ?`)
-                params.push(pkValue)
-            }
         }
 
         return { conditions, params }
     }
 
-    /**
-     * Executes a set of operations.
-     * @param queries - The operations to execute.
-     */
     private async executeOperation(
         queries: { sql: string; params: any[] }[]
     ): Promise<{ result?: any; error?: string | undefined; status: number }> {
@@ -178,6 +191,7 @@ export class LiteREST {
             isRaw: false,
             dataSource: this.dataSource,
             config: this.config,
+            bypassAllowlist: this.shouldBypassAllowlist(),
         })) as any[]
         return {
             result: results?.length > 0 ? results[0] : undefined,
@@ -185,40 +199,29 @@ export class LiteREST {
         }
     }
 
-    /**
-     * Handles the incoming request and determines the appropriate action based on the method and path.
-     * @param request - The incoming request.
-     * @returns The response to the request.
-     */
+    private dispatchMethod(parsed: ParsedRestRequest): Promise<Response> {
+        const handlers: Record<string, () => Promise<Response>> = {
+            GET: () => this.handleGet(parsed),
+            POST: () => this.handlePost(parsed),
+            PATCH: () => this.handlePatch(parsed),
+            PUT: () => this.handlePut(parsed),
+            DELETE: () => this.handleDelete(parsed),
+        }
+
+        const handler = handlers[parsed.method]
+        if (!handler) {
+            return Promise.resolve(
+                createResponse(undefined, 'Method not allowed', 405)
+            )
+        }
+        return handler()
+    }
+
     async handleRequest(request: Request): Promise<Response> {
-        const { method, tableName, schemaName, id, searchParams, body } =
-            await this.parseRequest(request)
+        const parsed = await this.parseRequest(request)
 
         try {
-            switch (method) {
-                case 'GET':
-                    return await this.handleGet(
-                        tableName,
-                        schemaName,
-                        id,
-                        searchParams
-                    )
-                case 'POST':
-                    return await this.handlePost(tableName, schemaName, body)
-                case 'PATCH':
-                    return await this.handlePatch(
-                        tableName,
-                        schemaName,
-                        id,
-                        body
-                    )
-                case 'PUT':
-                    return await this.handlePut(tableName, schemaName, id, body)
-                case 'DELETE':
-                    return await this.handleDelete(tableName, schemaName, id)
-                default:
-                    return createResponse(undefined, 'Method not allowed', 405)
-            }
+            return await this.dispatchMethod(parsed)
         } catch (error: any) {
             console.error('LiteREST Error:', error)
             return createResponse(
@@ -229,19 +232,7 @@ export class LiteREST {
         }
     }
 
-    /**
-     * Parses the incoming request and extracts the method, table name, id, search parameters, and body.
-     * @param request - The incoming request.
-     * @returns An object containing the method, table name, id, search parameters, and body.
-     */
-    private async parseRequest(request: Request): Promise<{
-        method: string
-        tableName: string
-        schemaName: string | undefined
-        id?: string
-        searchParams: URLSearchParams
-        body?: any
-    }> {
+    private async parseRequest(request: Request): Promise<ParsedRestRequest> {
         const liteRequest = new Request(
             request.url.replace('/rest', ''),
             request
@@ -273,111 +264,133 @@ export class LiteREST {
         }
     }
 
+    private appendSearchFilterCondition(opts: {
+        key: string
+        value: string
+        conditions: string[]
+        params: any[]
+    }): void {
+        const { key, value, conditions, params } = opts
+        const [column, op] = key.split('.')
+        const sanitizedColumn = this.sanitizeIdentifier(column)
+        const operator = this.sanitizeOperator(op)
+
+        if (operator === 'IN') {
+            const values = value.split(',').map((val) => val.trim())
+            const placeholders = values.map(() => '?').join(', ')
+            conditions.push(`${sanitizedColumn} IN (${placeholders})`)
+            params.push(...values)
+            return
+        }
+
+        conditions.push(`${sanitizedColumn} ${operator} ?`)
+        params.push(value)
+    }
+
+    private buildPaginationClause(opts: {
+        limitParam: string | null
+        offsetParam: string | null
+        params: any[]
+    }): string {
+        const { limitParam, offsetParam, params } = opts
+        const limit = limitParam ? parseInt(limitParam, 10) : 0
+        if (!(limit > 0)) {
+            return ''
+        }
+
+        params.push(limit)
+        const offset = offsetParam ? parseInt(offsetParam, 10) : 0
+        if (offset > 0) {
+            params.push(offset)
+            return ' LIMIT ? OFFSET ?'
+        }
+
+        return ' LIMIT ?'
+    }
+
+    private buildOrderByClause(opts: {
+        sortBy: string | null
+        orderParam: string | null
+    }): string {
+        const { sortBy, orderParam } = opts
+        if (!sortBy) {
+            return ''
+        }
+        const sanitizedSortBy = this.sanitizeIdentifier(sortBy)
+        const order = orderParam?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC'
+        return ` ORDER BY ${sanitizedSortBy} ${order}`
+    }
+
     private async buildSelectQuery(
         tableName: string,
         schemaName: string | undefined,
         id: string | undefined,
         searchParams: URLSearchParams
     ): Promise<{ query: string; params: any[] }> {
-        let query = `SELECT * FROM ${
-            schemaName ? `${schemaName}.` : ''
-        }${tableName}`
+        const ref: TableRef = { tableName, schemaName, id }
+        let query = `SELECT * FROM ${qualifyTable(ref)}`
         const params: any[] = []
         const conditions: string[] = []
-        const pkColumns = await this.getPrimaryKeyColumns(tableName, schemaName)
-        const {
-            conditions: pkConditions,
-            params: pkParams,
-            error,
-        } = this.getPrimaryKeyConditions(pkColumns, id, {}, searchParams)
+        const pkColumns = await this.getPrimaryKeyColumns(ref)
+        const pkFilter = this.getPrimaryKeyConditions({
+            pkColumns,
+            id,
+            data: {},
+            searchParams,
+        })
 
-        if (!error) {
-            conditions.push(...pkConditions)
-            params.push(...pkParams)
+        if (!pkFilter.error) {
+            conditions.push(...pkFilter.conditions)
+            params.push(...pkFilter.params)
         }
 
-        // Extract special parameters
         const sortBy = searchParams.get('sort_by')
         const orderParam = searchParams.get('order')
         const limitParam = searchParams.get('limit')
         const offsetParam = searchParams.get('offset')
 
-        // Remove special parameters from searchParams
-        ;['sort_by', 'order', 'limit', 'offset'].forEach((param) =>
-            searchParams.delete(param)
-        )
+        RESERVED_SEARCH_PARAMS.forEach((param) => searchParams.delete(param))
 
-        // Handle other search parameters
         for (const [key, value] of searchParams.entries()) {
-            if (pkColumns.includes(key)) continue // Skip primary key columns
-            const [column, op] = key.split('.')
-            const sanitizedColumn = this.sanitizeIdentifier(column)
-            const operator = this.sanitizeOperator(op)
-
-            if (operator === 'IN') {
-                const values = value.split(',').map((val) => val.trim())
-                const placeholders = values.map(() => '?').join(', ')
-                conditions.push(`${sanitizedColumn} IN (${placeholders})`)
-                params.push(...values)
-            } else {
-                conditions.push(`${sanitizedColumn} ${operator} ?`)
-                params.push(value)
+            if (!pkColumns.includes(key)) {
+                this.appendSearchFilterCondition({
+                    key,
+                    value,
+                    conditions,
+                    params,
+                })
             }
         }
 
-        // Add WHERE clause if there are conditions
         if (conditions.length > 0) {
             query += ` WHERE ${conditions.join(' AND ')}`
         }
 
-        // Add ORDER BY clause
-        if (sortBy) {
-            const sanitizedSortBy = this.sanitizeIdentifier(sortBy)
-            const order = orderParam?.toUpperCase() === 'DESC' ? 'DESC' : 'ASC'
-            query += ` ORDER BY ${sanitizedSortBy} ${order}`
-        }
-
-        // Add LIMIT and OFFSET clauses
-        if (limitParam) {
-            const limit = parseInt(limitParam, 10)
-            if (limit > 0) {
-                query += ` LIMIT ?`
-                params.push(limit)
-
-                if (offsetParam) {
-                    const offset = parseInt(offsetParam, 10)
-                    if (offset > 0) {
-                        query += ` OFFSET ?`
-                        params.push(offset)
-                    }
-                }
-            }
-        }
+        query += this.buildOrderByClause({ sortBy, orderParam })
+        query += this.buildPaginationClause({
+            limitParam,
+            offsetParam,
+            params,
+        })
 
         return { query, params }
     }
 
-    private async handleGet(
-        tableName: string,
-        schemaName: string | undefined,
-        id: string | undefined,
-        searchParams: URLSearchParams
-    ): Promise<Response> {
+    private async handleGet(req: ParsedRestRequest): Promise<Response> {
         const { query, params } = await this.buildSelectQuery(
-            tableName,
-            schemaName,
-            id,
-            searchParams
+            req.tableName,
+            req.schemaName,
+            req.id,
+            req.searchParams
         )
 
         try {
             const response = await this.executeOperation([
                 { sql: query, params },
             ])
-            let resultData = response.result
-            if (!Array.isArray(resultData)) {
-                resultData = [resultData]
-            }
+            const resultData = Array.isArray(response.result)
+                ? response.result
+                : [response.result]
             return createResponse(resultData, undefined, 200)
         } catch (error: any) {
             console.error('GET Operation Error:', error)
@@ -389,35 +402,49 @@ export class LiteREST {
         }
     }
 
-    private async handlePost(
-        tableName: string,
-        schemaName: string | undefined,
-        data: any
-    ): Promise<Response> {
+    private validatePayloadKeys(data: Record<string, unknown> | null): {
+        keys?: string[]
+        errorResponse?: Response
+    } {
         if (!this.isDataValid(data)) {
-            console.error('Invalid data format for POST:', data)
-            return createResponse(undefined, 'Invalid data format', 400)
+            return {
+                errorResponse: createResponse(
+                    undefined,
+                    'Invalid data format',
+                    400
+                ),
+            }
         }
 
-        const dataKeys = Object.keys(data)
-        if (dataKeys.length === 0) {
-            console.error('No data provided for POST')
-            return createResponse(undefined, 'No data provided', 400)
+        const keys = Object.keys(data!)
+        if (keys.length === 0) {
+            return {
+                errorResponse: createResponse(
+                    undefined,
+                    'No data provided',
+                    400
+                ),
+            }
         }
 
-        // Sanitize column names
+        return { keys }
+    }
+
+    private async handlePost(req: ParsedRestRequest): Promise<Response> {
+        const data = req.body
+        const { keys: dataKeys, errorResponse } = this.validatePayloadKeys(data)
+        if (errorResponse || !dataKeys) {
+            return errorResponse!
+        }
+
         const columns = dataKeys.map((col) => this.sanitizeIdentifier(col))
         const placeholders = columns.map(() => '?').join(', ')
-        const query = `INSERT INTO ${
-            schemaName ? `${schemaName}.` : ''
-        }${tableName} (${columns.join(', ')}) VALUES (${placeholders})`
-
-        // Map parameters using original data keys to get correct values
+        const qualified = qualifyTable(req)
+        const query = `INSERT INTO ${qualified} (${columns.join(', ')}) VALUES (${placeholders})`
         const params = dataKeys.map((key) => data[key])
-        const queries = [{ sql: query, params }]
 
         try {
-            await this.executeOperation(queries)
+            await this.executeOperation([{ sql: query, params }])
             return createResponse(
                 { message: 'Resource created successfully', data },
                 undefined,
@@ -426,163 +453,90 @@ export class LiteREST {
         } catch (error: any) {
             console.error('POST Operation Error:', error)
             const errorMessage =
-                error.message ||
-                error.error ||
-                JSON.stringify(error) ||
-                'Failed to create resource'
+                error.message || error.error || 'Failed to create resource'
             return createResponse(undefined, errorMessage, 500)
         }
     }
 
-    private async handlePatch(
-        tableName: string,
-        schemaName: string | undefined,
-        id: string | undefined,
-        data: any
-    ): Promise<Response> {
-        const pkColumns = await this.getPrimaryKeyColumns(tableName, schemaName)
+    private async executeUpdateMutation(opts: {
+        req: ParsedRestRequest
+        excludePrimaryKeys: boolean
+        successMessage: string
+        failureMessage: string
+    }): Promise<Response> {
+        const { req, excludePrimaryKeys, successMessage, failureMessage } = opts
+        const data = req.body
 
-        const {
-            conditions: pkConditions,
-            params: pkParams,
-            error,
-        } = this.getPrimaryKeyConditions(
+        const pkColumns = await this.getPrimaryKeyColumns(req)
+        const pkFilter = this.getPrimaryKeyConditions({
             pkColumns,
-            id,
+            id: req.id,
             data,
-            new URLSearchParams()
-        )
-
-        if (error) {
-            console.error('PATCH Operation Error:', error)
-            return createResponse(undefined, error, 400)
+            searchParams: new URLSearchParams(),
+        })
+        if (pkFilter.error) {
+            return createResponse(undefined, pkFilter.error, 400)
         }
 
-        if (!this.isDataValid(data)) {
-            console.error('Invalid data format for PATCH:', data)
-            return createResponse(undefined, 'Invalid data format', 400)
+        const { keys: dataKeys, errorResponse } = this.validatePayloadKeys(data)
+        if (errorResponse || !dataKeys) {
+            return errorResponse!
         }
 
-        const dataKeys = Object.keys(data)
-        if (dataKeys.length === 0) {
-            console.error('No data provided for PATCH')
-            return createResponse(undefined, 'No data provided', 400)
-        }
-
-        // Remove primary key columns from dataKeys
-        const updateKeys = dataKeys.filter((key) => !pkColumns.includes(key))
-
-        if (updateKeys.length === 0) {
-            console.error('No updatable data provided for PATCH')
+        const targetKeys = excludePrimaryKeys
+            ? dataKeys.filter((key) => !pkColumns.includes(key))
+            : dataKeys
+        if (targetKeys.length === 0) {
             return createResponse(undefined, 'No updatable data provided', 400)
         }
 
-        // Sanitize column names
-        const columns = updateKeys.map((col) => this.sanitizeIdentifier(col))
+        const columns = targetKeys.map((col) => this.sanitizeIdentifier(col))
         const setClause = columns.map((col) => `${col} = ?`).join(', ')
-        const query = `UPDATE ${
-            schemaName ? `${schemaName}.` : ''
-        }${tableName} SET ${setClause} WHERE ${pkConditions.join(' AND ')}`
-
-        // Map parameters using original data keys to get correct values
-        const params = updateKeys.map((key) => data[key])
-        params.push(...pkParams)
-
-        const queries = [{ sql: query, params }]
+        const qualified = qualifyTable(req)
+        const query = `UPDATE ${qualified} SET ${setClause} WHERE ${pkFilter.conditions.join(' AND ')}`
+        const params = [
+            ...targetKeys.map((key) => data[key]),
+            ...pkFilter.params,
+        ]
 
         try {
-            await this.executeOperation(queries)
+            await this.executeOperation([{ sql: query, params }])
             return createResponse(
-                { message: 'Resource updated successfully', data },
+                { message: successMessage, data },
                 undefined,
                 200
             )
         } catch (error: any) {
-            console.error('PATCH Operation Error:', error)
             return createResponse(
                 undefined,
-                error.message || 'Failed to update resource',
+                error.message || failureMessage,
                 500
             )
         }
     }
 
-    private async handlePut(
-        tableName: string,
-        schemaName: string | undefined,
-        id: string | undefined,
-        data: any
-    ): Promise<Response> {
-        const pkColumns = await this.getPrimaryKeyColumns(tableName, schemaName)
-
-        const {
-            conditions: pkConditions,
-            params: pkParams,
-            error,
-        } = this.getPrimaryKeyConditions(
-            pkColumns,
-            id,
-            data,
-            new URLSearchParams()
-        )
-
-        if (error) {
-            console.error('PUT Operation Error:', error)
-            return createResponse(undefined, error, 400)
-        }
-
-        if (!this.isDataValid(data)) {
-            console.error('Invalid data format for PUT:', data)
-            return createResponse(undefined, 'Invalid data format', 400)
-        }
-
-        const dataKeys = Object.keys(data)
-        if (dataKeys.length === 0) {
-            console.error('No data provided for PUT')
-            return createResponse(undefined, 'No data provided', 400)
-        }
-
-        // Sanitize column names
-        const columns = dataKeys.map((col) => this.sanitizeIdentifier(col))
-        const setClause = columns.map((col) => `${col} = ?`).join(', ')
-        const query = `UPDATE ${
-            schemaName ? `${schemaName}.` : ''
-        }${tableName} SET ${setClause} WHERE ${pkConditions.join(' AND ')}`
-
-        // Map parameters using original data keys to get correct values
-        const params = dataKeys.map((key) => data[key])
-        params.push(...pkParams)
-
-        const queries = [{ sql: query, params }]
-
-        try {
-            await this.executeOperation(queries)
-            return createResponse(
-                { message: 'Resource replaced successfully', data },
-                undefined,
-                200
-            )
-        } catch (error: any) {
-            console.error('PUT Operation Error:', error)
-            return createResponse(
-                undefined,
-                error.message || 'Failed to replace resource',
-                500
-            )
-        }
+    private async handlePatch(req: ParsedRestRequest): Promise<Response> {
+        return this.executeUpdateMutation({
+            req,
+            excludePrimaryKeys: true,
+            successMessage: 'Resource updated successfully',
+            failureMessage: 'Failed to update resource',
+        })
     }
 
-    private async handleDelete(
-        tableName: string,
-        schemaName: string | undefined,
-        id: string | undefined
-    ): Promise<Response> {
-        const pkColumns = await this.getPrimaryKeyColumns(tableName, schemaName)
+    private async handlePut(req: ParsedRestRequest): Promise<Response> {
+        return this.executeUpdateMutation({
+            req,
+            excludePrimaryKeys: false,
+            successMessage: 'Resource replaced successfully',
+            failureMessage: 'Failed to replace resource',
+        })
+    }
 
-        let data: any = {}
+    private async handleDelete(req: ParsedRestRequest): Promise<Response> {
+        const pkColumns = await this.getPrimaryKeyColumns(req)
 
-        if (!id) {
-            console.error('DELETE Error: Missing primary key value for ID')
+        if (!req.id) {
             return createResponse(
                 undefined,
                 "Missing primary key value for 'id'",
@@ -591,51 +545,37 @@ export class LiteREST {
         }
 
         if (!pkColumns.length) {
-            console.error('DELETE Error: No primary key found for table')
             return createResponse(
                 undefined,
-                `No primary key found for table '${tableName}'`,
+                `No primary key found for table '${req.tableName}'`,
                 400
             )
         }
 
-        // Currently the DELETE only works with single primary key tables.
-        if (pkColumns.length) {
-            const firstPK = pkColumns[0]
-            data[firstPK] = id
-        }
-
-        const {
-            conditions: pkConditions,
-            params: pkParams,
-            error,
-        } = this.getPrimaryKeyConditions(
+        const data: Record<string, string> = { [pkColumns[0]]: req.id }
+        const pkFilter = this.getPrimaryKeyConditions({
             pkColumns,
-            id,
+            id: req.id,
             data,
-            new URLSearchParams()
-        )
-
-        if (error) {
-            console.error('DELETE Operation Error:', error)
-            return createResponse(undefined, error, 400)
+            searchParams: new URLSearchParams(),
+        })
+        if (pkFilter.error) {
+            return createResponse(undefined, pkFilter.error, 400)
         }
 
-        const query = `DELETE FROM ${
-            schemaName ? `${schemaName}.` : ''
-        }${tableName} WHERE ${pkConditions.join(' AND ')}`
-
-        const queries = [{ sql: query, params: pkParams }]
+        const qualified = qualifyTable(req)
+        const query = `DELETE FROM ${qualified} WHERE ${pkFilter.conditions.join(' AND ')}`
 
         try {
-            const result = await this.executeOperation(queries)
+            await this.executeOperation([
+                { sql: query, params: pkFilter.params },
+            ])
             return createResponse(
                 { message: 'Resource deleted successfully' },
                 undefined,
                 200
             )
         } catch (error: any) {
-            console.error('DELETE Operation Error:', error)
             return createResponse(
                 undefined,
                 error.message || 'Failed to delete resource',
