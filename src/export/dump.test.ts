@@ -1,5 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { dumpDatabaseRoute } from './dump'
+import {
+    dumpDatabaseRoute,
+    dumpDatabaseWithOptions,
+    formatDumpFilename,
+} from './dump'
 import { executeOperation } from '.'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
@@ -28,7 +32,7 @@ beforeEach(() => {
     mockDataSource = {
         source: 'external',
         external: { dialect: 'sqlite' },
-        rpc: { executeQuery: vi.fn() },
+        rpc: { executeQuery: vi.fn(), setAlarm: vi.fn() },
     } as any
 
     mockConfig = {
@@ -129,9 +133,7 @@ describe('Database Dump Module', () => {
     })
 
     it('should return a 500 response when an error occurs', async () => {
-        const consoleErrorMock = vi
-            .spyOn(console, 'error')
-            .mockImplementation(() => {})
+        vi.spyOn(console, 'error').mockImplementation(() => {})
         vi.mocked(executeOperation).mockRejectedValue(
             new Error('Database Error')
         )
@@ -141,5 +143,54 @@ describe('Database Dump Module', () => {
         expect(response.status).toBe(500)
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to create database dump')
+    })
+
+    it('paginates large tables with breathing intervals and uploads to R2 with callback notification', async () => {
+        const r2Bucket = {
+            put: vi.fn().mockResolvedValue(undefined),
+        }
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response('ok', { status: 200 }))
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'events' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE events (id INTEGER, label TEXT)' },
+            ])
+            .mockResolvedValueOnce([
+                { id: 1, label: 'first' },
+                { id: 2, label: 'second' },
+            ])
+            .mockResolvedValueOnce([{ id: 3, label: 'third' }])
+
+        const fixedDate = new Date('2024-01-01T17:00:00Z')
+        expect(formatDumpFilename(fixedDate)).toBe('dump_20240101-170000.sql')
+
+        const response = await dumpDatabaseWithOptions({
+            dataSource: mockDataSource,
+            config: mockConfig,
+            options: {
+                batchSize: 2,
+                breathingIntervalMs: 1,
+                r2Bucket,
+                callbackUrl: 'https://example.com/webhook/dump-complete',
+                now: fixedDate,
+            },
+        })
+
+        expect(response.status).toBe(200)
+        const dumpText = await response.text()
+        expect(dumpText).toContain("INSERT INTO events VALUES (1, 'first');")
+        expect(dumpText).toContain("INSERT INTO events VALUES (3, 'third');")
+        expect(r2Bucket.put).toHaveBeenCalledWith(
+            'dump_20240101-170000.sql',
+            expect.stringContaining("INSERT INTO events VALUES (3, 'third');")
+        )
+        expect(fetchSpy).toHaveBeenCalledWith(
+            'https://example.com/webhook/dump-complete',
+            expect.objectContaining({ method: 'POST' })
+        )
+        fetchSpy.mockRestore()
     })
 })
