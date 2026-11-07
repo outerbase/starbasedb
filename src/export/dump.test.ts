@@ -128,6 +128,45 @@ describe('Database Dump Module', () => {
         )
     })
 
+    it('should paginate large tables across multiple batches and skip internal sqlite_ tables', async () => {
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([
+                { name: 'sqlite_sequence' },
+                { name: 'events' },
+            ])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE events (id INTEGER, payload TEXT)' },
+            ])
+            .mockResolvedValueOnce([
+                { id: 1, payload: 'row-1' },
+                { id: 2, payload: 'row-2' },
+            ])
+            .mockResolvedValueOnce([{ id: 3, payload: null }])
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, {
+            batchSize: 2,
+            workIntervalMs: 0,
+            breathingIntervalMs: 1,
+        })
+
+        expect(response.status).toBe(200)
+        const dumpText = await response.text()
+        expect(dumpText).not.toContain('sqlite_sequence')
+        expect(dumpText).toContain("INSERT INTO events VALUES (1, 'row-1');")
+        expect(dumpText).toContain("INSERT INTO events VALUES (2, 'row-2');")
+        expect(dumpText).toContain('INSERT INTO events VALUES (3, NULL);')
+        expect(executeOperation).toHaveBeenCalledWith(
+            [{ sql: 'SELECT * FROM events LIMIT 2 OFFSET 0;' }],
+            mockDataSource,
+            mockConfig
+        )
+        expect(executeOperation).toHaveBeenCalledWith(
+            [{ sql: 'SELECT * FROM events LIMIT 2 OFFSET 2;' }],
+            mockDataSource,
+            mockConfig
+        )
+    })
+
     it('should return a 500 response when an error occurs', async () => {
         const consoleErrorMock = vi
             .spyOn(console, 'error')
