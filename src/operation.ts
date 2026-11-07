@@ -1,10 +1,8 @@
-// Import the native Node libraries for connecting to various databases
 import { Client as PgClient } from 'pg'
 import { createConnection as createMySqlConnection } from 'mysql2'
 import { createClient as createTursoConnection } from '@libsql/client/web'
 import postgres from 'postgres'
 
-// Import how we interact with the databases through the Outerbase SDK
 import {
     CloudflareD1Connection,
     MySQLConnection,
@@ -55,16 +53,11 @@ async function beforeQuery(opts: {
     dataSource?: DataSource
     config?: StarbaseDBConfiguration
 }): Promise<{ sql: string; params?: unknown[] }> {
-    let { sql, params, dataSource, config } = opts
-
-    if (dataSource?.registry) {
-        const { sql: _sql, params: _params } =
-            await dataSource?.registry?.beforeQuery(opts)
-        sql = _sql
-        params = _params
+    const { sql, params, dataSource } = opts
+    if (!dataSource?.registry) {
+        return { sql, params }
     }
-
-    return { sql, params }
+    return dataSource.registry.beforeQuery(opts)
 }
 
 async function afterQuery(opts: {
@@ -74,8 +67,8 @@ async function afterQuery(opts: {
     dataSource?: DataSource
     config?: StarbaseDBConfiguration
 }): Promise<any> {
-    let { result, isRaw, dataSource } = opts
-    result = isRaw ? transformRawResults(result, 'from') : result
+    const { isRaw, dataSource } = opts
+    let result = isRaw ? transformRawResults(opts.result, 'from') : opts.result
 
     if (dataSource?.registry?.afterQuery) {
         try {
@@ -88,106 +81,223 @@ async function afterQuery(opts: {
     return isRaw ? transformRawResults(result, 'to') : result
 }
 
+function mapRawRowToObject(columns: string[], row: any): Record<string, any> {
+    return columns.reduce((obj: Record<string, any>, column: string, index) => {
+        obj[column] = row[index]
+        return obj
+    }, {})
+}
+
 function transformRawResults(
     result: any,
     direction: 'to' | 'from'
 ): Record<string, any> {
     if (direction === 'from') {
-        // If result is already an array of objects, return it directly
         if (Array.isArray(result)) {
             return result
         }
+        return result?.rows?.map((row: any) =>
+            mapRawRowToObject(result.columns, row)
+        )
+    }
 
-        // Convert our result from the `raw` output to a traditional object
-        result = {
-            ...result,
-            rows: result?.rows?.map((row: any) =>
-                result.columns.reduce(
-                    (obj: any, column: string, index: number) => {
-                        obj[column] = row[index]
-                        return obj
-                    },
-                    {}
-                )
-            ),
-        }
+    const columns: string[] = Object.keys(result?.[0] || {})
+    const rows =
+        result?.map((row: any) => columns.map((col) => row[col])) ?? []
 
-        return result.rows
-    } else if (direction === 'to') {
-        // Convert our traditional object to the `raw` output format
-        const columns: string[] = Object.keys(result?.[0] || {}) ?? []
-        const rows =
-            result?.map((row: any) => columns.map((col) => row[col])) ?? []
+    return {
+        columns,
+        rows,
+        meta: {
+            rows_read: rows.length,
+            rows_written: 0,
+        },
+    }
+}
 
+function formatOuterbaseQueryPayload(sql: string, params: any) {
+    if (!Array.isArray(params)) {
         return {
-            columns,
-            rows,
-            meta: {
-                rows_read: rows.length,
-                rows_written: 0,
-            },
+            query: sql.replaceAll('\n', ' '),
+            params,
         }
     }
 
-    return result
+    let paramIndex = 0
+    const namedParams = params.reduce(
+        (acc, value, index) => ({
+            ...acc,
+            [`param${index}`]: value,
+        }),
+        {}
+    )
+    const parameterizedSql = sql
+        .replace(/\?/g, () => `:param${paramIndex++}`)
+        .replaceAll('\n', ' ')
+
+    return {
+        query: parameterizedSql,
+        params: namedParams,
+    }
 }
 
-// Outerbase API supports more data sources than can be supported via Cloudflare Workers. For those data
-// sources we recommend you connect your database to Outerbase and provide the bases API key for queries
-// to be made. Otherwise, for supported data sources such as Postgres, MySQL, D1, StarbaseDB, Turso and Mongo
-// we can connect to the database directly and remove the additional hop to the Outerbase API.
+async function extractOuterbaseItems(response: Response): Promise<any[]> {
+    const results: any = await response.json()
+    const items = results?.response?.results?.items
+    if (!items) {
+        console.error('API response is malformed:', results)
+        return []
+    }
+    return items
+}
+
 export async function executeExternalQuery(opts: {
     sql: string
     params: any
     dataSource: DataSource
     config: StarbaseDBConfiguration
 }): Promise<any> {
-    let { sql, params, dataSource, config } = opts
+    const { sql, params, dataSource, config } = opts
 
     if (!dataSource.external) {
         throw new Error('External connection not found.')
     }
 
-    // If not an Outerbase API request, forward to external database.
     if (!config?.outerbaseApiKey) {
         return executeSDKQuery({ sql, params, dataSource, config })
     }
 
-    // Convert params from array to object if needed
-    let convertedParams = params
-    if (Array.isArray(params)) {
-        let paramIndex = 0
-        convertedParams = params.reduce(
-            (acc, value, index) => ({
-                ...acc,
-                [`param${index}`]: value,
-            }),
-            {}
-        )
-        sql = sql.replace(/\?/g, () => `:param${paramIndex++}`)
-    }
-
-    const API_URL = 'https://app.outerbase.com'
-    const response = await fetch(`${API_URL}/api/v1/ezql/raw`, {
+    const payload = formatOuterbaseQueryPayload(sql, params)
+    const response = await fetch('https://app.outerbase.com/api/v1/ezql/raw', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
             'X-Source-Token': config.outerbaseApiKey,
         },
-        body: JSON.stringify({
-            query: sql.replaceAll('\n', ' '),
-            params: convertedParams,
-        }),
+        body: JSON.stringify(payload),
     })
 
-    const results: any = await response.json()
+    return extractOuterbaseItems(response)
+}
 
-    if (!results?.response?.results?.items) {
-        console.error('API response is malformed:', results)
-        return []
+function getHyperdriveConnectionString(dataSource: DataSource): string {
+    const external = dataSource.external
+    if (!external || !('connectionString' in external)) {
+        throw new Error('Hyperdrive connection string not found')
+    }
+    return external.connectionString
+}
+
+async function executeHyperdriveQuery(opts: {
+    sql: string
+    params: unknown[] | undefined
+    dataSource: DataSource
+}): Promise<any> {
+    const { sql: querySql, params, dataSource } = opts
+    const connectionString = getHyperdriveConnectionString(dataSource)
+    const sqlClient = postgres(connectionString, {
+        max: 5,
+        fetch_types: false,
+    })
+
+    try {
+        const result = await sqlClient.unsafe(querySql, params as any[])
+        if (dataSource.executionContext) {
+            dataSource.executionContext.waitUntil(sqlClient.end())
+        } else {
+            await sqlClient.end()
+        }
+        return result
+    } catch (error) {
+        console.error('Hyperdrive query error:', error)
+        throw error
+    }
+}
+
+async function dispatchQueryExecution(opts: {
+    sql: string
+    params: unknown[] | undefined
+    isRaw: boolean
+    dataSource: DataSource
+    config: StarbaseDBConfiguration
+}): Promise<any> {
+    const { sql, params, isRaw, dataSource, config } = opts
+
+    if (dataSource.source === 'internal') {
+        const result = await dataSource.rpc.executeQuery({
+            sql,
+            params,
+            isRaw,
+        })
+        if (!result) {
+            console.error('Returning empty array.')
+            return []
+        }
+        return result
     }
 
-    return results.response.results?.items
+    if (dataSource.source === 'hyperdrive') {
+        return executeHyperdriveQuery({ sql, params, dataSource })
+    }
+
+    return executeExternalQuery({
+        sql,
+        params,
+        dataSource,
+        config,
+    })
+}
+
+async function runQueryPipeline(opts: {
+    rlsSql: string
+    params: unknown[] | undefined
+    isRaw: boolean
+    dataSource: DataSource
+    config: StarbaseDBConfiguration
+}): Promise<QueryResponse> {
+    const { rlsSql, params, isRaw, dataSource, config } = opts
+    const { sql: updatedSQL, params: updatedParams } = await beforeQuery({
+        sql: rlsSql,
+        params,
+        dataSource,
+        config,
+    })
+
+    if (!isRaw) {
+        const cached = await beforeQueryCache({
+            sql: updatedSQL,
+            params: updatedParams,
+            dataSource,
+        })
+        if (cached) {
+            return cached as QueryResponse
+        }
+    }
+
+    const result = await dispatchQueryExecution({
+        sql: updatedSQL,
+        params: updatedParams,
+        isRaw,
+        dataSource,
+        config,
+    })
+
+    if (!isRaw) {
+        await afterQueryCache({
+            sql: rlsSql,
+            params: updatedParams,
+            result,
+            dataSource,
+        })
+    }
+
+    return afterQuery({
+        sql: updatedSQL,
+        result,
+        isRaw,
+        dataSource,
+        config,
+    })
 }
 
 export async function executeQuery(opts: {
@@ -196,126 +306,46 @@ export async function executeQuery(opts: {
     isRaw: boolean
     dataSource: DataSource
     config: StarbaseDBConfiguration
+    bypassAllowlist?: boolean
 }): Promise<QueryResponse> {
-    let { sql, params, isRaw, dataSource, config } = opts
+    const {
+        sql: initialSql,
+        params,
+        isRaw,
+        dataSource,
+        config,
+        bypassAllowlist,
+    } = opts
 
     if (!dataSource) {
         console.error('Data source not found.')
         return []
     }
 
-    // If the allowlist feature is enabled, we should verify the query is allowed before proceeding.
+    const shouldEnforceAllowlist =
+        Boolean(config?.features?.allowlist) && !bypassAllowlist
+
     await isQueryAllowed({
-        sql: sql,
-        isEnabled: config?.features?.allowlist ?? false,
+        sql: initialSql,
+        isEnabled: shouldEnforceAllowlist,
         dataSource,
         config,
     })
 
-    // If the row level security feature is enabled, we should apply our policies to this SQL statement.
-    sql = await applyRLS({
-        sql,
+    const rlsSql = await applyRLS({
+        sql: initialSql,
         isEnabled: config?.features?.rls ?? true,
         dataSource,
         config,
     })
 
-    // Run the beforeQuery hook for any third party logic to be applied before execution.
-    const { sql: updatedSQL, params: updatedParams } = await beforeQuery({
-        sql,
+    return runQueryPipeline({
+        rlsSql,
         params,
-        dataSource,
-        config,
-    })
-
-    // If the query was modified by RLS then we determine it isn't currently a valid candidate
-    // for caching. In the future we will support queries impacted by RLS and caching their
-    // results.
-    if (!isRaw) {
-        // If a cached version of this query request exists, this function will fetch the cached results.
-        const cache = await beforeQueryCache({
-            sql: updatedSQL,
-            params: updatedParams,
-            dataSource,
-        })
-
-        if (cache) {
-            return cache as QueryResponse
-        }
-    }
-
-    let result
-
-    if (dataSource.source === 'internal') {
-        result = await dataSource.rpc.executeQuery({
-            sql: updatedSQL,
-            params: updatedParams,
-            isRaw,
-        })
-
-        if (!result) {
-            console.error('Returning empty array.')
-            return []
-        }
-    } else if (dataSource.source === 'hyperdrive') {
-        if (
-            !dataSource.external ||
-            !('connectionString' in dataSource.external)
-        ) {
-            throw new Error('Hyperdrive connection string not found')
-        }
-
-        // Construct a Postgres pool for Hyperdrive connection.
-        // Currently Hyperdrive only supports Postgres and in the near future should also
-        // gain support for MySQL which we will then need to make driver updates per the
-        // docs as they are released.
-        const sql = postgres(dataSource.external.connectionString, {
-            max: 5,
-            fetch_types: false,
-        })
-
-        try {
-            result = await sql.unsafe(updatedSQL, updatedParams as any[])
-
-            if (opts.dataSource?.executionContext) {
-                // Optimistically we hope a ExecutionContext is available to us
-                // to properly end our SQL function.
-                opts.dataSource?.executionContext?.waitUntil(sql.end())
-            } else {
-                // As a fallback we'll just end it.
-                await sql.end()
-            }
-        } catch (e) {
-            console.error('Hyperdrive query error:', e)
-            throw e
-        }
-    } else {
-        result = await executeExternalQuery({
-            sql: updatedSQL,
-            params: updatedParams,
-            dataSource,
-            config,
-        })
-    }
-
-    // If this is a cacheable query, this function will handle that logic.
-    if (!isRaw) {
-        await afterQueryCache({
-            sql,
-            params: updatedParams,
-            result,
-            dataSource,
-        })
-    }
-
-    const finalResult = await afterQuery({
-        sql: updatedSQL,
-        result,
         isRaw,
         dataSource,
         config,
     })
-    return finalResult
 }
 
 export async function executeTransaction(opts: {
@@ -323,8 +353,9 @@ export async function executeTransaction(opts: {
     isRaw: boolean
     dataSource: DataSource
     config: StarbaseDBConfiguration
+    bypassAllowlist?: boolean
 }): Promise<QueryResponse> {
-    const { queries, isRaw, dataSource, config } = opts
+    const { queries, isRaw, dataSource, config, bypassAllowlist } = opts
 
     if (!dataSource) {
         console.error('Data source not found.')
@@ -340,6 +371,7 @@ export async function executeTransaction(opts: {
             isRaw,
             dataSource,
             config,
+            bypassAllowlist,
         })
 
         results.push(result)
@@ -348,87 +380,62 @@ export async function executeTransaction(opts: {
     return results
 }
 
-async function createSDKPostgresConnection(
-    source: RemoteSource
-): Promise<ConnectionDetails> {
-    const client = new PostgreSQLConnection(
-        new PgClient({
-            host: source.host,
-            port: source.port,
-            user: source.user,
-            password: source.password,
-            database: source.database,
-        })
-    )
-
+function buildRemoteClientConfig(source: RemoteSource) {
     return {
-        database: client,
-        defaultSchema: source.defaultSchema || 'public',
+        host: source.host,
+        port: source.port,
+        user: source.user,
+        password: source.password,
+        database: source.database,
     }
 }
 
-async function createSDKMySQLConnection(
-    source: RemoteSource
-): Promise<ConnectionDetails> {
-    const client = new MySQLConnection(
-        createMySqlConnection({
-            host: source.host,
-            port: source.port,
-            user: source.user,
-            password: source.password,
-            database: source.database,
-        })
-    )
-
-    return {
-        database: client,
-        defaultSchema: source.defaultSchema || 'public',
-    }
+const SQLITE_PROVIDER_FACTORIES: Record<
+    string,
+    (source: any) => SqlConnection
+> = {
+    'cloudflare-d1': (source: CloudflareD1Source) =>
+        new CloudflareD1Connection({
+            apiKey: source.apiKey,
+            accountId: source.accountId,
+            databaseId: source.databaseId,
+        }),
+    starbase: (source: StarbaseDBSource) =>
+        new StarbaseConnection({
+            apiKey: source.apiKey,
+            url: source.token,
+        }),
+    turso: (source: TursoDBSource) =>
+        new TursoConnection(
+            createTursoConnection({
+                url: source.uri,
+                authToken: source.token,
+            })
+        ),
 }
 
-async function createSDKTursoConnection(
-    source: TursoDBSource
-): Promise<ConnectionDetails> {
-    const client = new TursoConnection(
-        createTursoConnection({
-            url: source.uri,
-            authToken: source.token,
-        })
-    )
-
-    return {
-        database: client,
-        defaultSchema: source.defaultSchema || 'main',
+function createSDKConnection(
+    external: NonNullable<DataSource['external']>
+): SqlConnection {
+    if (external.dialect === 'postgresql' && 'host' in external) {
+        return new PostgreSQLConnection(
+            new PgClient(buildRemoteClientConfig(external))
+        )
     }
-}
 
-async function createSDKCloudflareConnection(
-    source: CloudflareD1Source
-): Promise<ConnectionDetails> {
-    const client = new CloudflareD1Connection({
-        apiKey: source.apiKey,
-        accountId: source.accountId,
-        databaseId: source.databaseId,
-    })
-
-    return {
-        database: client,
-        defaultSchema: source.defaultSchema || 'main',
+    if (external.dialect === 'mysql') {
+        return new MySQLConnection(
+            createMySqlConnection(buildRemoteClientConfig(external))
+        )
     }
-}
 
-async function createSDKStarbaseConnection(
-    source: StarbaseDBSource
-): Promise<ConnectionDetails> {
-    const client = new StarbaseConnection({
-        apiKey: source.apiKey,
-        url: source.token,
-    })
-
-    return {
-        database: client,
-        defaultSchema: source.defaultSchema || 'main',
+    const provider = 'provider' in external ? external.provider : ''
+    const factory = SQLITE_PROVIDER_FACTORIES[provider]
+    if (!factory) {
+        throw new Error('Unsupported external database type')
     }
+
+    return factory(external)
 }
 
 export async function executeSDKQuery(opts: {
@@ -444,27 +451,7 @@ export async function executeSDKQuery(opts: {
         return []
     }
 
-    let connection: SqlConnection
-
-    if (external.dialect === 'postgresql') {
-        const { database } = await createSDKPostgresConnection(external)
-        connection = database
-    } else if (external.dialect === 'mysql') {
-        const { database } = await createSDKMySQLConnection(external)
-        connection = database
-    } else if (external.provider === 'cloudflare-d1') {
-        const { database } = await createSDKCloudflareConnection(external)
-        connection = database
-    } else if (external.provider === 'starbase') {
-        const { database } = await createSDKStarbaseConnection(external)
-        connection = database
-    } else if (external.provider === 'turso') {
-        const { database } = await createSDKTursoConnection(external)
-        connection = database
-    } else {
-        throw new Error('Unsupported external database type')
-    }
-
+    const connection = createSDKConnection(external)
     await connection.connect()
 
     const { data } = await connection.raw(opts.sql, opts.params)
