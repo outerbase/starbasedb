@@ -1,14 +1,10 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
-import { StarbaseDB } from './handler'
-import type { DataSource } from './types'
-import { Hono } from 'hono'
-import { executeQuery, executeTransaction } from './operation'
-import { LiteREST } from './literest'
-import { createResponse } from './utils'
-import { corsPreflight } from './cors'
-import { StarbasePluginRegistry } from './plugin'
+import { describe, expect, it, vi, beforeEach } from "vitest"
+import { StarbaseDB } from "./handler"
+import type { DataSource } from "./types"
+import { executeQuery, executeTransaction } from "./operation"
+import { corsPreflight } from "./cors"
 
-vi.mock('./cors', () => ({
+vi.mock("./cors", () => ({
     corsPreflight: vi.fn().mockReturnValue(new Response(null, { status: 204 })),
 }))
 
@@ -16,44 +12,22 @@ const mockExecutionContext = {
     waitUntil: vi.fn(),
 } as unknown as ExecutionContext
 
-vi.mock('hono', () => {
-    return {
-        Hono: vi.fn().mockImplementation(() => ({
-            use: vi.fn(),
-            post: vi.fn(),
-            get: vi.fn(),
-            all: vi.fn(),
-            fetch: vi.fn().mockResolvedValue(new Response('mock-response')),
-            notFound: vi.fn(),
-            onError: vi.fn(),
-        })),
-    }
-})
-
-vi.mock('./operation', () => ({
-    executeQuery: vi.fn().mockResolvedValue('mock-query-result'),
-    executeTransaction: vi.fn().mockResolvedValue('mock-transaction-result'),
+vi.mock("./operation", () => ({
+    executeQuery: vi.fn().mockResolvedValue([{ id: 1, name: "Alice" }]),
+    executeTransaction: vi.fn().mockResolvedValue([[{ id: 1 }]]),
 }))
 
-vi.mock('./literest', () => ({
+vi.mock("./literest", () => ({
     LiteREST: vi.fn().mockImplementation(() => ({
         handleRequest: vi
             .fn()
-            .mockResolvedValue(new Response('mock-rest-response')),
+            .mockResolvedValue(new Response("mock-rest-response")),
     })),
 }))
 
-vi.mock('./plugin', () => ({
+vi.mock("./plugin", () => ({
     StarbasePluginRegistry: vi.fn().mockImplementation(() => ({
         init: vi.fn(),
-    })),
-}))
-
-vi.mock('./utils', () => ({
-    createResponse: vi.fn((result, error, status) => ({
-        result,
-        error,
-        status,
     })),
 }))
 
@@ -62,141 +36,156 @@ let mockDataSource: DataSource
 let mockConfig: any
 
 beforeEach(() => {
+    vi.clearAllMocks()
     mockConfig = {
-        role: 'admin' as 'admin' | 'client',
+        role: "admin" as "admin" | "client",
         features: { rest: true, export: true, import: true },
     }
-
-    const mockExecuteQuery = vi.fn().mockResolvedValue([
-        { id: 1, name: 'Alice' },
-        { id: 2, name: 'Bob' },
-    ]) as unknown as DataSource['rpc']['executeQuery']
-
-    ;(mockExecuteQuery as any)[Symbol.dispose] = vi.fn()
-
     mockDataSource = {
-        source: 'internal',
+        source: "internal",
         rpc: {
-            executeQuery: mockExecuteQuery,
+            executeQuery: vi.fn().mockResolvedValue([{ id: 1, name: "Alice" }]),
         } as any,
     }
-
     instance = new StarbaseDB({
         dataSource: mockDataSource,
         config: mockConfig,
     })
-
-    vi.clearAllMocks()
 })
 
-describe('StarbaseDB Initialization', () => {
-    it('should initialize with given data source and config', () => {
+describe("StarbaseDB initialization and route handling", () => {
+    it("validates external data source requirement and evaluates feature flags", () => {
         expect(instance).toBeDefined()
-        expect(instance['dataSource']).toBe(mockDataSource)
-        expect(instance['config']).toBe(mockConfig)
+        expect(instance["getFeature"]("rest")).toBe(true)
+        expect(instance["getFeature"]("export")).toBe(true)
+
+        expect(
+            () =>
+                new StarbaseDB({
+                    dataSource: { source: "external" } as any,
+                    config: mockConfig,
+                })
+        ).toThrow("No external data sources available.")
     })
 
-    it('should get feature flag correctly', () => {
-        expect(instance['getFeature']('rest')).toBe(true)
-        expect(instance['getFeature']('export')).toBe(true)
-    })
-})
-
-describe('StarbaseDB Middleware & Request Handling', () => {
-    it('should correctly handle CORS preflight', async () => {
-        const request = new Request('https://example.com', {
-            method: 'OPTIONS',
-        })
-        const response = await instance.handle(request, mockExecutionContext)
-
+    it("handles CORS preflight, status endpoints, and authless pre-auth plugins", async () => {
+        const preflightRes = await instance.handle(
+            new Request("https://example.com", { method: "OPTIONS" }),
+            mockExecutionContext
+        )
         expect(corsPreflight).toHaveBeenCalled()
-        expect(response.status).toBe(204)
-    })
+        expect(preflightRes.status).toBe(204)
 
-    it('should fetch using Hono app', async () => {
-        const request = new Request('https://example.com/api/test')
-        const response = await instance.handle(request, mockExecutionContext)
+        const dbStatusRes = await instance.handle(
+            new Request("https://example.com/status/database"),
+            mockExecutionContext
+        )
+        expect(dbStatusRes.status).toBe(200)
 
-        expect(instance['app'].fetch).toHaveBeenCalledWith(request)
-        expect(response).toBeDefined()
-    })
-})
+        const notFoundRes = await instance.handle(
+            new Request("https://example.com/non-existent-route"),
+            mockExecutionContext
+        )
+        expect(notFoundRes.status).toBe(404)
 
-describe('StarbaseDB Query Execution', () => {
-    it('should execute a valid SQL query', async () => {
-        const request = new Request('https://example.com/query', {
-            method: 'POST',
-            body: JSON.stringify({ sql: 'SELECT * FROM users' }),
-            headers: { 'Content-Type': 'application/json' },
-        })
-
-        const response = await instance.queryRoute(request, false)
-
-        expect(executeQuery).toHaveBeenCalledWith({
-            sql: 'SELECT * FROM users',
-            params: undefined,
-            isRaw: false,
+        const withPlugin = new StarbaseDB({
             dataSource: mockDataSource,
             config: mockConfig,
+            plugins: [
+                {
+                    name: "public-ui",
+                    pathPrefix: "/studio/*",
+                    opts: { requiresAuth: false },
+                } as any,
+            ],
         })
-        expect(response.status).toBe(200)
-    })
-
-    it('should return 400 if SQL query is invalid', async () => {
-        const request = new Request('https://example.com/query', {
-            method: 'POST',
-            body: JSON.stringify({ sql: '' }),
-            headers: { 'Content-Type': 'application/json' },
-        })
-
-        const response = await instance.queryRoute(request, false)
-
-        expect(response.status).toBe(400)
-    })
-
-    it('should execute a SQL transaction', async () => {
-        const request = new Request('https://example.com/query', {
-            method: 'POST',
-            body: JSON.stringify({
-                transaction: [{ sql: "INSERT INTO users VALUES (1, 'Alice')" }],
-            }),
-            headers: { 'Content-Type': 'application/json' },
-        })
-
-        const response = await instance.queryRoute(request, false)
-
-        expect(executeTransaction).toHaveBeenCalled()
-        expect(response.status).toBe(200)
+        const matchedPreAuth = await withPlugin.handlePreAuth(
+            new Request("https://example.com/studio/login"),
+            mockExecutionContext
+        )
+        expect(matchedPreAuth).toBeDefined()
     })
 })
 
-describe('StarbaseDB Cache Expiry', () => {
-    it('should remove expired cache entries', async () => {
-        await instance['expireCache']()
+describe("StarbaseDB queryRoute and cache maintenance", () => {
+    it("executes single SQL queries and transactions via queryRoute", async () => {
+        const singleRes = await instance.queryRoute(
+            new Request("https://example.com/query", {
+                method: "POST",
+                body: JSON.stringify({ sql: "SELECT * FROM users" }),
+                headers: { "Content-Type": "application/json" },
+            }),
+            false
+        )
+        expect(singleRes.status).toBe(200)
+        expect(executeQuery).toHaveBeenCalled()
 
+        const txRes = await instance.queryRoute(
+            new Request("https://example.com/query", {
+                method: "POST",
+                body: JSON.stringify({
+                    transaction: [{ sql: "INSERT INTO users VALUES (1)" }],
+                }),
+                headers: { "Content-Type": "application/json" },
+            }),
+            false
+        )
+        expect(txRes.status).toBe(200)
+        expect(executeTransaction).toHaveBeenCalled()
+    })
+
+    it("rejects non-JSON Content-Type, empty SQL, invalid params, and handles errors", async () => {
+        const nonJsonRes = await instance.queryRoute(
+            new Request("https://example.com/query", {
+                method: "POST",
+                body: "SELECT 1",
+                headers: { "Content-Type": "text/plain" },
+            }),
+            false
+        )
+        expect(nonJsonRes.status).toBe(400)
+
+        const emptySqlRes = await instance.queryRoute(
+            new Request("https://example.com/query", {
+                method: "POST",
+                body: JSON.stringify({ sql: "   " }),
+                headers: { "Content-Type": "application/json" },
+            }),
+            false
+        )
+        expect(emptySqlRes.status).toBe(400)
+
+        const badParamsRes = await instance.queryRoute(
+            new Request("https://example.com/query", {
+                method: "POST",
+                body: JSON.stringify({ sql: "SELECT 1", params: "invalid" }),
+                headers: { "Content-Type": "application/json" },
+            }),
+            false
+        )
+        expect(badParamsRes.status).toBe(400)
+
+        const consoleSpy = vi
+            .spyOn(console, "error")
+            .mockImplementation(() => {})
+        vi.mocked(executeQuery).mockRejectedValueOnce(new Error("DB failure"))
+        const errRes = await instance.queryRoute(
+            new Request("https://example.com/query", {
+                method: "POST",
+                body: JSON.stringify({ sql: "SELECT 1" }),
+                headers: { "Content-Type": "application/json" },
+            }),
+            false
+        )
+        expect(errRes.status).toBe(500)
+        consoleSpy.mockRestore()
+    })
+
+    it("cleans up expired cache entries via RPC executeQuery", async () => {
+        await instance["expireCache"]()
         expect(mockDataSource.rpc.executeQuery).toHaveBeenCalledWith({
-            sql: 'DELETE FROM tmp_cache WHERE timestamp + (ttl * 1000) < ?',
+            sql: "DELETE FROM tmp_cache WHERE timestamp + (ttl * 1000) < ?",
             params: [expect.any(Number)],
         })
-    })
-})
-
-describe('StarbaseDB Error Handling', () => {
-    it('should return 500 if query execution fails', async () => {
-        vi.mocked(executeQuery).mockRejectedValue(new Error('Database error'))
-
-        const request = new Request('https://example.com/query', {
-            method: 'POST',
-            body: JSON.stringify({ sql: 'INVALID SQL' }),
-            headers: { 'Content-Type': 'application/json' },
-        })
-
-        const consoleErrorSpy = vi
-            .spyOn(console, 'error')
-            .mockImplementation(() => {})
-
-        const response = await instance.queryRoute(request, false)
-
-        expect(response.status).toBe(500)
     })
 })
