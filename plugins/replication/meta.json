@@ -1,0 +1,19 @@
+{
+    "version": "1.0.0",
+    "name": "starbasedb:replication",
+    "description": "Replicates data from external sources (Postgres, Supabase, MySQL) into internal Durable Object SQLite as an edge replica.",
+    "resources": {
+        "tables": {
+            "_starbase_replication_state": "Tracks replication cursors, sync timestamps, and status per table"
+        },
+        "secrets": {},
+        "variables": {
+            "intervalSeconds": "Default background sync interval in seconds"
+        }
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
