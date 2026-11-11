@@ -142,4 +142,23 @@ describe('Database Dump Module', () => {
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to create database dump')
     })
+
+    it('should stream large tables across multiple paginated batches without OOM buffering', async () => {
+        const firstBatch = Array.from({ length: 2 }, (_, i) => ({ id: i + 1, name: `User${i + 1}` }))
+        const secondBatch = [{ id: 3, name: 'User3' }]
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'users' }])
+            .mockResolvedValueOnce([{ sql: 'CREATE TABLE users (id INTEGER, name TEXT)' }])
+            .mockResolvedValueOnce(firstBatch)
+            .mockResolvedValueOnce(secondBatch)
+
+        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, { batchSize: 2, maxWorkSliceMs: 0 })
+        expect(response).toBeInstanceOf(Response)
+
+        const dumpText = await response.text()
+        expect(dumpText).toContain("INSERT INTO users VALUES (1, 'User1');")
+        expect(dumpText).toContain("INSERT INTO users VALUES (2, 'User2');")
+        expect(dumpText).toContain("INSERT INTO users VALUES (3, 'User3');")
+    })
 })
