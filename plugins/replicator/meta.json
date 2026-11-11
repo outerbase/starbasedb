@@ -1,0 +1,6 @@
+{
+  "id": "starbasedb:external-replicator",
+  "name": "External Source Replicator",
+  "description": "Pulls and replicates tables from an external Postgres/MySQL/Outerbase data source into Durable Object SQLite",
+  "version": "1.0.0"
+}
