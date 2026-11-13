@@ -75,6 +75,11 @@ ENABLE_RLS = 0
 AUTH_ALGORITHM = "RS256"
 AUTH_JWKS_ENDPOINT = ""
 
+# Replication plugin: pull data from the external source into the internal
+# Durable Object SQLite on an interval.
+# REPLICATION_TABLES = '[{"table":"users","schema":"public","watermarkColumn":"id","batchSize":500}]'
+# REPLICATION_INTERVAL_MS = 60000
+
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
