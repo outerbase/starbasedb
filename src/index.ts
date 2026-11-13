@@ -12,6 +12,10 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import {
+    ReplicationPlugin,
+    ReplicationTableConfig,
+} from '../plugins/replication'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -53,6 +57,10 @@ export interface Env {
 
     AUTH_ALGORITHM?: string
     AUTH_JWKS_ENDPOINT?: string
+
+    // Replication plugin configuration (JSON array of table configs)
+    REPLICATION_TABLES?: string
+    REPLICATION_INTERVAL_MS?: number
 
     HYPERDRIVE: Hyperdrive
 
@@ -211,6 +219,19 @@ export default {
 
             const interfacePlugin = new InterfacePlugin()
 
+            let replicationTables: ReplicationTableConfig[] = []
+            try {
+                replicationTables = env.REPLICATION_TABLES
+                    ? JSON.parse(env.REPLICATION_TABLES)
+                    : []
+            } catch (error) {
+                console.error('Failed to parse REPLICATION_TABLES:', error)
+            }
+            const replicationPlugin = new ReplicationPlugin({
+                tables: replicationTables,
+                intervalMs: env.REPLICATION_INTERVAL_MS,
+            })
+
             const plugins = [
                 webSocketPlugin,
                 new StudioPlugin({
@@ -226,6 +247,7 @@ export default {
                 cronPlugin,
                 new StatsPlugin(),
                 interfacePlugin,
+                replicationPlugin,
             ] satisfies StarbasePlugin[]
 
             const starbase = new StarbaseDB({
