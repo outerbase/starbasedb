@@ -1,0 +1,6 @@
+{
+    "name": "Replication",
+    "description": "Replicate tables and rows from an external database source into internal StarbaseDB SQLite storage.",
+    "author": "khuxaiphi-stack",
+    "version": "1.0.0"
+}
