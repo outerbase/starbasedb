@@ -1,0 +1,30 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "_starbase_replication_state": {
+                "columns": [
+                    "table_name",
+                    "target_table",
+                    "cursor_column",
+                    "last_cursor_value",
+                    "primary_key",
+                    "sync_mode",
+                    "rows_replicated",
+                    "status",
+                    "last_error",
+                    "retry_count",
+                    "last_synced_at",
+                    "updated_at"
+                ]
+            }
+        },
+        "secrets": {},
+        "variables": {}
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
