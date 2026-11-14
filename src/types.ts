@@ -64,6 +64,14 @@ export type DataSource = {
     cacheTTL?: number
     registry?: StarbasePluginRegistry
     executionContext?: ExecutionContext
+    r2Bucket?: {
+        put: (
+            key: string,
+            value: string | ArrayBuffer | Blob | ReadableStream,
+            options?: Record<string, unknown>
+        ) => Promise<unknown>
+        get?: (key: string) => Promise<{ text: () => Promise<string> } | null>
+    }
 }
 
 export enum RegionLocationHint {
