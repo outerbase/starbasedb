@@ -59,16 +59,20 @@ export class SqlMacrosPlugin extends StarbasePlugin {
 
     private checkSelectStar(sql: string, params?: unknown[]): string {
         try {
-            const ast = parser.astify(sql)[0]
+            const rawAst = parser.astify(sql)
+            const ast = Array.isArray(rawAst) ? rawAst[0] : rawAst
 
             // Only check SELECT statements
-            if (ast.type === 'select') {
-                const hasSelectStar = ast.columns.some(
-                    (col: any) =>
-                        col.expr.type === 'star' ||
-                        (col.expr.type === 'column_ref' &&
-                            col.expr.column === '*')
-                )
+            if (ast && ast.type === 'select') {
+                const hasSelectStar =
+                    ast.columns === '*' ||
+                    (Array.isArray(ast.columns) &&
+                        ast.columns.some(
+                            (col: any) =>
+                                col.expr?.type === 'star' ||
+                                (col.expr?.type === 'column_ref' &&
+                                    col.expr?.column === '*')
+                        ))
 
                 if (hasSelectStar) {
                     throw new Error(
@@ -116,10 +120,13 @@ export class SqlMacrosPlugin extends StarbasePlugin {
                 '$_exclude',
                 '__exclude'
             )
-            const normalizedQuery = parser.astify(preparedSql)[0]
+            const rawQuery = parser.astify(preparedSql)
+            const normalizedQuery = Array.isArray(rawQuery)
+                ? rawQuery[0]
+                : rawQuery
 
             // Only process SELECT statements
-            if (normalizedQuery.type !== 'select') {
+            if (!normalizedQuery || normalizedQuery.type !== 'select') {
                 return sql
             }
 
