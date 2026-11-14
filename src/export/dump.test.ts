@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { dumpDatabaseRoute } from './dump'
+import { dumpDatabaseRoute, formatDumpFilename, DumpJobState } from './dump'
 import { executeOperation } from '.'
 import { createResponse } from '../utils'
 import type { DataSource } from '../types'
@@ -28,7 +28,7 @@ beforeEach(() => {
     mockDataSource = {
         source: 'external',
         external: { dialect: 'sqlite' },
-        rpc: { executeQuery: vi.fn() },
+        rpc: { executeQuery: vi.fn(), setAlarm: vi.fn() },
     } as any
 
     mockConfig = {
@@ -141,5 +141,119 @@ describe('Database Dump Module', () => {
         expect(response.status).toBe(500)
         const jsonResponse: { error: string } = await response.json()
         expect(jsonResponse.error).toBe('Failed to create database dump')
+        consoleErrorMock.mockRestore()
+    })
+
+    it('formats R2 dump filenames as dump_YYYYMMDD-HHMMSS.sql', () => {
+        const date = new Date('2024-01-01T17:00:00Z')
+        expect(formatDumpFilename(date)).toBe('dump_20240101-170000.sql')
+    })
+
+    it('paginates large tables in chunks and uploads dump to R2 with callback notification', async () => {
+        const putMock = vi.fn().mockResolvedValue(undefined)
+        mockDataSource.r2Bucket = { put: putMock }
+
+        const fetchSpy = vi
+            .spyOn(globalThis, 'fetch')
+            .mockResolvedValue(new Response('OK', { status: 200 }))
+
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'events' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE events (id INTEGER, label TEXT);' },
+            ])
+            // Chunk 1 (2 rows == chunkSize 2)
+            .mockResolvedValueOnce([
+                { id: 1, label: 'ev1' },
+                { id: 2, label: 'ev2' },
+            ])
+            // Chunk 2 (1 row < chunkSize 2 -> end of table)
+            .mockResolvedValueOnce([{ id: 3, label: 'ev3' }])
+
+        const fixedDate = new Date('2024-01-01T17:00:00Z')
+        const response = await dumpDatabaseRoute(
+            mockDataSource,
+            mockConfig,
+            undefined,
+            {
+                chunkSize: 2,
+                breathingIntervalMs: 1,
+                useR2: true,
+                callbackUrl: 'https://example.com/webhook/dump-complete',
+                now: fixedDate,
+            }
+        )
+
+        expect(response.status).toBe(200)
+        const body: any = await response.json()
+        expect(body.result.status).toBe('completed')
+        expect(body.result.fileName).toBe('dump_20240101-170000.sql')
+        expect(body.result.tablesExported).toBe(1)
+
+        expect(putMock).toHaveBeenCalledTimes(1)
+        const [r2Key, r2Content] = putMock.mock.calls[0]
+        expect(r2Key).toBe('dump_20240101-170000.sql')
+        expect(r2Content).toContain("INSERT INTO events VALUES (1, 'ev1');")
+        expect(r2Content).toContain("INSERT INTO events VALUES (2, 'ev2');")
+        expect(r2Content).toContain("INSERT INTO events VALUES (3, 'ev3');")
+
+        expect(fetchSpy).toHaveBeenCalledWith(
+            'https://example.com/webhook/dump-complete',
+            expect.objectContaining({ method: 'POST' })
+        )
+        fetchSpy.mockRestore()
+    })
+
+    it('pauses and schedules a Durable Object alarm when maxExecutionMs is exceeded, then resumes cleanly', async () => {
+        const putMock = vi.fn().mockResolvedValue(undefined)
+        mockDataSource.r2Bucket = { put: putMock }
+
+        let savedState: DumpJobState | undefined
+        vi.mocked(executeOperation)
+            .mockResolvedValueOnce([{ name: 'large_table' }])
+            .mockResolvedValueOnce([
+                { sql: 'CREATE TABLE large_table (id INTEGER);' },
+            ])
+            // First batch of 2 rows triggers timeout check
+            .mockResolvedValueOnce([{ id: 1 }, { id: 2 }])
+
+        const pauseRes = await dumpDatabaseRoute(
+            mockDataSource,
+            mockConfig,
+            undefined,
+            {
+                chunkSize: 2,
+                maxExecutionMs: -1, // Immediately trigger alarm pause after first chunk
+                useR2: true,
+                now: new Date('2024-01-01T17:00:00Z'),
+                onPauseForAlarm: async (state) => {
+                    savedState = state
+                },
+            }
+        )
+
+        expect(pauseRes.status).toBe(202)
+        expect(savedState).toBeDefined()
+        expect(savedState?.rowOffset).toBe(2)
+
+        // Now resume from savedState for the remaining row
+        vi.mocked(executeOperation).mockResolvedValueOnce([{ id: 3 }])
+
+        const resumeRes = await dumpDatabaseRoute(
+            mockDataSource,
+            mockConfig,
+            undefined,
+            {
+                resumeState: savedState,
+                maxExecutionMs: 20000,
+                useR2: true,
+            }
+        )
+
+        expect(resumeRes.status).toBe(200)
+        const finalSql = putMock.mock.calls[putMock.mock.calls.length - 1][1]
+        expect(finalSql).toContain('INSERT INTO large_table VALUES (1);')
+        expect(finalSql).toContain('INSERT INTO large_table VALUES (2);')
+        expect(finalSql).toContain('INSERT INTO large_table VALUES (3);')
     })
 })
