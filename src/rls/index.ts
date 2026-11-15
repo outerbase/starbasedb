@@ -36,8 +36,17 @@ let policies: Policy[] = []
 // -> I say this because if an error occurs then it would entirely circumvent rules and over-expose data.
 // -> If they really don't want any rules to exist, remove this power-up
 
+// Compare table names ignoring any schema qualifier ("public.users" -> "users"),
+// since parsed query table refs are frequently unqualified while policies store
+// schema-qualified identifiers.
+function baseTableName(name: string): string {
+    const normalized = normalizeIdentifier(name)
+    if (!normalized) return normalized
+    return normalized.includes('.') ? normalized.split('.').pop()! : normalized
+}
+
 function normalizeIdentifier(name: string): string {
-    if (!name) return name
+    if (!name || typeof name !== 'string') return name
     if (
         (name.startsWith('"') && name.endsWith('"')) ||
         (name.startsWith('`') && name.endsWith('`'))
@@ -84,10 +93,10 @@ export async function loadPolicies(dataSource: DataSource): Promise<Policy[]> {
                 // value = `${value}::INT`
             }
 
-            let tableName = row.schema
-                ? `${row.schema}.${row.table}`
-                : row.table
-            tableName = normalizeIdentifier(tableName)
+            // Keep the column reference unqualified: matching against query table
+            // refs is schema-aware via baseTableName, and qualified column refs
+            // (public.users.user_id) render invalid SQL on unaliased tables.
+            const tableName = normalizeIdentifier(row.table)
             const columnName = normalizeIdentifier(row.column)
 
             // If the policy value is context.id(), use a placeholder
@@ -234,7 +243,7 @@ function applyRLSToAst(ast: any): void {
 
     const tablesWithRules: Record<string, string[]> = {}
     policies.forEach((policy) => {
-        const tbl = normalizeIdentifier(policy.condition.left.table)
+        const tbl = baseTableName(policy.condition.left.table)
         if (!tablesWithRules[tbl]) {
             tablesWithRules[tbl] = []
         }
@@ -264,12 +273,26 @@ function applyRLSToAst(ast: any): void {
     } else {
         // SELECT or DELETE
         tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
+            ast.from?.flatMap((fromTable: any) => {
+                // Plain table reference
+                if (fromTable?.table) {
+                    let tableName = normalizeIdentifier(fromTable.table)
+                    if (tableName.includes('.')) {
+                        tableName = tableName.split('.')[1]
+                    }
+                    return [tableName]
                 }
-                return tableName
+                // Derived table (subquery in FROM): recurse into its AST so
+                // policies apply inside the subquery as well.
+                const sub =
+                    fromTable?.subquery ??
+                    fromTable?.expr?.ast ??
+                    fromTable?.expr?.select?.ast ??
+                    (fromTable?.expr?.select && typeof fromTable.expr.select === 'object'
+                        ? fromTable.expr.select
+                        : undefined)
+                if (sub) applyRLSToAst(sub)
+                return []
             }) || []
     }
 
@@ -291,7 +314,7 @@ function applyRLSToAst(ast: any): void {
             (policy) => policy.action === statementType || policy.action === '*'
         )
         .forEach(({ action, condition }) => {
-            const targetTable = normalizeIdentifier(condition.left.table)
+            const targetTable = baseTableName(condition.left.table)
             const isTargetTable = tables.includes(targetTable)
 
             if (!isTargetTable) return
