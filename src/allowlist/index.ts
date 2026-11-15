@@ -73,7 +73,7 @@ export async function isQueryAllowed(opts: {
 
     try {
         if (!sql) {
-            return Error('No SQL provided for allowlist check')
+            throw new Error('No SQL provided for allowlist check')
         }
 
         const normalizedQuery = parser.astify(normalizeSQL(sql))
