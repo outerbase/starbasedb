@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
 import { StatsPlugin } from '../plugins/stats'
 import { CronPlugin } from '../plugins/cron'
 import { InterfacePlugin } from '../plugins/interface'
+import { ReplicaPlugin } from '../plugins/replica'
 
 export { StarbaseDBDurableObject } from './do'
 
@@ -53,6 +54,9 @@ export interface Env {
 
     AUTH_ALGORITHM?: string
     AUTH_JWKS_ENDPOINT?: string
+
+    REPLICA_TABLES?: string
+    REPLICA_BATCH_SIZE?: number
 
     HYPERDRIVE: Hyperdrive
 
@@ -210,6 +214,17 @@ export default {
             }, ctx)
 
             const interfacePlugin = new InterfacePlugin()
+            const replicaTables = env.REPLICA_TABLES
+                ? env.REPLICA_TABLES.split(',')
+                      .map((t) => t.trim())
+                      .filter(Boolean)
+                : []
+            const replicaPlugin = new ReplicaPlugin({
+                tables: replicaTables,
+                batchSize: env.REPLICA_BATCH_SIZE
+                    ? Number(env.REPLICA_BATCH_SIZE)
+                    : undefined,
+            })
 
             const plugins = [
                 webSocketPlugin,
@@ -225,6 +240,7 @@ export default {
                 cdcPlugin,
                 cronPlugin,
                 new StatsPlugin(),
+                replicaPlugin,
                 interfacePlugin,
             ] satisfies StarbasePlugin[]
 

@@ -54,6 +54,8 @@ ENABLE_RLS = 0
 
 # External database source details
 # This enables Starbase to connect to an external data source
+# REPLICA_TABLES = ""
+# REPLICA_BATCH_SIZE = 100
 # OUTERBASE_API_KEY = ""
 # EXTERNAL_DB_TYPE = "postgresql"
 # EXTERNAL_DB_HOST = ""
