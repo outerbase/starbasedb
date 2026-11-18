@@ -1,0 +1,388 @@
+��diff --git a/src/export/dump.test.ts b/src/export/dump.test.ts
+index ca65b43..a6ace39 100644
+--- a/src/export/dump.test.ts
++++ b/src/export/dump.test.ts
+@@ -142,4 +142,179 @@ describe('Database Dump Module', () => {
+         const jsonResponse: { error: string } = await response.json()
+         expect(jsonResponse.error).toBe('Failed to create database dump')
+     })
++
++    it('should paginate large tables in batches and stream the response', async () => {
++        vi.mocked(executeOperation)
++            .mockResolvedValueOnce([{ name: 'events' }])
++            .mockResolvedValueOnce([
++                { sql: 'CREATE TABLE events (id INTEGER, label TEXT);' },
++            ])
++            // Batch 1 (offset 0, limit 2) -> full page
++            .mockResolvedValueOnce([
++                { id: 1, label: 'first' },
++                { id: 2, label: 'second' },
++            ])
++            // Batch 2 (offset 2, limit 2) -> full page
++            .mockResolvedValueOnce([
++                { id: 3, label: 'third' },
++                { id: 4, label: 'fourth' },
++            ])
++            // Batch 3 (offset 4, limit 2) -> partial page (< batchSize), stops
++            .mockResolvedValueOnce([{ id: 5, label: 'fifth' }])
++
++        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, {
++            batchSize: 2,
++        })
++
++        expect(response.status).toBe(200)
++        expect(response.body).toBeInstanceOf(ReadableStream)
++
++        const dumpText = await response.text()
++        expect(dumpText).toContain(
++            'CREATE TABLE events (id INTEGER, label TEXT);'
++        )
++        for (let i = 1; i <= 5; i++) {
++            expect(dumpText).toContain(`INSERT INTO events VALUES (${i}, `)
++        }
++
++        // Verify exact pagination queries (LIMIT ? OFFSET ?)
++        expect(executeOperation).toHaveBeenNthCalledWith(
++            3,
++            [{ sql: 'SELECT * FROM events LIMIT ? OFFSET ?;', params: [2, 0] }],
++            mockDataSource,
++            mockConfig
++        )
++        expect(executeOperation).toHaveBeenNthCalledWith(
++            4,
++            [{ sql: 'SELECT * FROM events LIMIT ? OFFSET ?;', params: [2, 2] }],
++            mockDataSource,
++            mockConfig
++        )
++        expect(executeOperation).toHaveBeenNthCalledWith(
++            5,
++            [{ sql: 'SELECT * FROM events LIMIT ? OFFSET ?;', params: [2, 4] }],
++            mockDataSource,
++            mockConfig
++        )
++    })
++
++    it('should stop paginating when an exact batch multiple ends with an empty page', async () => {
++        vi.mocked(executeOperation)
++            .mockResolvedValueOnce([{ name: 'items' }])
++            .mockResolvedValueOnce([
++                { sql: 'CREATE TABLE items (id INTEGER);' },
++            ])
++            .mockResolvedValueOnce([{ id: 1 }, { id: 2 }])
++            .mockResolvedValueOnce([])
++
++        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, {
++            batchSize: 2,
++        })
++
++        const dumpText = await response.text()
++        expect(dumpText).toContain('INSERT INTO items VALUES (1);')
++        expect(dumpText).toContain('INSERT INTO items VALUES (2);')
++        expect(executeOperation).toHaveBeenCalledTimes(4)
++    })
++
++    it('should stream thousands of rows using default batch size without buffering the entire dump', async () => {
++        const totalRows = 1250
++        const allRows = Array.from({ length: totalRows }, (_, i) => ({
++            id: i + 1,
++            payload: `row-${i + 1}`,
++        }))
++
++        vi.mocked(executeOperation).mockImplementation(async (queries) => {
++            const sql = queries[0].sql
++            const params = queries[0].params || []
++            if (sql.includes('sqlite_master') && sql.includes('SELECT name')) {
++                return [{ name: 'big_table' }]
++            }
++            if (sql.includes('sqlite_master') && sql.includes('SELECT sql')) {
++                return [
++                    {
++                        sql: 'CREATE TABLE big_table (id INTEGER, payload TEXT);',
++                    },
++                ]
++            }
++            const [limit, offset] = params
++            return allRows.slice(offset, offset + limit)
++        })
++
++        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
++        const dumpText = await response.text()
++
++        expect(dumpText).toContain("INSERT INTO big_table VALUES (1, 'row-1');")
++        expect(dumpText).toContain(
++            "INSERT INTO big_table VALUES (500, 'row-500');"
++        )
++        expect(dumpText).toContain(
++            "INSERT INTO big_table VALUES (1250, 'row-1250');"
++        )
++        // 1 (tables) + 1 (schema) + 3 (batches of 500, 500, 250) = 5 calls
++        expect(executeOperation).toHaveBeenCalledTimes(5)
++    })
++
++    it('should format NULL, boolean, BLOB values and special table names safely', async () => {
++        vi.mocked(executeOperation)
++            .mockResolvedValueOnce([{ name: 'user-events' }])
++            .mockResolvedValueOnce([
++                {
++                    sql: 'CREATE TABLE "user-events" (id INTEGER, meta TEXT, active INTEGER, raw BLOB);',
++                },
++            ])
++            .mockResolvedValueOnce([
++                {
++                    id: 1,
++                    meta: null,
++                    active: true,
++                    raw: new Uint8Array([0xde, 0xad, 0xbe, 0xef]),
++                },
++            ])
++
++        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
++        const dumpText = await response.text()
++
++        expect(dumpText).toContain(
++            'INSERT INTO "user-events" VALUES (1, NULL, 1, X\'deadbeef\');'
++        )
++    })
++
++    it('should error the stream if a batch query fails mid-stream', async () => {
++        vi.spyOn(console, 'error').mockImplementation(() => {})
++        vi.mocked(executeOperation)
++            .mockResolvedValueOnce([{ name: 'users' }])
++            .mockResolvedValueOnce([
++                { sql: 'CREATE TABLE users (id INTEGER);' },
++            ])
++            .mockRejectedValueOnce(new Error('Mid-stream RPC failure'))
++
++        const response = await dumpDatabaseRoute(mockDataSource, mockConfig)
++        await expect(response.text()).rejects.toThrow('Mid-stream RPC failure')
++    })
++
++    it('should stop fetching subsequent batches when stream is cancelled', async () => {
++        let batchCalls = 0
++        vi.mocked(executeOperation).mockImplementation(async (queries) => {
++            const sql = queries[0].sql
++            if (sql.includes('SELECT name')) {
++                return [{ name: 'logs' }]
++            }
++            if (sql.includes('SELECT sql')) {
++                return [{ sql: 'CREATE TABLE logs (id INTEGER);' }]
++            }
++            batchCalls++
++            return [{ id: batchCalls }, { id: batchCalls + 1 }]
++        })
++
++        const response = await dumpDatabaseRoute(mockDataSource, mockConfig, {
++            batchSize: 2,
++        })
++        const reader = response.body!.getReader()
++        // Read only header + schema chunk, then cancel before fetching all batches
++        await reader.read()
++        await reader.cancel()
++
++        expect(batchCalls).toBeLessThanOrEqual(1)
++    })
+ })
+diff --git a/src/export/dump.ts b/src/export/dump.ts
+index 91a2e89..288176a 100644
+--- a/src/export/dump.ts
++++ b/src/export/dump.ts
+@@ -3,67 +3,165 @@ import { StarbaseDBConfiguration } from '../handler'
+ import { DataSource } from '../types'
+ import { createResponse } from '../utils'
+ 
+-export async function dumpDatabaseRoute(
++const DEFAULT_BATCH_SIZE = 500
++
++export interface DumpDatabaseOptions {
++    batchSize?: number
++}
++
++function formatIdentifier(identifier: string): string {
++    if (/^[A-Za-z_][A-Za-z0-9_]*$/.test(identifier)) {
++        return identifier
++    }
++    return `"${identifier.replace(/"/g, '""')}"`
++}
++
++function formatSqlValue(value: unknown): string {
++    if (value === null || value === undefined) {
++        return 'NULL'
++    }
++    if (typeof value === 'string') {
++        return `'${value.replace(/'/g, "''")}'`
++    }
++    if (typeof value === 'boolean') {
++        return value ? '1' : '0'
++    }
++    if (value instanceof Uint8Array) {
++        const hex = Array.from(value, (b) =>
++            b.toString(16).padStart(2, '0')
++        ).join('')
++        return `X'${hex}'`
++    }
++    if (value instanceof ArrayBuffer) {
++        const hex = Array.from(new Uint8Array(value), (b) =>
++            b.toString(16).padStart(2, '0')
++        ).join('')
++        return `X'${hex}'`
++    }
++    return String(value)
++}
++
++async function* generateDumpChunks(
++    tables: string[],
+     dataSource: DataSource,
+-    config: StarbaseDBConfiguration
+-): Promise<Response> {
+-    try {
+-        // Get all table names
+-        const tablesResult = await executeOperation(
+-            [{ sql: "SELECT name FROM sqlite_master WHERE type='table';" }],
++    config: StarbaseDBConfiguration,
++    batchSize: number
++): AsyncGenerator<string> {
++    yield 'SQLite format 3\0' // SQLite file header
++
++    // Iterate through all tables
++    for (const table of tables) {
++        // Get table schema
++        const schemaResult = await executeOperation(
++            [
++                {
++                    sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name=?;`,
++                    params: [table],
++                },
++            ],
+             dataSource,
+             config
+         )
+ 
+-        const tables = tablesResult.map((row: any) => row.name)
+-        let dumpContent = 'SQLite format 3\0' // SQLite file header
++        if (schemaResult.length) {
++            const schema = schemaResult[0].sql
++            yield `\n-- Table: ${table}\n${schema};\n\n`
++        }
++
++        const safeTable = formatIdentifier(table)
++        let offset = 0
+ 
+-        // Iterate through all tables
+-        for (const table of tables) {
+-            // Get table schema
+-            const schemaResult = await executeOperation(
++        // Fetch and stream table data in pages to avoid loading large tables into memory
++        while (true) {
++            const dataResult = await executeOperation(
+                 [
+                     {
+-                        sql: `SELECT sql FROM sqlite_master WHERE type='table' AND name='${table}';`,
++                        sql: `SELECT * FROM ${safeTable} LIMIT ? OFFSET ?;`,
++                        params: [batchSize, offset],
+                     },
+                 ],
+                 dataSource,
+                 config
+             )
+ 
+-            if (schemaResult.length) {
+-                const schema = schemaResult[0].sql
+-                dumpContent += `\n-- Table: ${table}\n${schema};\n\n`
++            if (!dataResult || dataResult.length === 0) {
++                break
+             }
+ 
+-            // Get table data
+-            const dataResult = await executeOperation(
+-                [{ sql: `SELECT * FROM ${table};` }],
+-                dataSource,
+-                config
+-            )
+-
++            let batchSql = ''
+             for (const row of dataResult) {
+-                const values = Object.values(row).map((value) =>
+-                    typeof value === 'string'
+-                        ? `'${value.replace(/'/g, "''")}'`
+-                        : value
+-                )
+-                dumpContent += `INSERT INTO ${table} VALUES (${values.join(', ')});\n`
++                const values = Object.values(row).map(formatSqlValue)
++                batchSql += `INSERT INTO ${safeTable} VALUES (${values.join(', ')});\n`
+             }
++            yield batchSql
+ 
+-            dumpContent += '\n'
++            if (dataResult.length < batchSize) {
++                break
++            }
++
++            offset += batchSize
+         }
+ 
+-        // Create a Blob from the dump content
+-        const blob = new Blob([dumpContent], { type: 'application/x-sqlite3' })
++        yield '\n'
++    }
++}
++
++export async function dumpDatabaseRoute(
++    dataSource: DataSource,
++    config: StarbaseDBConfiguration,
++    options: DumpDatabaseOptions = {}
++): Promise<Response> {
++    const batchSize =
++        options.batchSize && options.batchSize > 0
++            ? Math.floor(options.batchSize)
++            : DEFAULT_BATCH_SIZE
++
++    try {
++        // Get all user table names upfront so initial connection/query failures return HTTP 500
++        const tablesResult = await executeOperation(
++            [
++                {
++                    sql: "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';",
++                },
++            ],
++            dataSource,
++            config
++        )
++
++        const tables: string[] = tablesResult.map((row: any) => row.name)
++        const encoder = new TextEncoder()
++        const iterator = generateDumpChunks(
++            tables,
++            dataSource,
++            config,
++            batchSize
++        )
++
++        const stream = new ReadableStream<Uint8Array>({
++            async pull(controller) {
++                try {
++                    const { value, done } = await iterator.next()
++                    if (done) {
++                        controller.close()
++                        return
++                    }
++                    controller.enqueue(encoder.encode(value))
++                } catch (error) {
++                    console.error('Database Dump Error:', error)
++                    controller.error(error)
++                }
++            },
++            async cancel() {
++                await iterator.return?.(undefined)
++            },
++        })
+ 
+         const headers = new Headers({
+             'Content-Type': 'application/x-sqlite3',
+             'Content-Disposition': 'attachment; filename="database_dump.sql"',
+         })
+ 
+-        return new Response(blob, { headers })
++        return new Response(stream, { headers })
+     } catch (error: any) {
+         console.error('Database Dump Error:', error)
+         return createResponse(undefined, 'Failed to create database dump', 500)
