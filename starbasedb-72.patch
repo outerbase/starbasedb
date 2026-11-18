@@ -1,0 +1,1395 @@
+diff --git a/plugins/replica/README.md b/plugins/replica/README.md
+new file mode 100644
+index 0000000..aa852fa
+--- /dev/null
++++ b/plugins/replica/README.md
+@@ -0,0 +1,86 @@
++# StarbaseDB Replica Plugin
++
++The **ReplicaPlugin** pulls configurable tables from an external data source (defined via `wrangler.toml` / `dataSource.external` or Hyperdrive) into the internal Durable Object SQLite database, providing a near-edge read replica.
++
++## Features
++
++- **Paginated Pull Synchronization**: Fetches external tables in configurable page sizes (`batchSize`, default `100`) using `LIMIT` and `OFFSET`.
++- **Automatic Schema Provisioning**: Inspects external table schemas (`information_schema.columns` for PostgreSQL/MySQL, `PRAGMA table_info` for SQLite) or infers column types from fetched rows, and creates matching tables in Durable Object SQLite via `CREATE TABLE IF NOT EXISTS`.
++- **Idempotent Upserts**: Replicates rows using `INSERT OR REPLACE INTO ...` so repeated syncs safely update existing records.
++- **Sync Metadata Tracking**: Stores per-table sync timestamps, row counts, status, and error details in `tmp_replica_status`.
++- **Admin-Protected Endpoints**:
++  - `POST /replica/sync` — Triggers replication for configured tables or an optional per-request `tables` / `batchSize` override.
++  - `GET /replica/status` — Returns configured tables and the latest `tmp_replica_status` rows.
++
++## Configuration
++
++### In `src/index.ts`
++
++```ts
++import { ReplicaPlugin } from '../plugins/replica'
++
++const replicaPlugin = new ReplicaPlugin({
++    tables: [
++        'users',
++        {
++            table: 'orders',
++            schema: 'public',
++            primaryKey: 'id',
++            batchSize: 250,
++            where: "status = 'paid'",
++        },
++    ],
++    batchSize: 100,
++})
++```
++
++### In `wrangler.toml`
++
++Configure your external database source (e.g. `EXTERNAL_DB_TYPE`, `EXTERNAL_DB_HOST`, `OUTERBASE_API_KEY`, etc.) and optionally set:
++
++```toml
++[vars]
++REPLICA_TABLES = "users,orders"
++REPLICA_BATCH_SIZE = 100
++```
++
++## API Reference
++
++### `POST /replica/sync`
++
++Requires `Authorization: Bearer <ADMIN_AUTHORIZATION_TOKEN>`.
++
++Optional JSON body:
++
++```json
++{
++    "tables": ["users", { "table": "orders", "primaryKey": "order_id", "batchSize": 50 }],
++    "batchSize": 100
++}
++```
++
++Example response (`200 OK`):
++
++```json
++{
++    "result": {
++        "syncedAt": "2026-11-15T15:55:00.000Z",
++        "results": [
++            {
++                "table": "users",
++                "schema": "public",
++                "rowsSynced": 150,
++                "pages": 2,
++                "status": "success"
++            }
++        ],
++        "totalRowsSynced": 150
++    }
++}
++```
++
++### `GET /replica/status`
++
++Requires `Authorization: Bearer <ADMIN_AUTHORIZATION_TOKEN>`.
++
++Returns the configured table list and all recorded rows from `tmp_replica_status`.
+diff --git a/plugins/replica/index.test.ts b/plugins/replica/index.test.ts
+new file mode 100644
+index 0000000..6755b9a
+--- /dev/null
++++ b/plugins/replica/index.test.ts
+@@ -0,0 +1,486 @@
++import { describe, it, expect, vi, beforeEach } from 'vitest'
++import { Hono } from 'hono'
++import {
++    ReplicaPlugin,
++    assertValidIdentifier,
++    mapColumnTypeToSqlite,
++    normalizeQueryRows,
++    normalizeSqliteValue,
++} from './index'
++import { StarbaseDB, StarbaseDBConfiguration } from '../../src/handler'
++import { DataSource } from '../../src/types'
++
++function createMockDataSource(overrides: Partial<DataSource> = {}): DataSource {
++    const executeQuery = vi.fn().mockResolvedValue([])
++    return {
++        source: 'internal',
++        rpc: {
++            executeQuery,
++            getAlarm: vi.fn(),
++            setAlarm: vi.fn(),
++            deleteAlarm: vi.fn(),
++            getStatistics: vi.fn(),
++        } as any,
++        external: {
++            dialect: 'postgresql',
++            host: 'localhost',
++            port: 5432,
++            user: 'postgres',
++            password: 'secret',
++            database: 'app',
++            defaultSchema: 'public',
++        },
++        ...overrides,
++    }
++}
++
++function createMockCtx(): ExecutionContext {
++    return {
++        waitUntil: vi.fn(),
++        passThroughOnException: vi.fn(),
++    } as unknown as ExecutionContext
++}
++
++describe('ReplicaPlugin - Helpers & Initialization', () => {
++    it('should initialize with default options', () => {
++        const plugin = new ReplicaPlugin()
++        expect(plugin.name).toBe('starbasedb:replica')
++        expect(plugin.prefix).toBe('/replica')
++        expect(plugin.tables).toEqual([])
++        expect(plugin.batchSize).toBe(100)
++        expect(plugin.adminOnly).toBe(true)
++    })
++
++    it('should initialize with custom options', () => {
++        const plugin = new ReplicaPlugin({
++            tables: ['users', { table: 'orders', primaryKey: 'order_id', batchSize: 50 }],
++            batchSize: 25,
++            adminOnly: false,
++        })
++        expect(plugin.tables).toHaveLength(2)
++        expect(plugin.batchSize).toBe(25)
++        expect(plugin.adminOnly).toBe(false)
++    })
++
++    it('should validate SQL identifiers and reject unsafe input', () => {
++        expect(assertValidIdentifier('users_table_1')).toBe('users_table_1')
++        expect(() => assertValidIdentifier('users; DROP TABLE users;--')).toThrow()
++        expect(() => assertValidIdentifier('123invalid')).toThrow()
++    })
++
++    it('should map external SQL types to SQLite column types', () => {
++        expect(mapColumnTypeToSqlite('integer')).toBe('INTEGER')
++        expect(mapColumnTypeToSqlite('bigint')).toBe('INTEGER')
++        expect(mapColumnTypeToSqlite('boolean')).toBe('INTEGER')
++        expect(mapColumnTypeToSqlite('numeric')).toBe('REAL')
++        expect(mapColumnTypeToSqlite('double precision')).toBe('REAL')
++        expect(mapColumnTypeToSqlite('bytea')).toBe('BLOB')
++        expect(mapColumnTypeToSqlite('character varying')).toBe('TEXT')
++    })
++
++    it('should normalize object array and raw column/row query results', () => {
++        expect(normalizeQueryRows([{ id: 1, name: 'Ada' }])).toEqual([
++            { id: 1, name: 'Ada' },
++        ])
++        expect(
++            normalizeQueryRows({
++                columns: ['id', 'name'],
++                rows: [[2, 'Grace']],
++            })
++        ).toEqual([{ id: 2, name: 'Grace' }])
++    })
++
++    it('should normalize values for SQLite storage', () => {
++        const now = new Date('2026-01-01T00:00:00.000Z')
++        expect(normalizeSqliteValue(true)).toBe(1)
++        expect(normalizeSqliteValue(false)).toBe(0)
++        expect(normalizeSqliteValue(now)).toBe('2026-01-01T00:00:00.000Z')
++        expect(normalizeSqliteValue({ a: 1 })).toBe('{"a":1}')
++        expect(normalizeSqliteValue(undefined)).toBeNull()
++    })
++})
++
++describe('ReplicaPlugin - HTTP Routes & Auth', () => {
++    let config: StarbaseDBConfiguration
++
++    beforeEach(() => {
++        config = { role: 'admin' }
++    })
++
++    it('should reject POST /replica/sync for non-admin users', async () => {
++        const plugin = new ReplicaPlugin({ tables: ['users'] })
++        const starbase = new StarbaseDB({
++            dataSource: createMockDataSource(),
++            config: { role: 'client' },
++            plugins: [plugin],
++        })
++
++        const res = await starbase.handle(
++            new Request('http://localhost/replica/sync', { method: 'POST' }),
++            createMockCtx()
++        )
++        expect(res.status).toBe(403)
++    })
++
++    it('should reject GET /replica/status for non-admin users', async () => {
++        const plugin = new ReplicaPlugin({ tables: ['users'] })
++        const starbase = new StarbaseDB({
++            dataSource: createMockDataSource(),
++            config: { role: 'client' },
++            plugins: [plugin],
++        })
++
++        const res = await starbase.handle(
++            new Request('http://localhost/replica/status', { method: 'GET' }),
++            createMockCtx()
++        )
++        expect(res.status).toBe(403)
++    })
++
++    it('should return 400 when external data source is not configured', async () => {
++        const plugin = new ReplicaPlugin({ tables: ['users'] })
++        const starbase = new StarbaseDB({
++            dataSource: createMockDataSource({ external: undefined }),
++            config,
++            plugins: [plugin],
++        })
++
++        const res = await starbase.handle(
++            new Request('http://localhost/replica/sync', { method: 'POST' }),
++            createMockCtx()
++        )
++        expect(res.status).toBe(400)
++        const json = (await res.json()) as any
++        expect(json.error).toContain('External data source is not configured')
++    })
++
++    it('should return 400 when no tables are configured', async () => {
++        const plugin = new ReplicaPlugin({ tables: [] })
++        const starbase = new StarbaseDB({
++            dataSource: createMockDataSource(),
++            config,
++            plugins: [plugin],
++        })
++
++        const res = await starbase.handle(
++            new Request('http://localhost/replica/sync', { method: 'POST' }),
++            createMockCtx()
++        )
++        expect(res.status).toBe(400)
++        const json = (await res.json()) as any
++        expect(json.error).toContain('No tables configured')
++    })
++})
++
++describe('ReplicaPlugin - Pull Synchronization & Pagination', () => {
++    it('should create local table from external schema and sync rows with INSERT OR REPLACE', async () => {
++        const dataSource = createMockDataSource()
++        const externalExec = vi.fn(async ({ sql }: { sql: string }) => {
++            if (sql.includes('information_schema.columns')) {
++                return [
++                    { name: 'id', type: 'integer' },
++                    { name: 'email', type: 'varchar' },
++                    { name: 'active', type: 'boolean' },
++                ]
++            }
++            if (sql.includes('LIMIT 100 OFFSET 0')) {
++                return [
++                    { id: 1, email: 'a@example.com', active: true },
++                    { id: 2, email: 'b@example.com', active: false },
++                ]
++            }
++            return []
++        })
++
++        const plugin = new ReplicaPlugin({
++            tables: ['users'],
++            externalQueryExecutor: externalExec,
++        })
++
++        const starbase = new StarbaseDB({
++            dataSource,
++            config: { role: 'admin' },
++            plugins: [plugin],
++        })
++
++        const res = await starbase.handle(
++            new Request('http://localhost/replica/sync', { method: 'POST' }),
++            createMockCtx()
++        )
++        expect(res.status).toBe(200)
++        const json = (await res.json()) as any
++        expect(json.result.totalRowsSynced).toBe(2)
++        expect(json.result.results[0]).toMatchObject({
++            table: 'users',
++            rowsSynced: 2,
++            pages: 1,
++            status: 'success',
++        })
++
++        const rpcCalls = (dataSource.rpc.executeQuery as any).mock.calls.map(
++            (call: any[]) => call[0]
++        )
++        expect(
++            rpcCalls.some((c: any) =>
++                c.sql.includes(
++                    'CREATE TABLE IF NOT EXISTS "users" ("id" INTEGER PRIMARY KEY, "email" TEXT, "active" INTEGER)'
++                )
++            )
++        ).toBe(true)
++        expect(
++            rpcCalls.some(
++                (c: any) =>
++                    c.sql.includes('INSERT OR REPLACE INTO "users"') &&
++                    c.params[0] === 1 &&
++                    c.params[2] === 1
++            )
++        ).toBe(true)
++    })
++
++    it('should paginate across multiple pages using batchSize and OFFSET', async () => {
++        const dataSource = createMockDataSource()
++        const externalExec = vi.fn(async ({ sql }: { sql: string }) => {
++            if (sql.includes('information_schema.columns')) {
++                return [
++                    { name: 'id', type: 'integer' },
++                    { name: 'title', type: 'text' },
++                ]
++            }
++            if (sql.includes('LIMIT 2 OFFSET 0')) {
++                return [
++                    { id: 1, title: 'One' },
++                    { id: 2, title: 'Two' },
++                ]
++            }
++            if (sql.includes('LIMIT 2 OFFSET 2')) {
++                return [
++                    { id: 3, title: 'Three' },
++                    { id: 4, title: 'Four' },
++                ]
++            }
++            if (sql.includes('LIMIT 2 OFFSET 4')) {
++                return [{ id: 5, title: 'Five' }]
++            }
++            return []
++        })
++
++        const plugin = new ReplicaPlugin({
++            tables: ['posts'],
++            batchSize: 2,
++            externalQueryExecutor: externalExec,
++        })
++
++        const result = await plugin.syncTables({
++            dataSource,
++            config: { role: 'admin' },
++        })
++
++        expect(result.totalRowsSynced).toBe(5)
++        expect(result.results[0]).toMatchObject({
++            table: 'posts',
++            rowsSynced: 5,
++            pages: 3,
++            status: 'success',
++        })
++    })
++
++    it('should infer schema from first row when external schema metadata is empty', async () => {
++        const dataSource = createMockDataSource()
++        const externalExec = vi.fn(async ({ sql }: { sql: string }) => {
++            if (sql.includes('information_schema.columns')) {
++                return []
++            }
++            if (sql.includes('LIMIT 100 OFFSET 0')) {
++                return [{ id: 10, score: 9.5, label: 'top' }]
++            }
++            return []
++        })
++
++        const plugin = new ReplicaPlugin({
++            tables: ['metrics'],
++            externalQueryExecutor: externalExec,
++        })
++
++        const result = await plugin.syncTables({
++            dataSource,
++            config: { role: 'admin' },
++        })
++
++        expect(result.totalRowsSynced).toBe(1)
++        const rpcCalls = (dataSource.rpc.executeQuery as any).mock.calls.map(
++            (call: any[]) => call[0].sql
++        )
++        expect(
++            rpcCalls.some((sql: string) =>
++                sql.includes(
++                    'CREATE TABLE IF NOT EXISTS "metrics" ("id" INTEGER PRIMARY KEY, "score" REAL, "label" TEXT)'
++                )
++            )
++        ).toBe(true)
++    })
++
++    it('should allow overriding tables and batchSize via POST /replica/sync JSON body', async () => {
++        const dataSource = createMockDataSource()
++        const externalExec = vi.fn(async ({ sql }: { sql: string }) => {
++            if (sql.includes('information_schema.columns')) {
++                return [{ name: 'id', type: 'integer' }]
++            }
++            if (sql.includes('FROM "public"."events"') && sql.includes('LIMIT 10 OFFSET 0')) {
++                return [{ id: 99 }]
++            }
++            return []
++        })
++
++        const plugin = new ReplicaPlugin({
++            tables: ['users'],
++            externalQueryExecutor: externalExec,
++        })
++
++        const starbase = new StarbaseDB({
++            dataSource,
++            config: { role: 'admin' },
++            plugins: [plugin],
++        })
++
++        const res = await starbase.handle(
++            new Request('http://localhost/replica/sync', {
++                method: 'POST',
++                headers: { 'Content-Type': 'application/json' },
++                body: JSON.stringify({ tables: ['events'], batchSize: 10 }),
++            }),
++            createMockCtx()
++        )
++
++        expect(res.status).toBe(200)
++        const json = (await res.json()) as any
++        expect(json.result.results[0].table).toBe('events')
++        expect(json.result.totalRowsSynced).toBe(1)
++    })
++
++    it('should record error status in tmp_replica_status when external query fails', async () => {
++        const dataSource = createMockDataSource()
++        const externalExec = vi.fn(async ({ sql }: { sql: string }) => {
++            if (sql.includes('information_schema.columns')) {
++                return [{ name: 'id', type: 'integer' }]
++            }
++            throw new Error('Upstream connection timeout')
++        })
++
++        const plugin = new ReplicaPlugin({
++            tables: ['broken_table'],
++            externalQueryExecutor: externalExec,
++        })
++
++        const result = await plugin.syncTables({
++            dataSource,
++            config: { role: 'admin' },
++        })
++
++        expect(result.totalRowsSynced).toBe(0)
++        expect(result.results[0]).toMatchObject({
++            table: 'broken_table',
++            status: 'error',
++            error: 'Upstream connection timeout',
++        })
++
++        const statusInsert = (dataSource.rpc.executeQuery as any).mock.calls.find(
++            (call: any[]) =>
++                call[0].sql.includes('INSERT OR REPLACE INTO tmp_replica_status')
++        )
++        expect(statusInsert[0].params[4]).toBe('error')
++        expect(statusInsert[0].params[5]).toBe('Upstream connection timeout')
++    })
++
++    it('should return sync status rows from GET /replica/status', async () => {
++        const statusRows = [
++            {
++                table_name: 'users',
++                schema_name: 'public',
++                last_synced_at: '2026-11-15T15:00:00.000Z',
++                rows_synced: 42,
++                status: 'success',
++                error_message: null,
++            },
++        ]
++        const dataSource = createMockDataSource({
++            rpc: {
++                executeQuery: vi.fn(async ({ sql }: { sql: string }) => {
++                    if (sql.includes('FROM tmp_replica_status')) {
++                        return statusRows
++                    }
++                    return []
++                }),
++            } as any,
++        })
++
++        const plugin = new ReplicaPlugin({ tables: ['users'], batchSize: 50 })
++        const starbase = new StarbaseDB({
++            dataSource,
++            config: { role: 'admin' },
++            plugins: [plugin],
++        })
++
++        const res = await starbase.handle(
++            new Request('http://localhost/replica/status', { method: 'GET' }),
++            createMockCtx()
++        )
++        expect(res.status).toBe(200)
++        const json = (await res.json()) as any
++        expect(json.result.configuredTables).toEqual(['users'])
++        expect(json.result.batchSize).toBe(50)
++        expect(json.result.externalConfigured).toBe(true)
++        expect(json.result.tables).toEqual(statusRows)
++    })
++
++    it('should support SQLite external dialect with PRAGMA table_info and WHERE clause', async () => {
++        const dataSource = createMockDataSource({
++            external: {
++                dialect: 'sqlite',
++                provider: 'turso',
++                uri: 'libsql://example.turso.io',
++                token: 'tok',
++            },
++        })
++
++        const externalExec = vi.fn(async ({ sql }: { sql: string }) => {
++            if (sql.startsWith('PRAGMA table_info')) {
++                return [
++                    { name: 'id', type: 'INTEGER', pk: 1 },
++                    { name: 'status', type: 'TEXT', pk: 0 },
++                ]
++            }
++            if (sql.includes('WHERE status = \'active\'')) {
++                return [{ id: 7, status: 'active' }]
++            }
++            return []
++        })
++
++        const plugin = new ReplicaPlugin({
++            tables: [
++                {
++                    table: 'tasks',
++                    where: "status = 'active'",
++                    primaryKey: 'id',
++                },
++            ],
++            externalQueryExecutor: externalExec,
++        })
++
++        const result = await plugin.syncTables({
++            dataSource,
++            config: { role: 'admin' },
++        })
++
++        expect(result.totalRowsSynced).toBe(1)
++        expect(externalExec).toHaveBeenCalledWith(
++            expect.objectContaining({
++                sql: expect.stringContaining('PRAGMA table_info("tasks")'),
++            })
++        )
++        expect(externalExec).toHaveBeenCalledWith(
++            expect.objectContaining({
++                sql: expect.stringContaining('WHERE status = \'active\''),
++            })
++        )
++    })
++})
+diff --git a/plugins/replica/index.ts b/plugins/replica/index.ts
+new file mode 100644
+index 0000000..ce443fd
+--- /dev/null
++++ b/plugins/replica/index.ts
+@@ -0,0 +1,713 @@
++import postgres from 'postgres'
++import { StarbaseApp, StarbaseDBConfiguration } from '../../src/handler'
++import { executeExternalQuery } from '../../src/operation'
++import { StarbasePlugin } from '../../src/plugin'
++import { DataSource } from '../../src/types'
++import { createResponse } from '../../src/utils'
++
++export interface ReplicaTableConfig {
++    table: string
++    schema?: string
++    primaryKey?: string
++    batchSize?: number
++    where?: string
++}
++
++export type ReplicaExternalQueryExecutor = (opts: {
++    sql: string
++    params?: unknown[]
++    dataSource: DataSource
++    config: StarbaseDBConfiguration
++}) => Promise<any>
++
++export interface ReplicaPluginOptions {
++    tables?: (string | ReplicaTableConfig)[]
++    batchSize?: number
++    requiresAuth?: boolean
++    adminOnly?: boolean
++    externalQueryExecutor?: ReplicaExternalQueryExecutor
++}
++
++export interface ReplicaTableSyncResult {
++    table: string
++    schema?: string
++    rowsSynced: number
++    pages: number
++    status: 'success' | 'error'
++    error?: string
++}
++
++export interface ReplicaSyncResponse {
++    syncedAt: string
++    results: ReplicaTableSyncResult[]
++    totalRowsSynced: number
++}
++
++interface ColumnDefinition {
++    name: string
++    type: string
++    isPrimaryKey: boolean
++}
++
++const VALID_IDENTIFIER_REGEX = /^[a-zA-Z_][a-zA-Z0-9_]*$/
++const DEFAULT_BATCH_SIZE = 100
++
++const CREATE_STATUS_TABLE_SQL = `
++    CREATE TABLE IF NOT EXISTS tmp_replica_status (
++        table_name TEXT PRIMARY KEY,
++        schema_name TEXT,
++        last_synced_at TEXT,
++        rows_synced INTEGER NOT NULL DEFAULT 0,
++        status TEXT NOT NULL DEFAULT 'idle',
++        error_message TEXT
++    )
++`
++
++export function assertValidIdentifier(name: string, label = 'identifier'): string {
++    const trimmed = name.trim()
++    if (!VALID_IDENTIFIER_REGEX.test(trimmed)) {
++        throw new Error(`Invalid SQL ${label}: "${name}"`)
++    }
++    return trimmed
++}
++
++export function quoteIdentifier(name: string): string {
++    return `"${assertValidIdentifier(name)}"`
++}
++
++export function mapColumnTypeToSqlite(rawType?: string): string {
++    if (!rawType) return 'TEXT'
++    const normalized = rawType.toLowerCase().trim()
++
++    if (
++        normalized.includes('int') ||
++        normalized.includes('serial') ||
++        normalized === 'bool' ||
++        normalized === 'boolean'
++    ) {
++        return 'INTEGER'
++    }
++
++    if (
++        normalized.includes('real') ||
++        normalized.includes('float') ||
++        normalized.includes('double') ||
++        normalized.includes('numeric') ||
++        normalized.includes('decimal')
++    ) {
++        return 'REAL'
++    }
++
++    if (
++        normalized.includes('blob') ||
++        normalized.includes('bytea') ||
++        normalized.includes('binary')
++    ) {
++        return 'BLOB'
++    }
++
++    return 'TEXT'
++}
++
++export function inferColumnTypeFromValue(value: unknown): string {
++    if (typeof value === 'number') {
++        return Number.isInteger(value) ? 'INTEGER' : 'REAL'
++    }
++    if (typeof value === 'boolean') {
++        return 'INTEGER'
++    }
++    if (value instanceof Uint8Array || value instanceof ArrayBuffer) {
++        return 'BLOB'
++    }
++    return 'TEXT'
++}
++
++export function normalizeSqliteValue(value: unknown): unknown {
++    if (value === undefined || value === null) return null
++    if (typeof value === 'boolean') return value ? 1 : 0
++    if (value instanceof Date) return value.toISOString()
++    if (
++        typeof value === 'object' &&
++        !(value instanceof Uint8Array) &&
++        !(value instanceof ArrayBuffer)
++    ) {
++        return JSON.stringify(value)
++    }
++    return value
++}
++
++export function normalizeQueryRows(result: any): Record<string, unknown>[] {
++    if (!result) return []
++
++    if (Array.isArray(result)) {
++        return result.filter(
++            (row): row is Record<string, unknown> =>
++                row !== null && typeof row === 'object' && !Array.isArray(row)
++        )
++    }
++
++    if (
++        Array.isArray(result.columns) &&
++        Array.isArray(result.rows)
++    ) {
++        return result.rows.map((row: unknown[]) => {
++            const obj: Record<string, unknown> = {}
++            result.columns.forEach((col: string, idx: number) => {
++                obj[col] = row[idx]
++            })
++            return obj
++        })
++    }
++
++    if (Array.isArray(result.results)) {
++        return normalizeQueryRows(result.results)
++    }
++
++    return []
++}
++
++export function normalizeTableConfig(
++    entry: string | ReplicaTableConfig,
++    defaultBatchSize: number,
++    defaultSchema?: string
++): Required<Pick<ReplicaTableConfig, 'table' | 'primaryKey' | 'batchSize'>> &
++    Pick<ReplicaTableConfig, 'schema' | 'where'> {
++    if (typeof entry === 'string') {
++        return {
++            table: assertValidIdentifier(entry, 'table name'),
++            schema: defaultSchema
++                ? assertValidIdentifier(defaultSchema, 'schema name')
++                : undefined,
++            primaryKey: 'id',
++            batchSize: defaultBatchSize,
++        }
++    }
++
++    const batchSize =
++        entry.batchSize && entry.batchSize > 0
++            ? Math.floor(entry.batchSize)
++            : defaultBatchSize
++
++    return {
++        table: assertValidIdentifier(entry.table, 'table name'),
++        schema: entry.schema
++            ? assertValidIdentifier(entry.schema, 'schema name')
++            : defaultSchema
++              ? assertValidIdentifier(defaultSchema, 'schema name')
++              : undefined,
++        primaryKey: entry.primaryKey
++            ? assertValidIdentifier(entry.primaryKey, 'primary key')
++            : 'id',
++        batchSize,
++        where: entry.where,
++    }
++}
++
++export class ReplicaPlugin extends StarbasePlugin {
++    public readonly prefix = '/replica'
++    public tables: (string | ReplicaTableConfig)[]
++    public batchSize: number
++    public adminOnly: boolean
++
++    private externalQueryExecutor?: ReplicaExternalQueryExecutor
++
++    constructor(opts: ReplicaPluginOptions = {}) {
++        super('starbasedb:replica', {
++            requiresAuth: opts.requiresAuth ?? true,
++        })
++        this.tables = opts.tables ?? []
++        this.batchSize =
++            opts.batchSize && opts.batchSize > 0
++                ? Math.floor(opts.batchSize)
++                : DEFAULT_BATCH_SIZE
++        this.adminOnly = opts.adminOnly ?? true
++        this.externalQueryExecutor = opts.externalQueryExecutor
++    }
++
++    override async register(app: StarbaseApp): Promise<void> {
++        app.post(`${this.prefix}/sync`, async (c) => {
++            const config = c.get('config')
++            const dataSource = c.get('dataSource')
++
++            if (this.adminOnly && config?.role !== 'admin') {
++                return createResponse(undefined, 'Unauthorized request', 403)
++            }
++
++            if (!dataSource?.external) {
++                return createResponse(
++                    undefined,
++                    'External data source is not configured.',
++                    400
++                )
++            }
++
++            let overrideTables: (string | ReplicaTableConfig)[] | undefined
++            let overrideBatchSize: number | undefined
++
++            const contentLength = c.req.header('content-length')
++            const contentType = c.req.header('content-type') || ''
++            if (
++                contentType.includes('application/json') &&
++                contentLength !== '0'
++            ) {
++                try {
++                    const body = (await c.req.json()) as {
++                        tables?: (string | ReplicaTableConfig)[]
++                        batchSize?: number
++                    }
++                    if (Array.isArray(body?.tables)) {
++                        overrideTables = body.tables
++                    }
++                    if (
++                        typeof body?.batchSize === 'number' &&
++                        body.batchSize > 0
++                    ) {
++                        overrideBatchSize = Math.floor(body.batchSize)
++                    }
++                } catch {
++                    return createResponse(
++                        undefined,
++                        'Invalid JSON request body.',
++                        400
++                    )
++                }
++            }
++
++            const targetTables = overrideTables ?? this.tables
++            if (!targetTables.length) {
++                return createResponse(
++                    undefined,
++                    'No tables configured for replication.',
++                    400
++                )
++            }
++
++            try {
++                const syncResult = await this.syncTables({
++                    tables: targetTables,
++                    batchSize: overrideBatchSize ?? this.batchSize,
++                    dataSource,
++                    config,
++                })
++                return createResponse(syncResult, undefined, 200)
++            } catch (error) {
++                const message =
++                    error instanceof Error
++                        ? error.message
++                        : 'Failed to sync replica.'
++                return createResponse(undefined, message, 500)
++            }
++        })
++
++        app.get(`${this.prefix}/status`, async (c) => {
++            const config = c.get('config')
++            const dataSource = c.get('dataSource')
++
++            if (this.adminOnly && config?.role !== 'admin') {
++                return createResponse(undefined, 'Unauthorized request', 403)
++            }
++
++            await this.ensureStatusTable(dataSource)
++
++            const rows = await dataSource.rpc.executeQuery({
++                sql: 'SELECT table_name, schema_name, last_synced_at, rows_synced, status, error_message FROM tmp_replica_status ORDER BY table_name ASC',
++                params: [],
++                isRaw: false,
++            })
++
++            return createResponse(
++                {
++                    configuredTables: this.tables.map((t) =>
++                        typeof t === 'string' ? t : t.table
++                    ),
++                    batchSize: this.batchSize,
++                    externalConfigured: Boolean(dataSource?.external),
++                    tables: Array.isArray(rows) ? rows : [],
++                },
++                undefined,
++                200
++            )
++        })
++    }
++
++    public async syncTables(opts: {
++        tables?: (string | ReplicaTableConfig)[]
++        batchSize?: number
++        dataSource: DataSource
++        config: StarbaseDBConfiguration
++    }): Promise<ReplicaSyncResponse> {
++        const { dataSource, config } = opts
++        const tablesToSync = opts.tables ?? this.tables
++        const effectiveBatchSize =
++            opts.batchSize && opts.batchSize > 0
++                ? Math.floor(opts.batchSize)
++                : this.batchSize
++
++        if (!dataSource.external) {
++            throw new Error('External data source is not configured.')
++        }
++
++        await this.ensureStatusTable(dataSource)
++
++        const results: ReplicaTableSyncResult[] = []
++        let totalRowsSynced = 0
++
++        for (const entry of tablesToSync) {
++            const normalized = normalizeTableConfig(
++                entry,
++                effectiveBatchSize,
++                dataSource.external.defaultSchema
++            )
++
++            const tableResult = await this.syncSingleTable({
++                tableConfig: normalized,
++                dataSource,
++                config,
++            })
++
++            results.push(tableResult)
++            totalRowsSynced += tableResult.rowsSynced
++        }
++
++        return {
++            syncedAt: new Date().toISOString(),
++            results,
++            totalRowsSynced,
++        }
++    }
++
++    private async ensureStatusTable(dataSource: DataSource): Promise<void> {
++        await dataSource.rpc.executeQuery({
++            sql: CREATE_STATUS_TABLE_SQL,
++            params: [],
++            isRaw: false,
++        })
++    }
++
++    private async syncSingleTable(opts: {
++        tableConfig: ReturnType<typeof normalizeTableConfig>
++        dataSource: DataSource
++        config: StarbaseDBConfiguration
++    }): Promise<ReplicaTableSyncResult> {
++        const { tableConfig, dataSource, config } = opts
++        const { table, schema, primaryKey, batchSize, where } = tableConfig
++
++        let rowsSynced = 0
++        let pages = 0
++
++        try {
++            let columns = await this.fetchExternalSchema({
++                table,
++                schema,
++                primaryKey,
++                dataSource,
++                config,
++            })
++
++            let schemaCreated = false
++            if (columns.length > 0) {
++                await this.createLocalTable(table, columns, dataSource)
++                schemaCreated = true
++            }
++
++            let offset = 0
++            while (true) {
++                const selectSql = this.buildPaginatedSelectSql({
++                    table,
++                    schema,
++                    primaryKey,
++                    batchSize,
++                    offset,
++                    where,
++                    dialect: dataSource.external?.dialect,
++                    hasKnownPrimaryKey:
++                        columns.length === 0 ||
++                        columns.some((col) => col.name === primaryKey),
++                })
++
++                const rawRows = await this.runExternalQuery({
++                    sql: selectSql,
++                    params: [],
++                    dataSource,
++                    config,
++                })
++
++                const rows = normalizeQueryRows(rawRows)
++                if (rows.length === 0) {
++                    break
++                }
++
++                if (!schemaCreated) {
++                    columns = this.inferColumnsFromRow(rows[0], primaryKey)
++                    await this.createLocalTable(table, columns, dataSource)
++                    schemaCreated = true
++                }
++
++                await this.upsertRowsIntoLocalTable(table, rows, dataSource)
++
++                rowsSynced += rows.length
++                pages += 1
++
++                if (rows.length < batchSize) {
++                    break
++                }
++
++                offset += batchSize
++            }
++
++            await this.recordTableStatus({
++                dataSource,
++                table,
++                schema,
++                rowsSynced,
++                status: 'success',
++                errorMessage: null,
++            })
++
++            return {
++                table,
++                schema,
++                rowsSynced,
++                pages,
++                status: 'success',
++            }
++        } catch (error) {
++            const errorMessage =
++                error instanceof Error ? error.message : String(error)
++
++            await this.recordTableStatus({
++                dataSource,
++                table,
++                schema,
++                rowsSynced,
++                status: 'error',
++                errorMessage,
++            })
++
++            return {
++                table,
++                schema,
++                rowsSynced,
++                pages,
++                status: 'error',
++                error: errorMessage,
++            }
++        }
++    }
++
++    private async fetchExternalSchema(opts: {
++        table: string
++        schema?: string
++        primaryKey: string
++        dataSource: DataSource
++        config: StarbaseDBConfiguration
++    }): Promise<ColumnDefinition[]> {
++        const { table, schema, primaryKey, dataSource, config } = opts
++        const dialect = dataSource.external?.dialect
++
++        let schemaSql: string
++        if (dialect === 'sqlite') {
++            schemaSql = `PRAGMA table_info(${quoteIdentifier(table)})`
++        } else if (dialect === 'mysql') {
++            schemaSql = `SELECT COLUMN_NAME as name, DATA_TYPE as type, COLUMN_KEY as column_key FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name = '${table}' ORDER BY ORDINAL_POSITION`
++        } else {
++            const targetSchema = schema || 'public'
++            schemaSql = `SELECT column_name as name, data_type as type FROM information_schema.columns WHERE table_schema = '${targetSchema}' AND table_name = '${table}' ORDER BY ordinal_position`
++        }
++
++        try {
++            const raw = await this.runExternalQuery({
++                sql: schemaSql,
++                params: [],
++                dataSource,
++                config,
++            })
++            const rows = normalizeQueryRows(raw)
++            if (rows.length === 0) return []
++
++            return rows
++                .map((row) => {
++                    const colName = String(
++                        row.name ?? row.column_name ?? row.COLUMN_NAME ?? ''
++                    ).trim()
++                    if (!colName) return null
++                    const rawType = String(
++                        row.type ?? row.data_type ?? row.DATA_TYPE ?? 'TEXT'
++                    )
++                    const isPk =
++                        Number(row.pk) === 1 ||
++                        String(row.column_key ?? '').toUpperCase() === 'PRI' ||
++                        colName === primaryKey
++                    return {
++                        name: assertValidIdentifier(colName, 'column name'),
++                        type: mapColumnTypeToSqlite(rawType),
++                        isPrimaryKey: isPk,
++                    }
++                })
++                .filter((col): col is ColumnDefinition => col !== null)
++        } catch {
++            return []
++        }
++    }
++
++    private inferColumnsFromRow(
++        row: Record<string, unknown>,
++        primaryKey: string
++    ): ColumnDefinition[] {
++        const keys = Object.keys(row)
++        return keys.map((key, index) => {
++            const validName = assertValidIdentifier(key, 'column name')
++            const isPrimaryKey =
++                validName === primaryKey ||
++                (!keys.includes(primaryKey) && index === 0)
++            return {
++                name: validName,
++                type: inferColumnTypeFromValue(row[key]),
++                isPrimaryKey,
++            }
++        })
++    }
++
++    private async createLocalTable(
++        table: string,
++        columns: ColumnDefinition[],
++        dataSource: DataSource
++    ): Promise<void> {
++        if (columns.length === 0) return
++
++        const hasPk = columns.some((c) => c.isPrimaryKey)
++        const columnDefs = columns.map((col, idx) => {
++            const pkClause =
++                col.isPrimaryKey || (!hasPk && idx === 0) ? ' PRIMARY KEY' : ''
++            return `${quoteIdentifier(col.name)} ${col.type}${pkClause}`
++        })
++
++        const createSql = `CREATE TABLE IF NOT EXISTS ${quoteIdentifier(table)} (${columnDefs.join(', ')})`
++        await dataSource.rpc.executeQuery({
++            sql: createSql,
++            params: [],
++            isRaw: false,
++        })
++    }
++
++    private buildPaginatedSelectSql(opts: {
++        table: string
++        schema?: string
++        primaryKey: string
++        batchSize: number
++        offset: number
++        where?: string
++        dialect?: string
++        hasKnownPrimaryKey: boolean
++    }): string {
++        const {
++            table,
++            schema,
++            primaryKey,
++            batchSize,
++            offset,
++            where,
++            dialect,
++            hasKnownPrimaryKey,
++        } = opts
++
++        const qualifiedTable =
++            schema && dialect !== 'sqlite'
++                ? `${quoteIdentifier(schema)}.${quoteIdentifier(table)}`
++                : quoteIdentifier(table)
++
++        const whereClause = where ? ` WHERE ${where}` : ''
++        const orderByClause = hasKnownPrimaryKey
++            ? ` ORDER BY ${quoteIdentifier(primaryKey)} ASC`
++            : ''
++
++        return `SELECT * FROM ${qualifiedTable}${whereClause}${orderByClause} LIMIT ${batchSize} OFFSET ${offset}`
++    }
++
++    private async upsertRowsIntoLocalTable(
++        table: string,
++        rows: Record<string, unknown>[],
++        dataSource: DataSource
++    ): Promise<void> {
++        for (const row of rows) {
++            const cols = Object.keys(row).map((k) =>
++                assertValidIdentifier(k, 'column name')
++            )
++            if (cols.length === 0) continue
++
++            const colList = cols.map(quoteIdentifier).join(', ')
++            const placeholders = cols.map(() => '?').join(', ')
++            const values = cols.map((col) => normalizeSqliteValue(row[col]))
++
++            const insertSql = `INSERT OR REPLACE INTO ${quoteIdentifier(table)} (${colList}) VALUES (${placeholders})`
++            await dataSource.rpc.executeQuery({
++                sql: insertSql,
++                params: values,
++                isRaw: false,
++            })
++        }
++    }
++
++    private async recordTableStatus(opts: {
++        dataSource: DataSource
++        table: string
++        schema?: string
++        rowsSynced: number
++        status: 'success' | 'error'
++        errorMessage: string | null
++    }): Promise<void> {
++        const { dataSource, table, schema, rowsSynced, status, errorMessage } =
++            opts
++        await dataSource.rpc.executeQuery({
++            sql: `INSERT OR REPLACE INTO tmp_replica_status (table_name, schema_name, last_synced_at, rows_synced, status, error_message) VALUES (?, ?, ?, ?, ?, ?)`,
++            params: [
++                table,
++                schema ?? null,
++                new Date().toISOString(),
++                rowsSynced,
++                status,
++                errorMessage,
++            ],
++            isRaw: false,
++        })
++    }
++
++    private async runExternalQuery(opts: {
++        sql: string
++        params?: unknown[]
++        dataSource: DataSource
++        config: StarbaseDBConfiguration
++    }): Promise<any> {
++        if (this.externalQueryExecutor) {
++            return this.externalQueryExecutor(opts)
++        }
++
++        const { dataSource, sql, params, config } = opts
++
++        if (
++            dataSource.external &&
++            'connectionString' in dataSource.external
++        ) {
++            const pgSql = postgres(dataSource.external.connectionString, {
++                max: 5,
++                fetch_types: false,
++            })
++            try {
++                return await pgSql.unsafe(sql, (params ?? []) as any[])
++            } finally {
++                if (dataSource.executionContext) {
++                    dataSource.executionContext.waitUntil(pgSql.end())
++                } else {
++                    await pgSql.end()
++                }
++            }
++        }
++
++        return executeExternalQuery({
++            sql,
++            params: params ?? [],
++            dataSource,
++            config,
++        })
++    }
++}
+diff --git a/plugins/replica/meta.json b/plugins/replica/meta.json
+new file mode 100644
+index 0000000..398ea97
+--- /dev/null
++++ b/plugins/replica/meta.json
+@@ -0,0 +1,25 @@
++{
++    "version": "1.0.0",
++    "resources": {
++        "tables": {
++            "tmp_replica_status": {
++                "table_name": "TEXT PRIMARY KEY",
++                "schema_name": "TEXT",
++                "last_synced_at": "TEXT",
++                "rows_synced": "INTEGER NOT NULL DEFAULT 0",
++                "status": "TEXT NOT NULL DEFAULT 'idle'",
++                "error_message": "TEXT"
++            }
++        },
++        "secrets": {},
++        "variables": {
++            "REPLICA_TABLES": "Comma-separated list of external tables to replicate",
++            "REPLICA_BATCH_SIZE": "Number of rows fetched per page during sync (default: 100)"
++        }
++    },
++    "dependencies": {
++        "tables": {},
++        "secrets": {},
++        "variables": {}
++    }
++}
+diff --git a/src/index.ts b/src/index.ts
+index 4d08932..7d8cde2 100644
+--- a/src/index.ts
++++ b/src/index.ts
+@@ -12,6 +12,7 @@ import { QueryLogPlugin } from '../plugins/query-log'
+ import { StatsPlugin } from '../plugins/stats'
+ import { CronPlugin } from '../plugins/cron'
+ import { InterfacePlugin } from '../plugins/interface'
++import { ReplicaPlugin } from '../plugins/replica'
+ 
+ export { StarbaseDBDurableObject } from './do'
+ 
+@@ -54,6 +55,9 @@ export interface Env {
+     AUTH_ALGORITHM?: string
+     AUTH_JWKS_ENDPOINT?: string
+ 
++    REPLICA_TABLES?: string
++    REPLICA_BATCH_SIZE?: number
++
+     HYPERDRIVE: Hyperdrive
+ 
+     // ## DO NOT REMOVE: TEMPLATE INTERFACE ##
+@@ -210,6 +214,17 @@ export default {
+             }, ctx)
+ 
+             const interfacePlugin = new InterfacePlugin()
++            const replicaTables = env.REPLICA_TABLES
++                ? env.REPLICA_TABLES.split(',')
++                      .map((t) => t.trim())
++                      .filter(Boolean)
++                : []
++            const replicaPlugin = new ReplicaPlugin({
++                tables: replicaTables,
++                batchSize: env.REPLICA_BATCH_SIZE
++                    ? Number(env.REPLICA_BATCH_SIZE)
++                    : undefined,
++            })
+ 
+             const plugins = [
+                 webSocketPlugin,
+@@ -225,6 +240,7 @@ export default {
+                 cdcPlugin,
+                 cronPlugin,
+                 new StatsPlugin(),
++                replicaPlugin,
+                 interfacePlugin,
+             ] satisfies StarbasePlugin[]
+ 
+diff --git a/wrangler.toml b/wrangler.toml
+index 395c4ac..ca7d878 100644
+--- a/wrangler.toml
++++ b/wrangler.toml
+@@ -54,6 +54,8 @@ ENABLE_RLS = 0
+ 
+ # External database source details
+ # This enables Starbase to connect to an external data source
++# REPLICA_TABLES = ""
++# REPLICA_BATCH_SIZE = 100
+ # OUTERBASE_API_KEY = ""
+ # EXTERNAL_DB_TYPE = "postgresql"
+ # EXTERNAL_DB_HOST = ""
