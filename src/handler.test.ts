@@ -199,4 +199,86 @@ describe('StarbaseDB Error Handling', () => {
 
         expect(response.status).toBe(500)
     })
+
+    it('should throw if external source is configured without external details', () => {
+        expect(
+            () =>
+                new StarbaseDB({
+                    dataSource: { source: 'external', rpc: {} as any },
+                    config: mockConfig,
+                })
+        ).toThrow('No external data sources available.')
+    })
+
+    it('should handle preAuth routes for authless plugins and return undefined otherwise', async () => {
+        const pluginInstance = new StarbaseDB({
+            dataSource: mockDataSource,
+            config: mockConfig,
+            plugins: [
+                {
+                    opts: { requiresAuth: false },
+                    pathPrefix: '/public/:id/*',
+                } as any,
+            ],
+        })
+
+        const matched = await pluginInstance.handlePreAuth(
+            new Request('https://example.com/public/123/view'),
+            mockExecutionContext
+        )
+        expect(matched).toBeDefined()
+
+        const unmatched = await pluginInstance.handlePreAuth(
+            new Request('https://example.com/private/data'),
+            mockExecutionContext
+        )
+        expect(unmatched).toBeUndefined()
+    })
+
+    it('should validate Content-Type, params, and transaction fields in queryRoute', async () => {
+        vi.spyOn(console, 'error').mockImplementation(() => {})
+
+        const badContentType = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({ sql: 'SELECT 1' }),
+            headers: { 'Content-Type': 'text/plain' },
+        })
+        expect((await instance.queryRoute(badContentType, false)).status).toBe(
+            400
+        )
+
+        const badParams = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({ sql: 'SELECT 1', params: 'invalid' }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+        expect((await instance.queryRoute(badParams, false)).status).toBe(400)
+
+        const badTxSql = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({ transaction: [{ sql: '' }] }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+        expect((await instance.queryRoute(badTxSql, false)).status).toBe(500)
+
+        const badTxParams = new Request('https://example.com/query', {
+            method: 'POST',
+            body: JSON.stringify({
+                transaction: [{ sql: 'SELECT 1', params: 123 }],
+            }),
+            headers: { 'Content-Type': 'application/json' },
+        })
+        expect((await instance.queryRoute(badTxParams, false)).status).toBe(500)
+    })
+
+    it('should log error if expireCache fails', async () => {
+        const consoleSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        vi.mocked(mockDataSource.rpc.executeQuery).mockImplementationOnce(() => {
+            throw new Error('Cache cleanup failed')
+        })
+        await instance['expireCache']()
+        expect(consoleSpy).toHaveBeenCalled()
+    })
 })
