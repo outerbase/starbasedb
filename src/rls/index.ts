@@ -208,7 +208,9 @@ function applyRLSToAst(ast: any): void {
     // Handle WITH (CTE) queries as arrays
     if (ast.with && Array.isArray(ast.with)) {
         for (const cte of ast.with) {
-            if (cte.stmt) {
+            if (cte.stmt?.ast) {
+                applyRLSToAst(cte.stmt.ast)
+            } else if (cte.stmt) {
                 applyRLSToAst(cte.stmt)
             }
         }
@@ -264,13 +266,17 @@ function applyRLSToAst(ast: any): void {
     } else {
         // SELECT or DELETE
         tables =
-            ast.from?.map((fromTable: any) => {
-                let tableName = normalizeIdentifier(fromTable.table)
-                if (tableName.includes('.')) {
-                    tableName = tableName.split('.')[1]
-                }
-                return tableName
-            }) || []
+            ast.from
+                ?.filter(
+                    (fromTable: any) => typeof fromTable?.table === 'string'
+                )
+                .map((fromTable: any) => {
+                    let tableName = normalizeIdentifier(fromTable.table)
+                    if (tableName.includes('.')) {
+                        tableName = tableName.split('.')[1]
+                    }
+                    return tableName
+                }) || []
     }
 
     const restrictedTables = Object.keys(tablesWithRules)
@@ -349,7 +355,9 @@ function applyRLSToAst(ast: any): void {
         })
 
     ast.from?.forEach((fromItem: any) => {
-        if (fromItem.expr && fromItem.expr.type === 'select') {
+        if (fromItem.expr?.ast && fromItem.expr.ast.type === 'select') {
+            applyRLSToAst(fromItem.expr.ast)
+        } else if (fromItem.expr && fromItem.expr.type === 'select') {
             applyRLSToAst(fromItem.expr)
         }
 
@@ -359,7 +367,9 @@ function applyRLSToAst(ast: any): void {
                 ? fromItem.join
                 : [fromItem]
             joins.forEach((joinItem: any) => {
-                if (joinItem.expr && joinItem.expr.type === 'select') {
+                if (joinItem.expr?.ast && joinItem.expr.ast.type === 'select') {
+                    applyRLSToAst(joinItem.expr.ast)
+                } else if (joinItem.expr && joinItem.expr.type === 'select') {
                     applyRLSToAst(joinItem.expr)
                 }
             })
