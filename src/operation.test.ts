@@ -94,6 +94,42 @@ vi.mock('./cache', () => ({
     afterQueryCache: vi.fn(),
 }))
 
+const mockPgUnsafe = vi.fn()
+const mockPgEnd = vi.fn().mockResolvedValue(undefined)
+vi.mock('postgres', () => ({
+    default: vi.fn(() => ({
+        unsafe: mockPgUnsafe,
+        end: mockPgEnd,
+    })),
+}))
+
+vi.mock('pg', () => ({
+    Client: vi.fn().mockImplementation(() => ({})),
+}))
+vi.mock('mysql2', () => ({
+    createConnection: vi.fn(() => ({})),
+}))
+vi.mock('@libsql/client/web', () => ({
+    createClient: vi.fn(() => ({})),
+}))
+
+const mockSdkConnect = vi.fn().mockResolvedValue(undefined)
+const mockSdkRaw = vi.fn().mockResolvedValue({ data: [{ id: 1, name: 'SDK' }] })
+vi.mock('@outerbase/sdk', () => {
+    const makeConn = () =>
+        vi.fn().mockImplementation(() => ({
+            connect: mockSdkConnect,
+            raw: mockSdkRaw,
+        }))
+    return {
+        PostgreSQLConnection: makeConn(),
+        MySQLConnection: makeConn(),
+        TursoConnection: makeConn(),
+        CloudflareD1Connection: makeConn(),
+        StarbaseConnection: makeConn(),
+    }
+})
+
 let mockSqlConnection: SqlConnection
 let mockDataSource: DataSource
 let mockConfig: StarbaseDBConfiguration
@@ -444,6 +480,263 @@ describe('executeExternalQuery', () => {
         })
 
         expect(result).toEqual([])
+    })
+
+    it('should delegate to executeSDKQuery when outerbaseApiKey is not set', async () => {
+        const result = await executeExternalQuery({
+            sql: 'SELECT 1',
+            params: [],
+            dataSource: mockDataSource,
+            config: { role: 'admin' },
+        })
+        expect(mockSdkConnect).toHaveBeenCalled()
+        expect(result).toEqual([{ id: 1, name: 'SDK' }])
+    })
+})
+
+describe('executeQuery - raw, hooks, hyperdrive, and external paths', () => {
+    it('should transform raw results through beforeQuery and afterQuery hooks', async () => {
+        const beforeQuery = vi.fn(async ({ sql, params }) => ({
+            sql: `${sql} -- hooked`,
+            params,
+        }))
+        const afterQuery = vi.fn(async ({ result }) => [
+            ...result,
+            { id: 3, name: 'Hooked' },
+        ])
+        const ds: DataSource = {
+            ...mockDataSource,
+            source: 'internal',
+            registry: { beforeQuery, afterQuery } as any,
+            rpc: {
+                executeQuery: vi.fn().mockResolvedValue({
+                    columns: ['id', 'name'],
+                    rows: [[1, 'Alice']],
+                    meta: { rows_read: 1, rows_written: 0 },
+                }),
+            } as any,
+        }
+
+        const res = (await executeQuery({
+            sql: 'SELECT id, name FROM users',
+            params: [],
+            isRaw: true,
+            dataSource: ds,
+            config: mockConfig,
+        })) as any
+
+        expect(beforeQuery).toHaveBeenCalled()
+        expect(afterQuery).toHaveBeenCalled()
+        expect(res.columns).toEqual(['id', 'name'])
+        expect(res.rows).toHaveLength(2)
+    })
+
+    it('should swallow afterQuery hook errors and return original result', async () => {
+        const consoleErrorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        const ds: DataSource = {
+            ...mockDataSource,
+            source: 'internal',
+            registry: {
+                beforeQuery: vi.fn(async (o) => o),
+                afterQuery: vi.fn().mockRejectedValue(new Error('hook fail')),
+            } as any,
+        }
+        const res = await executeQuery({
+            sql: 'SELECT 1',
+            params: [],
+            isRaw: false,
+            dataSource: ds,
+            config: mockConfig,
+        })
+        expect(res).toEqual([
+            { id: 1, name: 'Alice' },
+            { id: 2, name: 'Bob' },
+        ])
+        consoleErrorSpy.mockRestore()
+    })
+
+    it('should return empty array when internal rpc returns nullish', async () => {
+        const consoleErrorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        const ds: DataSource = {
+            ...mockDataSource,
+            rpc: { executeQuery: vi.fn().mockResolvedValue(null) } as any,
+        }
+        const res = await executeQuery({
+            sql: 'SELECT 1',
+            params: [],
+            isRaw: false,
+            dataSource: ds,
+            config: mockConfig,
+        })
+        expect(res).toEqual([])
+        consoleErrorSpy.mockRestore()
+    })
+
+    it('should execute hyperdrive queries with and without executionContext and throw on missing connectionString', async () => {
+        await expect(
+            executeQuery({
+                sql: 'SELECT 1',
+                params: [],
+                isRaw: false,
+                dataSource: { source: 'hyperdrive', rpc: mockDataSource.rpc },
+                config: mockConfig,
+            })
+        ).rejects.toThrow('Hyperdrive connection string not found')
+
+        mockPgUnsafe.mockResolvedValueOnce([{ ok: 1 }])
+        const waitUntil = vi.fn()
+        const res1 = await executeQuery({
+            sql: 'SELECT 1',
+            params: [],
+            isRaw: false,
+            dataSource: {
+                source: 'hyperdrive',
+                external: {
+                    dialect: 'postgresql',
+                    connectionString: 'postgres://hd',
+                },
+                executionContext: { waitUntil } as any,
+                rpc: mockDataSource.rpc,
+            },
+            config: mockConfig,
+        })
+        expect(res1).toEqual([{ ok: 1 }])
+        expect(waitUntil).toHaveBeenCalled()
+
+        mockPgUnsafe.mockResolvedValueOnce([{ ok: 2 }])
+        const res2 = await executeQuery({
+            sql: 'SELECT 2',
+            params: [],
+            isRaw: false,
+            dataSource: {
+                source: 'hyperdrive',
+                external: {
+                    dialect: 'postgresql',
+                    connectionString: 'postgres://hd',
+                },
+                rpc: mockDataSource.rpc,
+            },
+            config: mockConfig,
+        })
+        expect(res2).toEqual([{ ok: 2 }])
+        expect(mockPgEnd).toHaveBeenCalled()
+
+        const consoleErrorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+        mockPgUnsafe.mockRejectedValueOnce(new Error('pg fail'))
+        await expect(
+            executeQuery({
+                sql: 'SELECT bad',
+                params: [],
+                isRaw: false,
+                dataSource: {
+                    source: 'hyperdrive',
+                    external: {
+                        dialect: 'postgresql',
+                        connectionString: 'postgres://hd',
+                    },
+                    rpc: mockDataSource.rpc,
+                },
+                config: mockConfig,
+            })
+        ).rejects.toThrow('pg fail')
+        consoleErrorSpy.mockRestore()
+    })
+
+    it('should route external queries through executeQuery', async () => {
+        const res = await executeQuery({
+            sql: 'SELECT 1',
+            params: [],
+            isRaw: false,
+            dataSource: { ...mockDataSource, source: 'external' },
+            config: { role: 'admin' },
+        })
+        expect(res).toEqual([{ id: 1, name: 'SDK' }])
+    })
+})
+
+describe('executeSDKQuery - all supported external providers', () => {
+    it('should warn and return empty array when external source is missing', async () => {
+        const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+        const res = await executeSDKQuery({
+            sql: 'SELECT 1',
+            dataSource: { source: 'external', rpc: mockDataSource.rpc },
+            config: mockConfig,
+        })
+        expect(res).toEqual([])
+        warnSpy.mockRestore()
+    })
+
+    it('should connect using postgresql, mysql, cloudflare-d1, starbase, and turso providers', async () => {
+        const externals: any[] = [
+            {
+                dialect: 'postgresql',
+                host: 'h',
+                port: 5432,
+                user: 'u',
+                password: 'p',
+                database: 'd',
+            },
+            {
+                dialect: 'mysql',
+                host: 'h',
+                port: 3306,
+                user: 'u',
+                password: 'p',
+                database: 'd',
+            },
+            {
+                dialect: 'sqlite',
+                provider: 'cloudflare-d1',
+                apiKey: 'k',
+                accountId: 'a',
+                databaseId: 'db',
+            },
+            {
+                dialect: 'sqlite',
+                provider: 'starbase',
+                apiKey: 'k',
+                token: 't',
+            },
+            {
+                dialect: 'sqlite',
+                provider: 'turso',
+                uri: 'libsql://x',
+                token: 't',
+            },
+        ]
+
+        for (const ext of externals) {
+            const res = await executeSDKQuery({
+                sql: 'SELECT 1',
+                dataSource: {
+                    source: 'external',
+                    external: ext,
+                    rpc: mockDataSource.rpc,
+                },
+                config: mockConfig,
+            })
+            expect(res).toEqual([{ id: 1, name: 'SDK' }])
+        }
+    })
+
+    it('should throw for unsupported external database type', async () => {
+        await expect(
+            executeSDKQuery({
+                sql: 'SELECT 1',
+                dataSource: {
+                    source: 'external',
+                    external: { dialect: 'oracle' } as any,
+                    rpc: mockDataSource.rpc,
+                },
+                config: mockConfig,
+            })
+        ).rejects.toThrow('Unsupported external database type')
     })
 })
 

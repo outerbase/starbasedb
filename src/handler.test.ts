@@ -198,5 +198,91 @@ describe('StarbaseDB Error Handling', () => {
         const response = await instance.queryRoute(request, false)
 
         expect(response.status).toBe(500)
+        consoleErrorSpy.mockRestore()
+    })
+
+    it('should throw when external source is configured without external details', () => {
+        expect(
+            () =>
+                new StarbaseDB({
+                    dataSource: { source: 'external', rpc: {} as any },
+                    config: mockConfig,
+                })
+        ).toThrow('No external data sources available.')
+    })
+
+    it('should reject non-JSON Content-Type, invalid params, and invalid transaction entries', async () => {
+        const badCt = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'text/plain' },
+                body: 'SELECT 1',
+            }),
+            false
+        )
+        expect(badCt.status).toBe(400)
+
+        const badParams = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ sql: 'SELECT 1', params: 'not-valid' }),
+            }),
+            false
+        )
+        expect(badParams.status).toBe(400)
+
+        const consoleErrorSpy = vi
+            .spyOn(console, 'error')
+            .mockImplementation(() => {})
+
+        const badTxSql = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ transaction: [{ sql: '   ' }] }),
+            }),
+            false
+        )
+        expect(badTxSql.status).toBe(500)
+
+        const badTxParams = await instance.queryRoute(
+            new Request('https://example.com/query', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    transaction: [{ sql: 'SELECT 1', params: 123 }],
+                }),
+            }),
+            false
+        )
+        expect(badTxParams.status).toBe(500)
+        consoleErrorSpy.mockRestore()
+    })
+
+    it('should route matching authless plugin requests in handlePreAuth and skip auth-required plugins', async () => {
+        const authlessPlugin: any = {
+            name: 'public-hook',
+            pathPrefix: '/webhooks/:id/*',
+            opts: { requiresAuth: false },
+            init: vi.fn(),
+        }
+        const db = new StarbaseDB({
+            dataSource: mockDataSource,
+            config: mockConfig,
+            plugins: [authlessPlugin],
+        })
+
+        const matched = await db.handlePreAuth(
+            new Request('https://example.com/webhooks/abc/events'),
+            mockExecutionContext
+        )
+        expect(matched).toBeDefined()
+
+        const unmatched = await db.handlePreAuth(
+            new Request('https://example.com/private/data'),
+            mockExecutionContext
+        )
+        expect(unmatched).toBeUndefined()
     })
 })
