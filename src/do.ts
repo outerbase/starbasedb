@@ -1,4 +1,19 @@
 import { DurableObject } from 'cloudflare:workers'
+import {
+    ALARM_SLOTS_TABLE,
+    DUMP_JOBS_SCHEMA_SQL,
+    DUMP_JOBS_TABLE,
+    DumpJobRecord,
+    processDumpJobSlice,
+} from './export/dump'
+
+const ALARM_SLOTS_SCHEMA_SQL = `
+CREATE TABLE IF NOT EXISTS ${ALARM_SLOTS_TABLE} (
+    slot TEXT PRIMARY KEY,
+    scheduled_at INTEGER NOT NULL
+);`
+
+type AlarmSlot = 'cron' | 'dump'
 
 export class StarbaseDBDurableObject extends DurableObject {
     // Durable storage for the SQL database
@@ -9,6 +24,8 @@ export class StarbaseDBDurableObject extends DurableObject {
     public connections = new Map<string, WebSocket>()
     // Store the client auth token for requests back to our Worker
     private clientAuthToken: string
+    // Optional R2 bucket binding for large resumable database dumps
+    private dumpBucket?: R2Bucket
 
     /**
      * The constructor is invoked once upon creation of the Durable Object, i.e. the first call to
@@ -20,6 +37,7 @@ export class StarbaseDBDurableObject extends DurableObject {
     constructor(ctx: DurableObjectState, env: Env) {
         super(ctx, env)
         this.clientAuthToken = env.CLIENT_AUTHORIZATION_TOKEN
+        this.dumpBucket = env.DUMP_BUCKET
         this.sql = ctx.storage.sql
         this.storage = ctx.storage
 
@@ -63,12 +81,15 @@ export class StarbaseDBDurableObject extends DurableObject {
         this.executeQuery({ sql: allowlistStatement })
         this.executeQuery({ sql: allowlistRejectedStatement })
         this.executeQuery({ sql: rlsStatement })
+        this.executeQuery({ sql: DUMP_JOBS_SCHEMA_SQL })
+        this.executeQuery({ sql: ALARM_SLOTS_SCHEMA_SQL })
     }
 
     init() {
         return {
             getAlarm: this.getAlarm.bind(this),
             setAlarm: this.setAlarm.bind(this),
+            scheduleDumpAlarm: this.scheduleDumpAlarm.bind(this),
             deleteAlarm: this.deleteAlarm.bind(this),
             getStatistics: this.getStatistics.bind(this),
             executeQuery: this.executeQuery.bind(this),
@@ -79,72 +100,256 @@ export class StarbaseDBDurableObject extends DurableObject {
         return await this.storage.getAlarm()
     }
 
+    private async readAlarmSlots(): Promise<Record<AlarmSlot, number | null>> {
+        const slots: Record<AlarmSlot, number | null> = {
+            cron: null,
+            dump: null,
+        }
+        try {
+            const rows = (await this.executeQuery({
+                sql: `SELECT slot, scheduled_at FROM ${ALARM_SLOTS_TABLE};`,
+                isRaw: false,
+            })) as Record<string, SqlStorageValue>[]
+            for (const row of rows) {
+                const slot = String(row.slot ?? '')
+                const ts = Number(row.scheduled_at)
+                if (
+                    (slot === 'cron' || slot === 'dump') &&
+                    Number.isFinite(ts)
+                ) {
+                    slots[slot] = ts
+                }
+            }
+        } catch (err) {
+            console.error('Error reading alarm slots:', err)
+        }
+        return slots
+    }
+
+    private async upsertAlarmSlot(
+        slot: AlarmSlot,
+        scheduledAt: number
+    ): Promise<void> {
+        await this.executeQuery({
+            sql: `INSERT OR REPLACE INTO ${ALARM_SLOTS_TABLE} (slot, scheduled_at) VALUES (?, ?);`,
+            params: [slot, scheduledAt],
+        })
+    }
+
+    private async clearAlarmSlot(slot: AlarmSlot): Promise<void> {
+        await this.executeQuery({
+            sql: `DELETE FROM ${ALARM_SLOTS_TABLE} WHERE slot = ?;`,
+            params: [slot],
+        })
+    }
+
+    private async syncPhysicalAlarm(
+        options?: DurableObjectSetAlarmOptions
+    ): Promise<void> {
+        const slots = await this.readAlarmSlots()
+        const candidates = [slots.cron, slots.dump].filter(
+            (v): v is number => v !== null && Number.isFinite(v)
+        )
+        if (candidates.length === 0) {
+            return
+        }
+        const earliest = Math.min(...candidates)
+        const minimumTime = Date.now() + 1000
+        await this.storage.setAlarm(Math.max(earliest, minimumTime), options)
+    }
+
+    private async scheduleSlotAlarm(
+        slot: AlarmSlot,
+        scheduledTime: number | Date,
+        options?: DurableObjectSetAlarmOptions
+    ): Promise<void> {
+        const now = Date.now()
+        const inputTime =
+            scheduledTime instanceof Date
+                ? scheduledTime.getTime()
+                : scheduledTime
+
+        // Ensure the time is in the future and at least 1 second from now
+        const minimumTime = now + 1000
+        const finalTime = Math.max(inputTime, minimumTime)
+        await this.upsertAlarmSlot(slot, finalTime)
+        await this.syncPhysicalAlarm(options)
+    }
+
     public async setAlarm(
         scheduledTime: number | Date,
         options?: DurableObjectSetAlarmOptions
     ): Promise<void> {
         try {
-            const now = Date.now()
-            const inputTime =
-                scheduledTime instanceof Date
-                    ? scheduledTime.getTime()
-                    : scheduledTime
-
-            // Ensure the time is in the future and at least 1 second from now
-            const minimumTime = now + 1000
-            const finalTime = Math.max(inputTime, minimumTime)
-            await this.storage.setAlarm(finalTime, options)
+            await this.scheduleSlotAlarm('cron', scheduledTime, options)
         } catch (e) {
             console.error('Error setting alarm: ', e)
             throw e
         }
     }
 
-    public deleteAlarm(options?: DurableObjectSetAlarmOptions): Promise<void> {
+    public async scheduleDumpAlarm(
+        scheduledTime: number | Date,
+        options?: DurableObjectSetAlarmOptions
+    ): Promise<void> {
+        try {
+            await this.scheduleSlotAlarm('dump', scheduledTime, options)
+        } catch (e) {
+            console.error('Error setting dump alarm: ', e)
+            throw e
+        }
+    }
+
+    public async deleteAlarm(
+        options?: DurableObjectSetAlarmOptions
+    ): Promise<void> {
+        await this.clearAlarmSlot('cron')
+        const slots = await this.readAlarmSlots()
+        if (slots.dump !== null) {
+            await this.syncPhysicalAlarm(options)
+            return
+        }
         return this.storage.deleteAlarm(options)
     }
 
     async alarm() {
-        try {
-            // Fetch all the tasks that are marked to emit an event for this cycle.
-            const task = (await this.executeQuery({
-                sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
-                isRaw: false,
-            })) as Record<string, SqlStorageValue>[]
+        const now = Date.now()
+        const initialSlots = await this.readAlarmSlots()
+        const dumpDue =
+            initialSlots.dump === null || initialSlots.dump <= now + 500
+        let ranDumpJob = false
 
-            if (!task.length) {
-                return
-            }
-
+        // 1. Continue any active resumable database dump jobs with breathing intervals
+        if (dumpDue) {
             try {
-                const firstTask = task[0]
-                await fetch(`${firstTask.callback_host}/cron/callback`, {
-                    method: 'POST',
-                    headers: {
-                        Authorization: `Bearer ${this.clientAuthToken}`,
-                        'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify(task ?? []),
-                })
-            } catch (error) {
-                console.error('Failed to call the alarm/cron callback:', error)
+                const activeDumpJobs = (await this.executeQuery({
+                    sql: `SELECT * FROM ${DUMP_JOBS_TABLE} WHERE status IN ('pending', 'in_progress') ORDER BY created_at ASC LIMIT 1;`,
+                    isRaw: false,
+                })) as Record<string, SqlStorageValue>[]
 
-                // If the callback fails, we should try to reschedule to prevent the chain from breaking
-                try {
-                    await this.setAlarm(Date.now() + 60000)
-                } catch (retryError) {
-                    console.error('Failed to set recovery alarm:', retryError)
+                if (activeDumpJobs.length > 0) {
+                    ranDumpJob = true
+                    await this.clearAlarmSlot('dump')
+                    const job = activeDumpJobs[0] as unknown as DumpJobRecord
+                    if (!this.dumpBucket) {
+                        const nowIso = new Date().toISOString()
+                        await this.executeQuery({
+                            sql: `UPDATE ${DUMP_JOBS_TABLE} SET status = 'failed', error = ?, updated_at = ?, completed_at = ? WHERE id = ?;`,
+                            params: [
+                                'R2 DUMP_BUCKET binding is not configured on Durable Object',
+                                nowIso,
+                                nowIso,
+                                job.id,
+                            ],
+                        })
+                    } else {
+                        const updated = await processDumpJobSlice({
+                            job,
+                            executeSql: async (sql, params) =>
+                                (await this.executeQuery({
+                                    sql,
+                                    params,
+                                    isRaw: false,
+                                })) as Record<string, any>[],
+                            bucket: this.dumpBucket,
+                            scheduleAlarm: async (scheduledTime) => {
+                                await this.scheduleDumpAlarm(scheduledTime)
+                            },
+                        })
+
+                        if (updated.status !== 'in_progress') {
+                            const remainingJobs = (await this.executeQuery({
+                                sql: `SELECT id FROM ${DUMP_JOBS_TABLE} WHERE status IN ('pending', 'in_progress') LIMIT 1;`,
+                                isRaw: false,
+                            })) as Record<string, SqlStorageValue>[]
+
+                            if (remainingJobs.length > 0) {
+                                await this.scheduleDumpAlarm(Date.now() + 1000)
+                            }
+                        }
+                    }
+                } else if (initialSlots.dump !== null) {
+                    await this.clearAlarmSlot('dump')
+                }
+            } catch (dumpErr) {
+                console.error('Error processing dump job alarm:', dumpErr)
+            }
+        }
+
+        // 2. Process active cron plugin tasks ONLY when cron slot is due (or legacy unslotted non-dump tick)
+        const cronDue =
+            initialSlots.cron !== null
+                ? initialSlots.cron <= now + 500
+                : !ranDumpJob
+
+        if (cronDue) {
+            if (initialSlots.cron !== null) {
+                await this.clearAlarmSlot('cron')
+            }
+            try {
+                // Fetch all the tasks that are marked to emit an event for this cycle.
+                const task = (await this.executeQuery({
+                    sql: 'SELECT * FROM tmp_cron_tasks WHERE is_active = 1;',
+                    isRaw: false,
+                })) as Record<string, SqlStorageValue>[]
+
+                if (task.length) {
+                    try {
+                        const firstTask = task[0]
+                        await fetch(
+                            `${firstTask.callback_host}/cron/callback`,
+                            {
+                                method: 'POST',
+                                headers: {
+                                    Authorization: `Bearer ${this.clientAuthToken}`,
+                                    'Content-Type': 'application/json',
+                                },
+                                body: JSON.stringify(task ?? []),
+                            }
+                        )
+                    } catch (error) {
+                        console.error(
+                            'Failed to call the alarm/cron callback:',
+                            error
+                        )
+
+                        // Reschedule cron slot for recovery; syncPhysicalAlarm preserves any earlier dump alarm
+                        try {
+                            await this.setAlarm(Date.now() + 60000)
+                        } catch (retryError) {
+                            console.error(
+                                'Failed to set recovery alarm:',
+                                retryError
+                            )
+                        }
+                    }
+                }
+            } catch (e: any) {
+                // If tmp_cron_tasks has not been created yet by CronPlugin, do not loop recovery alarms
+                if (
+                    !(
+                        typeof e?.message === 'string' &&
+                        e.message.includes('no such table')
+                    )
+                ) {
+                    console.error('There was an error processing an alarm: ', e)
+                    try {
+                        await this.setAlarm(Date.now() + 60000)
+                    } catch (retryError) {
+                        console.error(
+                            'Failed to set recovery alarm:',
+                            retryError
+                        )
+                    }
                 }
             }
-        } catch (e) {
-            console.error('There was an error processing an alarm: ', e)
+        }
 
-            // Try to recover by scheduling a retry in 1 minute
-            try {
-                await this.setAlarm(Date.now() + 60000)
-            } catch (retryError) {
-                console.error('Failed to set recovery alarm:', retryError)
-            }
+        // 3. Re-arm the single physical DO alarm to the earliest remaining slot (e.g., waiting cron after dump completes)
+        try {
+            await this.syncPhysicalAlarm()
+        } catch (syncErr) {
+            console.error('Failed to synchronize remaining alarm:', syncErr)
         }
     }
 

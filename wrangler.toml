@@ -78,3 +78,9 @@ AUTH_JWKS_ENDPOINT = ""
 # [[hyperdrive]]
 # binding = "HYPERDRIVE"
 # id = ""
+
+# Bind an R2 bucket for resumable large database dumps (>30s or async exports).
+# Docs: https://developers.cloudflare.com/r2/api/workers/workers-api-reference/
+# [[r2_buckets]]
+# binding = "DUMP_BUCKET"
+# bucket_name = "starbasedb-dumps"
