@@ -1,0 +1,16 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {},
+        "secrets": {},
+        "variables": {
+            "dialect": "string",
+            "schema": "string"
+        }
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
