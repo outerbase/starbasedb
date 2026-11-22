@@ -1,0 +1,27 @@
+{
+    "version": "1.0.0",
+    "resources": {
+        "tables": {
+            "tmp_data_sync_metadata": [
+                "table_name",
+                "source_table",
+                "last_sync_timestamp",
+                "last_sync_id",
+                "last_cursor_value",
+                "cursor_column",
+                "rows_synced",
+                "sync_errors"
+            ]
+        },
+        "secrets": {},
+        "variables": {
+            "sync_interval": "number",
+            "tables": "string[]"
+        }
+    },
+    "dependencies": {
+        "tables": {},
+        "secrets": {},
+        "variables": {}
+    }
+}
