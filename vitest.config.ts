@@ -1,7 +1,15 @@
 import { defineConfig } from 'vitest/config'
+import { resolve } from 'path'
 
 export default defineConfig({
     assetsInclude: ['**/*.sql'],
+    resolve: {
+        alias: {
+            // Allow plugins that import the built package entry (e.g. `../../dist`)
+            // to be unit tested directly against the TypeScript sources.
+            [resolve(__dirname, 'dist')]: resolve(__dirname, 'src/index.ts'),
+        },
+    },
     test: {
         coverage: {
             provider: 'istanbul',
