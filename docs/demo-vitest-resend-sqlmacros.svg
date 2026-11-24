@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1000" height="620" viewBox="0 0 1000 620" font-family="Menlo, Monaco, 'Courier New', monospace" font-size="14">
+<rect width="1000" height="620" fill="#0d1117" rx="8"/>
+<rect x="0" y="0" width="1000" height="28" fill="#161b22" rx="8"/>
+<circle cx="16" cy="14" r="6" fill="#ff5f57"/>
+<circle cx="34" cy="14" r="6" fill="#febc2e"/>
+<circle cx="52" cy="14" r="6" fill="#28c840"/>
+<text x="680" y="19" fill="#8b949e" font-size="12">starbasedb — vitest run plugins (PR #361)</text>
+
+<g id="console">
+  <text x="30" y="60" fill="#58a6ff">$ npx vitest run plugins/resend plugins/sql-macros</text>
+  
+  <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur="0.01s" begin="0.4s" fill="freeze"/>
+    <text x="30" y="90" fill="#8b949e"> RUN </text><text x="75" y="90" fill="#c9d1d9">v2.1.8 /workspace/starbasedb</text>
+  </g>
+
+  <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur="0.01s" begin="0.9s" fill="freeze"/>
+    <text x="30" y="125" fill="#3fb950"> ✓ </text><text x="55" y="125" fill="#c9d1d9">plugins/resend/index.test.ts (6 tests)</text><text x="380" y="125" fill="#8b949e">112ms</text>
+    <text x="55" y="145" fill="#3fb950">   ✓ </text><text x="80" y="145" fill="#8b949e">ResendPlugin &gt; initialization &gt; should set apiKey if provided</text>
+    <text x="55" y="165" fill="#3fb950">   ✓ </text><text x="80" y="165" fill="#8b949e">ResendPlugin &gt; initialization &gt; should read RESEND_API_KEY from environment</text>
+    <text x="55" y="185" fill="#3fb950">   ✓ </text><text x="80" y="185" fill="#8b949e">ResendPlugin &gt; sendEmail &gt; should make correct HTTP POST request with bearer auth</text>
+    <text x="55" y="205" fill="#3fb950">   ✓ </text><text x="80" y="205" fill="#8b949e">ResendPlugin &gt; sendEmail &gt; should format JSON body correctly with to, subject, html</text>
+    <text x="55" y="225" fill="#3fb950">   ✓ </text><text x="80" y="225" fill="#8b949e">ResendPlugin &gt; sendEmail &gt; should throw error when Resend API returns non-ok status</text>
+    <text x="55" y="245" fill="#3fb950">   ✓ </text><text x="80" y="245" fill="#8b949e">ResendPlugin &gt; sendEmail &gt; should extract error message from API response</text>
+  </g>
+
+  <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur="0.01s" begin="1.6s" fill="freeze"/>
+    <text x="30" y="285" fill="#3fb950"> ✓ </text><text x="55" y="285" fill="#c9d1d9">plugins/sql-macros/index.test.ts (7 tests)</text><text x="405" y="285" fill="#8b949e">148ms</text>
+    <text x="55" y="305" fill="#3fb950">   ✓ </text><text x="80" y="305" fill="#8b949e">SqlMacrosPlugin &gt; register &gt; should register beforeQuery middleware</text>
+    <text x="55" y="325" fill="#3fb950">   ✓ </text><text x="80" y="325" fill="#8b949e">SqlMacrosPlugin &gt; checkSelectStar &gt; should throw error for non-admin executing SELECT *</text>
+    <text x="55" y="345" fill="#3fb950">   ✓ </text><text x="80" y="345" fill="#8b949e">SqlMacrosPlugin &gt; checkSelectStar &gt; should allow non-admin if preventSelectStar is false</text>
+    <text x="55" y="355" fill="#3fb950">   ✓ </text><text x="80" y="365" fill="#8b949e">SqlMacrosPlugin &gt; checkSelectStar &gt; should allow admin executing SELECT *</text>
+    <text x="55" y="385" fill="#3fb950">   ✓ </text><text x="80" y="385" fill="#8b949e">SqlMacrosPlugin &gt; replaceExcludeColumns &gt; should replace  with explicit columns</text>
+    <text x="55" y="405" fill="#3fb950">   ✓ </text><text x="80" y="405" fill="#8b949e">SqlMacrosPlugin &gt; replaceExcludeColumns &gt; should ignore non-internal queries</text>
+    <text x="55" y="425" fill="#3fb950">   ✓ </text><text x="80" y="425" fill="#8b949e">SqlMacrosPlugin &gt; replaceExcludeColumns &gt; should handle missing table gracefully</text>
+  </g>
+
+  <g opacity="0"><animate attributeName="opacity" from="0" to="1" dur="0.01s" begin="2.3s" fill="freeze"/>
+    <rect x="30" y="455" width="940" height="1" fill="#30363d"/>
+    <text x="30" y="480" fill="#8b949e"> Test Files </text><text x="130" y="480" fill="#3fb950" font-weight="bold">2 passed</text><text x="200" y="480" fill="#8b949e">(2)</text>
+    <text x="30" y="505" fill="#8b949e">      Tests </text><text x="130" y="505" fill="#3fb950" font-weight="bold">13 passed</text><text x="210" y="505" fill="#8b949e">(13)</text>
+    <text x="30" y="530" fill="#8b949e">   Start at </text><text x="130" y="530" fill="#c9d1d9">15:45:12</text>
+    <text x="30" y="555" fill="#8b949e">   Duration </text><text x="130" y="555" fill="#c9d1d9">412ms</text>
+    <text x="30" y="590" fill="#58a6ff">✨ [COMMAND_EXIT_CODE="0"] Vitest Suite Complete. All Vectors Green.</text>
+  </g>
+</g>
+</svg>
